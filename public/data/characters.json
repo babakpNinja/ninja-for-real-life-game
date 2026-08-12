@@ -1,0 +1,280 @@
+{
+  "note": "Fan-made character reference for an unofficial tribute game. Bluey is created by Joe Brumm and made by Ludo Studio for ABC Kids / BBC Studios. No official art or audio is used here.",
+  "characters": [
+    {
+      "id": "bluey",
+      "name": "Bluey",
+      "species": "Blue Heeler (Australian Cattle Dog)",
+      "role": "The big sister",
+      "age": "6",
+      "personality": "Boundless imagination, bossy in the nicest way, never runs out of ideas for a game.",
+      "funFact": "Almost every episode starts because Bluey has invented a brand new game — and everyone has to play their part properly.",
+      "palette": { "coat": "#4A90D9", "belly": "#F0E6D2", "patch": "#2E6BA8", "accent": "#FFD166" },
+      "playable": true
+    },
+    {
+      "id": "bingo",
+      "name": "Bingo",
+      "species": "Red Heeler (Australian Cattle Dog)",
+      "role": "The little sister",
+      "age": "4",
+      "personality": "Gentle, thoughtful and quietly brave. Feels big feelings and says the wisest things.",
+      "funFact": "Bingo's catch-cry is a tiny, world-changing word: \"Wackadoo!\"",
+      "palette": { "coat": "#E28B4B", "belly": "#F7E4C8", "patch": "#C56B32", "accent": "#F25F5C" },
+      "playable": true
+    },
+    {
+      "id": "bandit",
+      "name": "Bandit",
+      "species": "Blue Heeler (Australian Cattle Dog)",
+      "role": "Dad",
+      "age": "Grown-up (allegedly)",
+      "personality": "An archaeologist who digs up bones by day and is dragged into every game by night. Says yes far more often than he should.",
+      "funFact": "Dr Bandit Heeler, PhD — the only dad who will play 'Shadowlands' on a hot footpath in bare feet.",
+      "palette": { "coat": "#3E7CBF", "belly": "#EADFC8", "patch": "#28598F", "accent": "#7FB069" },
+      "playable": true
+    },
+    {
+      "id": "chilli",
+      "name": "Chilli",
+      "species": "Red Heeler (Australian Cattle Dog)",
+      "role": "Mum",
+      "age": "Grown-up",
+      "personality": "Warm, funny, endlessly patient — and the best at knowing exactly what a kid actually needs.",
+      "funFact": "Chilli works in airport security, which means nothing gets past her at home either.",
+      "palette": { "coat": "#D97B45", "belly": "#F6E3C9", "patch": "#B25E2E", "accent": "#6EC5B8" },
+      "playable": true
+    },
+    {
+      "id": "muffin",
+      "name": "Muffin",
+      "species": "Blue Heeler (Australian Cattle Dog)",
+      "role": "Cousin",
+      "age": "4",
+      "personality": "A tiny hurricane of pure want. Absolutely certain she is right about everything.",
+      "funFact": "\"I'm a big girl now!\" — Muffin, mid-meltdown, wearing a nappy on her head.",
+      "palette": { "coat": "#6FA8DC", "belly": "#F3E8D6", "patch": "#4A7FB5", "accent": "#F49AC1" },
+      "playable": true
+    },
+    {
+      "id": "socks",
+      "name": "Socks",
+      "species": "Blue Heeler (Australian Cattle Dog)",
+      "role": "Cousin, Muffin's little sister",
+      "age": "3",
+      "personality": "Went through a long and committed phase of being a dog. Which, technically, she is.",
+      "funFact": "Socks spent most of a season walking on all fours and barking — then said her first proper sentence and everyone cheered.",
+      "palette": { "coat": "#8FBFE8", "belly": "#F5EAD8", "patch": "#5D93C4", "accent": "#FFD166" },
+      "playable": false
+    },
+    {
+      "id": "stripe",
+      "name": "Uncle Stripe",
+      "species": "Blue Heeler (Australian Cattle Dog)",
+      "role": "Bandit's younger brother, dad to Muffin and Socks",
+      "age": "Grown-up",
+      "personality": "Loud, competitive and deeply loving. Loses to his own children constantly.",
+      "funFact": "Stripe grew up wrestling Bandit for the good spot on the couch. Nothing has changed.",
+      "palette": { "coat": "#5A93CC", "belly": "#EFE2CC", "patch": "#37699E", "accent": "#F2A65A" },
+      "playable": false
+    },
+    {
+      "id": "trixie",
+      "name": "Aunt Trixie",
+      "species": "Blue Heeler (Australian Cattle Dog)",
+      "role": "Stripe's wife, mum to Muffin and Socks",
+      "age": "Grown-up",
+      "personality": "Cheerful, unbothered, and completely unfazed by her two chaotic daughters.",
+      "funFact": "Trixie can carry a conversation, a handbag and a screaming Muffin at the same time.",
+      "palette": { "coat": "#7FB2DB", "belly": "#F2E7D5", "patch": "#4E85B8", "accent": "#F49AC1" },
+      "playable": false
+    },
+    {
+      "id": "nana_chris",
+      "name": "Nana Chris",
+      "species": "Blue Heeler (Australian Cattle Dog)",
+      "role": "Bandit's mum — Bluey and Bingo's nana",
+      "age": "Grandma",
+      "personality": "Sweet and proper, until there's a dance floor or a floor-mopping competition.",
+      "funFact": "The girls once dressed up as 'Grannies' named Janet and Rita just to floss-dance like Nana.",
+      "palette": { "coat": "#A8C6DE", "belly": "#F6EEE0", "patch": "#7FA3C0", "accent": "#C9A0DC" },
+      "playable": false
+    },
+    {
+      "id": "bob",
+      "name": "Grandad Bob",
+      "species": "Blue Heeler (Australian Cattle Dog)",
+      "role": "Bandit's dad",
+      "age": "Grandad",
+      "personality": "Stubborn as a fence post, soft as a marshmallow underneath.",
+      "funFact": "Bob is not supposed to be doing that. Bob is doing it anyway.",
+      "palette": { "coat": "#96B8D4", "belly": "#F3EADB", "patch": "#6E93B4", "accent": "#8FBF6E" },
+      "playable": false
+    },
+    {
+      "id": "lucky",
+      "name": "Lucky",
+      "species": "Labrador",
+      "role": "Next-door neighbour and best mate",
+      "age": "6",
+      "personality": "Easy-going, up for anything, always appearing over the back fence at the right moment.",
+      "funFact": "Lucky's dad is the reigning champion of over-the-fence cricket commentary.",
+      "palette": { "coat": "#E8C77E", "belly": "#F8EFD9", "patch": "#C9A65C", "accent": "#5AA9E6" },
+      "playable": false
+    },
+    {
+      "id": "judo",
+      "name": "Judo",
+      "species": "Chinese Crested",
+      "role": "Friend of Bluey and Bingo",
+      "age": "5",
+      "personality": "Bold, a bit of a rule-bender, brilliant at sleepover games.",
+      "funFact": "Judo's mum is Wendy, who lives next door and always has a spare thing you need.",
+      "palette": { "coat": "#F0D9C0", "belly": "#FBF1E4", "patch": "#D6B99B", "accent": "#F25F5C" },
+      "playable": false
+    },
+    {
+      "id": "honey",
+      "name": "Honey",
+      "species": "Beagle",
+      "role": "School friend",
+      "age": "6",
+      "personality": "Shy, kind and quietly determined. Wears glasses and notices everything.",
+      "funFact": "Honey is the friend who patiently waits her turn — and then absolutely nails it.",
+      "palette": { "coat": "#E9B872", "belly": "#F8EEDC", "patch": "#C08F4D", "accent": "#8FBF6E" },
+      "playable": false
+    },
+    {
+      "id": "coco",
+      "name": "Coco",
+      "species": "Poodle",
+      "role": "School friend",
+      "age": "6",
+      "personality": "Enthusiastic, a little bit dramatic, tries very hard to keep up with everyone.",
+      "funFact": "Coco will happily change the rules of a game mid-play if it means she gets to join in.",
+      "palette": { "coat": "#F4A9C8", "belly": "#FDEBF3", "patch": "#D9799F", "accent": "#9BD1E5" },
+      "playable": false
+    },
+    {
+      "id": "snickers",
+      "name": "Snickers",
+      "species": "Dachshund",
+      "role": "School friend",
+      "age": "6",
+      "personality": "Sweet and literal, and very aware that his body is longer than everyone else's.",
+      "funFact": "Snickers' long back is either a superpower or a serious problem, depending on the game.",
+      "palette": { "coat": "#B5793F", "belly": "#F2E1C9", "patch": "#8C5A2B", "accent": "#FFD166" },
+      "playable": false
+    },
+    {
+      "id": "chloe",
+      "name": "Chloe",
+      "species": "Dalmatian",
+      "role": "School friend",
+      "age": "6",
+      "personality": "Thoughtful and grounded — the friend who asks the question everyone was thinking.",
+      "funFact": "Chloe's dad taught her a game about noticing tiny things on a very ordinary walk.",
+      "palette": { "coat": "#F2F2F2", "belly": "#FFFFFF", "patch": "#3A3A3A", "accent": "#5AA9E6" },
+      "playable": false
+    },
+    {
+      "id": "mackenzie",
+      "name": "Mackenzie",
+      "species": "Border Collie",
+      "role": "School friend",
+      "age": "6",
+      "personality": "Fast, focused and fiercely loyal. A New Zealander with a big heart.",
+      "funFact": "Mackenzie can herd an entire class of puppies without anyone realising it happened.",
+      "palette": { "coat": "#2F2F2F", "belly": "#F4F1EA", "patch": "#5A5A5A", "accent": "#6EC5B8" },
+      "playable": false
+    },
+    {
+      "id": "rusty",
+      "name": "Rusty",
+      "species": "Australian Kelpie",
+      "role": "School friend",
+      "age": "6",
+      "personality": "Sporty, generous and unstoppable — cricket bat permanently in hand.",
+      "funFact": "Rusty's dad is in the army, and Rusty is the best at making up backyard cricket rules.",
+      "palette": { "coat": "#C56B32", "belly": "#F2DFC4", "patch": "#96471F", "accent": "#8FBF6E" },
+      "playable": false
+    },
+    {
+      "id": "indy",
+      "name": "Indy",
+      "species": "Afghan Hound",
+      "role": "School friend",
+      "age": "6",
+      "personality": "Free-spirited, imaginative and very in tune with nature.",
+      "funFact": "Indy's mum keeps a very organic house, so Indy's snacks are... interesting.",
+      "palette": { "coat": "#E0C9A6", "belly": "#F8EFDF", "patch": "#BFA07A", "accent": "#C9A0DC" },
+      "playable": false
+    },
+    {
+      "id": "winton",
+      "name": "Winton",
+      "species": "English Bulldog",
+      "role": "School friend",
+      "age": "6",
+      "personality": "Serious, a bit posh, takes the rules of any game extremely seriously.",
+      "funFact": "Winton has strong opinions about the correct way to play, and he will share them.",
+      "palette": { "coat": "#D8C3A5", "belly": "#F4EADA", "patch": "#A88C6B", "accent": "#F25F5C" },
+      "playable": false
+    },
+    {
+      "id": "jean_luc",
+      "name": "Jean-Luc",
+      "species": "Labrador",
+      "role": "A friend from far away",
+      "age": "6",
+      "personality": "Quiet, kind and adventurous. Speaks French and plays a mean game of chasey.",
+      "funFact": "Bluey met Jean-Luc on holiday — proof that you don't need the same language to play the same game.",
+      "palette": { "coat": "#EBD9A8", "belly": "#F9F1DE", "patch": "#C4AE79", "accent": "#5AA9E6" },
+      "playable": false
+    },
+    {
+      "id": "calypso",
+      "name": "Calypso",
+      "species": "Australian Shepherd",
+      "role": "Teacher at Glasshouse Primary",
+      "age": "Grown-up",
+      "personality": "Calm, wise and endlessly gentle. Lets children solve things themselves.",
+      "funFact": "Calypso's answer to almost everything is a soft chime and a bit of patience.",
+      "palette": { "coat": "#B9A3C9", "belly": "#F5EFE6", "patch": "#8E7AA0", "accent": "#FFD166" },
+      "playable": false
+    },
+    {
+      "id": "frisky",
+      "name": "Frisky",
+      "species": "Sheltie",
+      "role": "Chilli's friend, later Uncle Rad's partner",
+      "age": "Grown-up",
+      "personality": "Bubbly, fun and the world's most enthusiastic babysitter.",
+      "funFact": "Frisky once wore Bluey's swimming goggles to a very fancy occasion.",
+      "palette": { "coat": "#E5D3B3", "belly": "#F9F2E4", "patch": "#B99F78", "accent": "#F49AC1" },
+      "playable": false
+    },
+    {
+      "id": "rad",
+      "name": "Uncle Rad",
+      "species": "Heeler",
+      "role": "Bandit and Stripe's older brother",
+      "age": "Grown-up",
+      "personality": "Laid-back to the point of horizontal, drifts off mid-sentence, deeply fond of his nieces.",
+      "funFact": "Rad works away a lot, so his visits are treated like a public holiday.",
+      "palette": { "coat": "#7A9EC2", "belly": "#F0E6D4", "patch": "#4F769B", "accent": "#8FBF6E" },
+      "playable": false
+    },
+    {
+      "id": "chattermax",
+      "name": "Chattermax",
+      "species": "Toy",
+      "role": "A very loud singing toy",
+      "age": "Batteries not included",
+      "personality": "Relentlessly cheerful. Cannot be switched off. Ever.",
+      "funFact": "Bandit once tried to hide Chattermax on top of the fridge. It did not work.",
+      "palette": { "coat": "#F49AC1", "belly": "#FFE6F1", "patch": "#D4739F", "accent": "#6EC5B8" },
+      "playable": false
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#2C6FBB" />
+<meta name="description" content="For Real Life! — a fan-made, unofficial side-scrolling adventure inspired by Bluey. Five chapters, one lost toy." />
+<title>For Real Life! — a heeler family adventure</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='46' fill='%234A90D9'/><circle cx='36' cy='44' r='9' fill='%23fff'/><circle cx='66' cy='44' r='9' fill='%23fff'/><circle cx='38' cy='46' r='5' fill='%2322303F'/><circle cx='68' cy='46' r='5' fill='%2322303F'/><ellipse cx='52' cy='68' rx='9' ry='7' fill='%2322303F'/></svg>" />
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="stage">
+    <canvas id="game" aria-label="Game screen"></canvas>
+
+    <!-- heads-up display, only visible while playing -->
+    <div id="hud" class="hidden">
+      <div class="hud-left">
+        <div id="hud-score" class="pill">0</div>
+        <div id="hud-tokens" class="pill small">0/0</div>
+      </div>
+      <div class="hud-right">
+        <button id="btn-mute" class="icon-btn" aria-label="Sound on or off">🔊</button>
+        <button id="btn-pause" class="icon-btn" aria-label="Pause">⏸</button>
+      </div>
+      <div id="hud-progress"><div id="hud-progress-fill"></div><div id="hud-progress-dog">🐾</div></div>
+      <div id="toast-layer"></div>
+    </div>
+
+    <!-- everything that is not the canvas lives in overlays -->
+    <div id="overlay" class="screen">
+      <div class="panel">
+        <h1 class="title">For Real&nbsp;Life!</h1>
+        <p class="subtitle">A backyard adventure with the heeler family</p>
+        <div id="menu-dogs"></div>
+        <button class="big-btn" id="btn-play">▶ Play</button>
+        <div class="btn-row">
+          <button class="med-btn" id="btn-chapters">Chapters</button>
+          <button class="med-btn" id="btn-gallery">Characters</button>
+          <button class="med-btn" id="btn-stats">Stats</button>
+        </div>
+        <p class="credits">Fan-made and unofficial. Not affiliated with Ludo Studio, ABC or BBC.<br />All art and music here is original and drawn/synthesised in your browser.</p>
+      </div>
+    </div>
+
+    <div id="rotate-hint" class="hidden">↻ Turn your phone sideways for the best view</div>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

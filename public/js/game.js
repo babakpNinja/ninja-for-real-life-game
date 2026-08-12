@@ -1,0 +1,625 @@
+/*
+ * game.js — the engine: fixed-timestep physics, a letterboxed canvas and a
+ * deliberately gentle rule set.
+ *
+ * Design rule for this game: nothing can ever be lost. Bumping a pot plant
+ * costs you a moment, falling in the creek gives you a splash and a lift back
+ * up — there is no game over, no lives, no red text. Points only ever go up.
+ */
+
+import {
+  drawDog, drawTree, drawGumTree, drawHouse, drawCloud, drawBalloon,
+  drawToken, drawObstacle, roundRect, star,
+} from "./art.js";
+import { sound } from "./audio.js";
+import { CHAPTERS, buildLevel, starsFor, GROUND_Y, WORLD_W, WORLD_H } from "./chapters.js";
+
+const GRAVITY = 2300;
+const JUMP_V = -790;
+const FLOAT_GRAVITY = 0.34;   // gravity multiplier while the finger stays down
+const COYOTE = 0.14;          // grace period after walking off an edge
+const BUFFER = 0.18;          // tap slightly early and it still counts
+const PLAYER_W = 46;
+const PLAYER_H = 74;
+const CAM_X = 300;
+
+export class Game {
+  constructor(canvas, characters) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext("2d");
+    this.characters = characters;
+    this.scale = 1;
+    this.offX = 0;
+    this.offY = 0;
+    this.running = false;
+    this.paused = false;
+    this.mode = "idle";       // idle | playing | finished
+    this.t = 0;
+    this.acc = 0;
+    this.last = 0;
+    this.holding = false;
+    this.jumpBuffer = 0;
+    this.autoRun = true;
+    this.keys = { left: false, right: false };
+    this.toasts = [];
+    this.particles = [];
+    this.onEvent = () => {};
+    this.resize();
+    window.addEventListener("resize", () => this.resize());
+    window.addEventListener("orientationchange", () => setTimeout(() => this.resize(), 200));
+  }
+
+  /* --------------------------------------------------------------- setup -- */
+
+  resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    const w = this.canvas.clientWidth || window.innerWidth;
+    const h = this.canvas.clientHeight || window.innerHeight;
+    this.canvas.width = Math.round(w * dpr);
+    this.canvas.height = Math.round(h * dpr);
+    this.scale = Math.min(w / WORLD_W, h / WORLD_H);
+    this.offX = (w - WORLD_W * this.scale) / 2;
+    this.offY = (h - WORLD_H * this.scale) / 2;
+    this.dpr = dpr;
+    if (this.mode !== "playing") this.render();
+  }
+
+  palette(id) {
+    const c = this.characters.find((x) => x.id === id) || this.characters[0];
+    return c.palette;
+  }
+
+  start(chapterIndex) {
+    const ch = CHAPTERS[chapterIndex];
+    const level = buildLevel(chapterIndex);
+    this.chapterIndex = chapterIndex;
+    this.ch = ch;
+    this.level = level;
+    this.mode = "playing";
+    this.paused = false;
+    this.t = 0;
+    this.score = 0;
+    this.collected = 0;
+    this.bops = 0;
+    this.stumbles = 0;
+    this.secretFound = false;
+    this.toasts = [];
+    this.particles = [];
+    this.player = {
+      x: 120, y: GROUND_Y, vy: 0, onGround: true, coyote: 0, state: "run", facing: 1, slow: 0,
+    };
+    this.lastSafe = { x: 120, y: GROUND_Y };
+    this.balloon = ch.hasBalloon
+      ? { x: 300, y: GROUND_Y - 300, vy: 0, vx: 0, hue: 0 }
+      : null;
+    this.cameoX = ch.length * 0.55;
+    this.cameoShown = false;
+    this.finished = false;
+    sound.playTheme(ch.theme);
+    this.loop();
+  }
+
+  stop() {
+    this.running = false;
+    this.mode = "idle";
+    sound.stopMusic();
+  }
+
+  /* --------------------------------------------------------------- input -- */
+
+  press() {
+    this.jumpBuffer = BUFFER;
+    this.holding = true;
+  }
+
+  release() {
+    this.holding = false;
+  }
+
+  /* ---------------------------------------------------------------- loop -- */
+
+  loop() {
+    if (this.running) return;
+    this.running = true;
+    this.last = performance.now();
+    const frame = (now) => {
+      if (!this.running) return;
+      let dt = (now - this.last) / 1000;
+      this.last = now;
+      if (dt > 0.1) dt = 0.1;            // tab was backgrounded — don't teleport
+      if (!this.paused && this.mode === "playing") {
+        this.acc += dt;
+        while (this.acc >= 1 / 120) {     // fixed step keeps phones and laptops equal
+          this.step(1 / 120);
+          this.acc -= 1 / 120;
+        }
+      }
+      this.render();
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  }
+
+  /* -------------------------------------------------------------- physics -- */
+
+  step(dt) {
+    const p = this.player;
+    const ch = this.ch;
+    this.t += dt;
+    if (this.jumpBuffer > 0) this.jumpBuffer -= dt;
+    if (p.slow > 0) p.slow -= dt;
+
+    // horizontal
+    let speed = ch.speed * (p.slow > 0 ? 0.45 : 1);
+    if (!this.autoRun) {
+      const dir = (this.keys.right ? 1 : 0) - (this.keys.left ? 1 : 0);
+      speed = dir === 0 ? 0 : ch.speed * dir * (p.slow > 0 ? 0.45 : 1);
+      if (dir !== 0) p.facing = dir;
+    }
+    p.x += speed * dt;
+    if (p.x < 40) p.x = 40;
+
+    // jump
+    if (this.jumpBuffer > 0 && (p.onGround || p.coyote > 0)) {
+      p.vy = JUMP_V;
+      p.onGround = false;
+      p.coyote = 0;
+      this.jumpBuffer = 0;
+      sound.jump();
+      this.puff(p.x, p.y, 6);
+    }
+
+    // gravity, with a float while the finger is held on the way down
+    const g = GRAVITY * (ch.gravityScale || 1) * (this.holding && p.vy > 0 ? FLOAT_GRAVITY : 1);
+    p.vy += g * dt;
+    if (p.vy > 1400) p.vy = 1400;
+    const prevY = p.y;
+    p.y += p.vy * dt;
+
+    // land on platforms (only from above, so you never clip through a ledge)
+    let landed = false;
+    for (const s of this.level.plats) {
+      if (p.x + PLAYER_W / 2 < s.x || p.x - PLAYER_W / 2 > s.x + s.w) continue;
+      if (prevY <= s.y + 8 && p.y >= s.y && p.vy >= 0) {
+        p.y = s.y;
+        p.vy = 0;
+        landed = true;
+        if (!p.onGround) this.puff(p.x, p.y, 4);
+        p.onGround = true;
+        this.lastSafe = { x: Math.max(s.x + 60, p.x - 40), y: s.y };
+        break;
+      }
+    }
+    if (!landed) {
+      if (p.onGround) p.coyote = COYOTE;
+      p.onGround = false;
+    }
+    if (p.coyote > 0) p.coyote -= dt;
+
+    p.state = p.onGround
+      ? (speed === 0 ? "idle" : "run")
+      : (this.holding && p.vy > 0 ? "float" : "jump");
+
+    // fell in the water / off the edge — a splash and a friendly lift back up
+    if (p.y > WORLD_H + 40) {
+      sound.splash();
+      this.toast("Splash! 💦");
+      p.x = this.lastSafe.x;
+      p.y = this.lastSafe.y - 10;
+      p.vy = -260;
+      p.slow = 0.35;
+    }
+
+    // soft obstacles: a stumble, never a loss
+    for (const o of this.level.obstacles) {
+      if (o.hit && this.t - o.hit < 1) continue;
+      if (Math.abs(p.x - (o.x + o.w / 2)) < o.w / 2 + PLAYER_W / 2 - 8 &&
+          p.y > o.y + 6 && p.y - PLAYER_H < o.y + o.h) {
+        o.hit = this.t;
+        if (o.kind === "cloud") {          // dream clouds bounce you up instead
+          p.vy = JUMP_V * 0.85;
+          sound.bop();
+          this.toast("Boing!");
+        } else {
+          p.slow = 0.6;
+          p.x -= 16;
+          sound.stumble();
+          this.stumbles++;
+          this.toast("Whoops!");
+        }
+      }
+    }
+
+    // collectibles
+    for (const tk of this.level.tokens) {
+      if (tk.taken) continue;
+      if (Math.abs(tk.x - p.x) < 46 && Math.abs(tk.y - (p.y - PLAYER_H / 2)) < 62) {
+        tk.taken = true;
+        this.collected++;
+        this.score += 10;
+        sound.collect(this.collected);
+        this.sparkle(tk.x, tk.y);
+      }
+    }
+    const sec = this.level.secret;
+    if (!sec.taken && Math.abs(sec.x - p.x) < 52 && Math.abs(sec.y - (p.y - PLAYER_H / 2)) < 66) {
+      sec.taken = true;
+      this.secretFound = true;
+      this.score += 250;
+      sound.treasure();
+      this.sparkle(sec.x, sec.y, 26);
+      this.toast("Dollarbucks! 💰 +250");
+    }
+
+    if (this.balloon) this.stepBalloon(dt);
+
+    // the cameo friend waves as you pass
+    if (!this.cameoShown && p.x > this.cameoX) {
+      this.cameoShown = true;
+      const c = this.characters.find((x) => x.id === this.ch.cameo);
+      if (c) this.toast(`${c.name} says g'day! 👋`);
+      this.onEvent({ type: "cameo", character: this.ch.cameo });
+    }
+
+    // particles + toasts
+    for (const q of this.particles) {
+      q.life -= dt;
+      q.x += q.vx * dt;
+      q.y += q.vy * dt;
+      q.vy += 320 * dt;
+    }
+    this.particles = this.particles.filter((q) => q.life > 0);
+    this.toasts = this.toasts.filter((x) => this.t - x.t < 1.5);
+
+    if (p.x >= this.ch.length && !this.finished) this.finish();
+  }
+
+  stepBalloon(dt) {
+    const b = this.balloon;
+    const p = this.player;
+    b.vy += 210 * dt;                                   // balloons fall slowly
+    b.y += b.vy * dt;
+    b.vx += ((p.x + 130 - b.x) * 1.4 - b.vx) * dt * 2.2; // drifts along with you
+    b.x += b.vx * dt;
+
+    const head = p.y - PLAYER_H;
+    if (Math.abs(b.x - p.x) < 74 && Math.abs(b.y - head) < 72 && b.vy > -120) {
+      b.vy = -430;
+      b.vx += (b.x - p.x) * 1.2;
+      this.bops++;
+      this.score += 15;
+      sound.bop();
+      this.sparkle(b.x, b.y, 8);
+      if (this.bops % 5 === 0) this.toast(`Keepy uppy! ×${this.bops}`);
+    }
+    if (b.y > GROUND_Y - 26) {                           // it touched down: no drama
+      b.y = GROUND_Y - 26;
+      b.vy = -380;
+      this.toast("Pick it up!");
+    }
+    if (b.y < 40) { b.y = 40; b.vy = 60; }
+  }
+
+  finish() {
+    this.finished = true;
+    this.mode = "finished";
+    const total = this.level.total;
+    const stars = starsFor(this.collected, total);
+    const bonus = 100 + stars * 50;
+    this.score += bonus;
+    sound.cheer();
+    this.player.state = "cheer";
+    this.onEvent({
+      type: "complete",
+      chapter: this.chapterIndex,
+      score: this.score,
+      collected: this.collected,
+      total,
+      stars,
+      bops: this.bops,
+      secret: this.secretFound,
+      bonus,
+    });
+  }
+
+  /* --------------------------------------------------------------- juice -- */
+
+  toast(text) { this.toasts.push({ text, t: this.t }); this.onEvent({ type: "toast", text }); }
+
+  puff(x, y, n) {
+    for (let i = 0; i < n; i++) {
+      this.particles.push({
+        x, y, vx: (Math.random() - 0.5) * 90, vy: -Math.random() * 60,
+        life: 0.4, r: 4 + Math.random() * 5, color: "rgba(255,255,255,0.75)",
+      });
+    }
+  }
+
+  sparkle(x, y, n = 12) {
+    const colors = ["#FFD166", "#F25F5C", "#6EC5B8", "#FFFFFF"];
+    for (let i = 0; i < n; i++) {
+      this.particles.push({
+        x, y, vx: (Math.random() - 0.5) * 260, vy: -Math.random() * 240,
+        life: 0.6, r: 3 + Math.random() * 4, color: colors[i % colors.length],
+      });
+    }
+  }
+
+  /* -------------------------------------------------------------- render -- */
+
+  render() {
+    const ctx = this.ctx;
+    const w = this.canvas.width, h = this.canvas.height;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = "#12263A";
+    ctx.fillRect(0, 0, w, h);
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.translate(this.offX, this.offY);
+    ctx.scale(this.scale, this.scale);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, WORLD_W, WORLD_H);
+    ctx.clip();
+
+    if (this.mode === "idle" || !this.ch) {
+      this.renderIdleSky(ctx);
+      ctx.restore();
+      return;
+    }
+
+    const camX = Math.max(0, this.player.x - CAM_X);
+    this.renderBackground(ctx, camX);
+
+    ctx.save();
+    ctx.translate(-camX, 0);
+    this.renderLevel(ctx, camX);
+    ctx.restore();
+
+    ctx.restore();
+  }
+
+  renderIdleSky(ctx) {
+    const g = ctx.createLinearGradient(0, 0, 0, WORLD_H);
+    g.addColorStop(0, "#8FD3F4");
+    g.addColorStop(1, "#E8F7FF");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+    const t = performance.now() / 1000;
+    for (let i = 0; i < 5; i++) drawCloud(ctx, ((i * 260 + t * 12) % 1200) - 120, 80 + i * 40, 1 + (i % 3) * 0.3, 0.85);
+    ctx.fillStyle = "#7FBF6A";
+    ctx.fillRect(0, GROUND_Y, WORLD_W, WORLD_H - GROUND_Y);
+  }
+
+  renderBackground(ctx, camX) {
+    const ch = this.ch;
+    const g = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+    g.addColorStop(0, ch.sky[0]);
+    g.addColorStop(1, ch.sky[1]);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+
+    if (ch.id === "sleepytime") {
+      // stars + a big friendly moon
+      for (let i = 0; i < 60; i++) {
+        const sx = (i * 137.5) % WORLD_W;
+        const sy = (i * 61.7) % (GROUND_Y - 60);
+        const tw = 0.5 + 0.5 * Math.sin(this.t * 2 + i);
+        ctx.globalAlpha = 0.35 + tw * 0.5;
+        ctx.fillStyle = "#FFF7D6";
+        ctx.fillRect(sx, sy, 2.5, 2.5);
+      }
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#FFF3C4";
+      ctx.beginPath();
+      ctx.arc(770, 110, 54, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(255,243,196,0.18)";
+      ctx.beginPath();
+      ctx.arc(770, 110, 86, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = "#FFE9A8";
+      ctx.beginPath();
+      ctx.arc(820, 96, 46, 0, Math.PI * 2);
+      ctx.fill();
+      for (let i = 0; i < 6; i++) {
+        const x = ((i * 320 - camX * 0.18) % 1600 + 1600) % 1600 - 200;
+        drawCloud(ctx, x, 70 + (i % 3) * 46, 1 + (i % 3) * 0.35, 0.9);
+      }
+    }
+
+    // far parallax layer
+    ctx.save();
+    ctx.translate(-camX * 0.3, 0);
+    if (ch.id === "beach") {
+      ctx.fillStyle = ch.water;
+      ctx.fillRect(-500, GROUND_Y - 120, 6000, 130);
+      ctx.fillStyle = "rgba(255,255,255,0.5)";
+      for (let i = 0; i < 40; i++) {
+        const x = i * 180 + Math.sin(this.t + i) * 20;
+        ctx.fillRect(x, GROUND_Y - 100 + (i % 3) * 22, 60, 4);
+      }
+    } else if (ch.id === "hammerbarn") {
+      for (let i = 0; i < 14; i++) {
+        const x = i * 420;
+        ctx.fillStyle = "#E4DED4";
+        roundRect(ctx, x, GROUND_Y - 240, 300, 240, 8);
+        ctx.fill();
+        ctx.fillStyle = "#CFC7BB";
+        for (let r = 0; r < 3; r++) ctx.fillRect(x + 16, GROUND_Y - 210 + r * 66, 268, 12);
+      }
+    } else if (ch.id === "sleepytime") {
+      for (let i = 0; i < 12; i++) {
+        ctx.globalAlpha = 0.5;
+        drawCloud(ctx, i * 520 + 100, 200 + (i % 3) * 60, 1.6, 0.5);
+        ctx.globalAlpha = 1;
+      }
+    } else {
+      for (let i = 0; i < 16; i++) {
+        const x = i * 360;
+        ctx.fillStyle = ch.id === "creek" ? "#8FBF7C" : "#9AD08A";
+        ctx.beginPath();
+        ctx.ellipse(x, GROUND_Y - 10, 240, 110, 0, Math.PI, 0);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+
+    // mid parallax: trees, and the Heeler house in chapter one
+    ctx.save();
+    ctx.translate(-camX * 0.6, 0);
+    if (ch.id === "backyard") {
+      drawHouse(ctx, 260, GROUND_Y, 1.1);
+      for (let i = 0; i < 12; i++) drawGumTree(ctx, 900 + i * 520, GROUND_Y, 1 + (i % 2) * 0.3);
+    } else if (ch.id === "creek") {
+      for (let i = 0; i < 16; i++) drawTree(ctx, 200 + i * 340, GROUND_Y, 0.9 + (i % 3) * 0.2, "#6FAF63", "#8B6A4F");
+    } else if (ch.id === "beach") {
+      for (let i = 0; i < 12; i++) drawTree(ctx, 300 + i * 520, GROUND_Y, 1.1, "#67B47F", "#A5764F");
+    } else if (ch.id === "sleepytime") {
+      for (let i = 0; i < 10; i++) {
+        ctx.globalAlpha = 0.55;
+        drawGumTree(ctx, 300 + i * 560, GROUND_Y, 1.2);
+        ctx.globalAlpha = 1;
+      }
+    }
+    ctx.restore();
+  }
+
+  renderLevel(ctx, camX) {
+    const ch = this.ch;
+    const left = camX - 120, right = camX + WORLD_W + 120;
+
+    // water under the gaps (creek + beach)
+    if (ch.water) {
+      ctx.fillStyle = ch.water;
+      ctx.fillRect(left, GROUND_Y + 6, right - left, WORLD_H - GROUND_Y);
+      ctx.fillStyle = "rgba(255,255,255,0.35)";
+      for (let x = Math.floor(left / 90) * 90; x < right; x += 90) {
+        ctx.fillRect(x + Math.sin(this.t * 2 + x) * 8, GROUND_Y + 24, 46, 5);
+      }
+    }
+
+    // platforms
+    for (const s of this.level.plats) {
+      if (s.x + s.w < left || s.x > right) continue;
+      const grad = ctx.createLinearGradient(0, s.y, 0, s.y + 90);
+      grad.addColorStop(0, ch.ground[0]);
+      grad.addColorStop(1, ch.ground[1]);
+      ctx.fillStyle = grad;
+      const h = s.y >= GROUND_Y ? WORLD_H - s.y + 20 : 34;
+      roundRect(ctx, s.x, s.y, s.w, h, s.y >= GROUND_Y ? 10 : 14);
+      ctx.fill();
+      // a lighter lip so the landing edge is obvious
+      ctx.fillStyle = "rgba(255,255,255,0.28)";
+      roundRect(ctx, s.x + 4, s.y + 3, s.w - 8, 7, 4);
+      ctx.fill();
+      if (ch.id === "backyard" || ch.id === "creek") {
+        ctx.strokeStyle = "rgba(255,255,255,0.35)";
+        ctx.lineWidth = 2;
+        for (let x = s.x + 14; x < s.x + s.w - 10; x += 26) {
+          ctx.beginPath();
+          ctx.moveTo(x, s.y + 2);
+          ctx.lineTo(x + 5, s.y - 9);
+          ctx.stroke();
+        }
+      }
+    }
+
+    for (const o of this.level.obstacles) {
+      if (o.x + o.w < left || o.x > right) continue;
+      drawObstacle(ctx, o, this.t);
+    }
+
+    for (const tk of this.level.tokens) {
+      if (tk.taken || tk.x < left || tk.x > right) continue;
+      drawToken(ctx, tk.x, tk.y, 17, ch.tokenKind, this.t);
+    }
+    const sec = this.level.secret;
+    if (!sec.taken && sec.x > left && sec.x < right) {
+      ctx.save();
+      ctx.translate(sec.x, sec.y + Math.sin(this.t * 3) * 6);
+      ctx.fillStyle = "#3FAE6B";
+      roundRect(ctx, -22, -14, 44, 28, 6);
+      ctx.fill();
+      ctx.fillStyle = "#FFF7E6";
+      ctx.font = "bold 18px system-ui";
+      ctx.textAlign = "center";
+      ctx.fillText("$", 0, 6);
+      ctx.restore();
+    }
+
+    // cameo friend standing near the middle of the level
+    const cam = this.characters.find((c) => c.id === ch.cameo);
+    if (cam && this.cameoX > left && this.cameoX < right) {
+      drawDog(ctx, this.cameoX, GROUND_Y, 74, cam.palette, this.t, "cheer", -1);
+    }
+
+    // the finish: Floppy the bunny / home
+    this.renderGoal(ctx, left, right);
+
+    if (this.balloon) drawBalloon(ctx, this.balloon.x, this.balloon.y, 30, "#F25F5C");
+
+    for (const q of this.particles) {
+      ctx.globalAlpha = Math.max(0, q.life * 1.6);
+      ctx.fillStyle = q.color;
+      ctx.beginPath();
+      ctx.arc(q.x, q.y, q.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    const p = this.player;
+    drawDog(ctx, p.x, p.y, 92, this.palette(ch.hero), this.t, p.state, p.facing);
+  }
+
+  renderGoal(ctx, left, right) {
+    const gx = this.ch.length + 40;
+    if (gx < left || gx > right) return;
+    ctx.save();
+    ctx.translate(gx, GROUND_Y);
+    // bunting between two poles
+    ctx.strokeStyle = "#B8763F";
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.moveTo(-60, 0); ctx.lineTo(-60, -180);
+    ctx.moveTo(90, 0); ctx.lineTo(90, -180);
+    ctx.stroke();
+    ctx.strokeStyle = "#FFF7E6";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(-60, -180);
+    ctx.quadraticCurveTo(15, -140, 90, -180);
+    ctx.stroke();
+    const flags = ["#F25F5C", "#FFD166", "#6EC5B8", "#4A90D9", "#F49AC1"];
+    for (let i = 0; i < 5; i++) {
+      const fx = -50 + i * 30;
+      const fy = -178 + Math.sin((i / 4) * Math.PI) * 34;
+      ctx.fillStyle = flags[i];
+      ctx.beginPath();
+      ctx.moveTo(fx - 11, fy);
+      ctx.lineTo(fx + 11, fy);
+      ctx.lineTo(fx, fy + 26);
+      ctx.closePath();
+      ctx.fill();
+    }
+    // Floppy waiting at the end of every chapter (in ch5 it's the bed)
+    ctx.translate(15, -6);
+    ctx.fillStyle = "#F6E7D2";
+    roundRect(ctx, -22, -60, 44, 60, 20);
+    ctx.fill();
+    ctx.fillStyle = "#F6E7D2";
+    roundRect(ctx, -16, -104, 12, 48, 6);
+    ctx.fill();
+    roundRect(ctx, 4, -104, 12, 48, 6);
+    ctx.fill();
+    ctx.fillStyle = "#22303F";
+    ctx.beginPath(); ctx.arc(-7, -46, 3.4, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(7, -46, 3.4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#F49AC1";
+    ctx.beginPath(); ctx.arc(0, -38, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+export { GROUND_Y, WORLD_W, WORLD_H, star };

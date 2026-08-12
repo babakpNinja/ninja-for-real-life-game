@@ -1,0 +1,13 @@
+{
+  "name": "for-real-life-game",
+  "version": "1.0.0",
+  "private": true,
+  "description": "For Real Life! - a fan-made, unofficial side-scrolling adventure inspired by Bluey",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
