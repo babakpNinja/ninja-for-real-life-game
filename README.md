@@ -1,5 +1,7 @@
 # For Real Life!
 
+**Play it: https://for-real-life-game-production.up.railway.app**
+
 A fan-made, unofficial side-scrolling adventure inspired by *Bluey* — built for a
 3-year-old to play on a phone, and for her dad to enjoy watching.
 
