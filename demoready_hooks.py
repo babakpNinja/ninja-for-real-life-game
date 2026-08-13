@@ -10,8 +10,8 @@ hook is for what neither can see over a status code:
   duplicate id silently replaces another dog, and a roster the server disagrees
   with means ``/api/health`` and the file it counts came from different builds.
 - **modules** — everything here is ES modules loaded by the browser, with no
-  bundler and no build step: ``index.html`` names one entry point and each module
-  imports the next. A module that did not deploy is a 404 the server answers
+  bundler and no build step: ``index.html`` names the entry point(s) and each
+  module imports the next. A module that did not deploy is a 404 the server answers
   instantly and cheerfully, and the page then shows a menu that does nothing.
   Walking the import graph is the closest HTTP equivalent of "does it run".
 - **styles** — the same half-landed deploy that loses a module can lose
@@ -52,11 +52,11 @@ REQUIRED_COLOURS = ("coat", "belly", "patch")
 # different game from the one that was signed off.
 MIN_PLAYABLE = 5
 
-ENTRY = re.compile(r'<script[^>]+type="module"[^>]+src="([^"]+)"')
-
-# The page's <link> tags, read in two steps because the attributes come in any
-# order: one regex per attribute would have to be written twice over.
+# The page's tags, read in two steps because the attributes come in any order:
+# matching them in sequence means writing the regex once per ordering, which is
+# how the entry-point regex came to miss `<script src=... type="module">` (#98).
 LINK = re.compile(r"<link\b[^>]*>", re.I)
+SCRIPT = re.compile(r"<script\b[^>]*>", re.I)
 ATTR = re.compile(r'(\w[\w-]*)\s*=\s*"([^"]*)"')
 
 # An href the browser fetches from this site. A data: URI (the icon today) is
@@ -77,6 +77,11 @@ CREDIT_MARKERS = ("Fan-made", "Ludo Studio")
 
 def _url(base: str, path: str) -> str:
     return base.rstrip("/") + "/" + path.lstrip("/")
+
+
+def fetched(href: str) -> bool:
+    """Is this href a file the browser would ask *this* site for?"""
+    return bool(href) and not href.startswith(EXTERNAL)
 
 
 def _get(base: str, path: str) -> tuple[int, str]:
@@ -123,6 +128,33 @@ def cast(base: str) -> dict:
     return {"name": "cast", "state": DOWN if problems else READY,
             "detail": "; ".join(problems) if problems
                       else f"{len(roster)} characters, {playable} playable, all drawable"}
+
+
+def tags_in(index: str, pattern: re.Pattern) -> list[dict[str, str]]:
+    """Every matching tag as a dict of its attributes, names lowercased.
+
+    Lowercased because ``TYPE="module"`` is the same tag to a browser, and the
+    thing being defended against here is a formatter or an editor writing the
+    same HTML a different way.
+    """
+    return [{k.lower(): v for k, v in ATTR.findall(tag)} for tag in pattern.findall(index)]
+
+
+def entry_points(index: str) -> tuple[list[str], list[str]]:
+    """(module entry points, classic scripts) the browser fetches from this site.
+
+    Every module script, not just the first: a second entry point that failed to
+    deploy is a feature of the page that silently does nothing.
+
+    Classic ``<script src=...>`` tags are kept separate because they are not part
+    of the module graph — but they are still files the page needs, and a 404 there
+    is a page that half-runs, so they are fetched too. There are none in this app
+    today; the split is what stops one from being walked as an ES module and
+    reported for imports it does not have.
+    """
+    scripts = [s for s in tags_in(index, SCRIPT) if fetched(s.get("src", ""))]
+    return ([s["src"] for s in scripts if s.get("type", "").lower() == "module"],
+            [s["src"] for s in scripts if s.get("type", "").lower() != "module"])
 
 
 def imports_in(body: str) -> list[str]:
@@ -188,34 +220,31 @@ def modules(base: str) -> dict:
     status, index = _get(base, "/")
     if status != 200:
         return {"name": "modules", "state": DOWN, "detail": f"/ answered {status}"}
-    entries = ENTRY.findall(index)
+    entries, classic = entry_points(index)
     if not entries:
         return {"name": "modules", "state": DOWN,
                 "detail": "index.html loads no module — the page cannot start the game"}
 
-    seen = walk(base, entries)
+    seen = walk(base, entries + classic)
     escaped = sorted(p for p, s in seen.items() if s == OUTSIDE)
     missing = sorted(p for p, s in seen.items() if s != 200 and s != OUTSIDE)
     problems = []
     if missing:
-        problems.append(f"{len(missing)} module(s) the page imports are not deployed: "
+        problems.append(f"{len(missing)} file(s) the page loads are not deployed: "
                         f"{', '.join(missing)} — the menu will render and do nothing")
     if escaped:
         problems.append(f"{len(escaped)} import(s) point {OUTSIDE} ({', '.join(escaped)}) — "
                         f"the browser cannot fetch them from this site either")
+    extra = f" (+{len(classic)} classic script(s))" if classic else ""
     return {"name": "modules", "state": DOWN if problems else READY,
             "detail": "; ".join(problems) if problems
-                      else f"{len(seen)} modules load, imports all resolve"}
+                      else f"{len(seen) - len(classic)} modules load, imports all "
+                           f"resolve{extra}"}
 
 
 def links_in(index: str) -> list[dict[str, str]]:
     """Every ``<link>`` on the page as a dict of its attributes."""
-    return [dict(ATTR.findall(tag)) for tag in LINK.findall(index)]
-
-
-def fetched(href: str) -> bool:
-    """Is this href a file the browser would ask *this* site for?"""
-    return bool(href) and not href.startswith(EXTERNAL)
+    return tags_in(index, LINK)
 
 
 def styles(base: str) -> dict:
