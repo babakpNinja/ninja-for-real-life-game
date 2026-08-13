@@ -1,5 +1,5 @@
 {
-  "note": "Cut-out rig per character, derived by scripts/build_rigs.py from the sprite's alpha silhouette. Fractions of image size. Parts are drawn back-to-front (legs, torso, head) so each part covers the seam of the one below it.",
+  "note": "Cut-out rig per character, derived by scripts/build_rigs.py from the sprite's alpha silhouette. Fractions of image size. Parts are drawn back-to-front (legs, torso, head) so each part covers the seam of the one below it. Optional tail/ears boxes are cut out of the band they sit in and turned about their pivot; the eyes box is where a blink is wiped.",
   "rigs": {
     "bluey": {
       "hip": 0.76,
@@ -11,7 +11,65 @@
       "legParts": 2,
       "feet": 0.998,
       "derived": false,
-      "clamped": []
+      "clamped": [],
+      "tail": {
+        "box": [
+          0.74,
+          0.72,
+          1.0,
+          0.99
+        ],
+        "pivot": [
+          0.75,
+          0.74
+        ]
+      },
+      "ears": [
+        {
+          "box": [
+            0.27,
+            0.0,
+            0.45,
+            0.2
+          ],
+          "pivot": [
+            0.36,
+            0.2
+          ]
+        },
+        {
+          "box": [
+            0.51,
+            0.0,
+            0.69,
+            0.2
+          ],
+          "pivot": [
+            0.6,
+            0.2
+          ]
+        }
+      ],
+      "eyes": [
+        [
+          0.25,
+          0.205,
+          0.42,
+          0.315
+        ],
+        [
+          0.5,
+          0.21,
+          0.71,
+          0.35
+        ]
+      ],
+      "lid": [
+        0.715,
+        0.24,
+        0.745,
+        0.3
+      ]
     },
     "bingo": {
       "hip": 0.78,
@@ -23,7 +81,53 @@
       "legParts": 2,
       "feet": 0.998,
       "derived": false,
-      "clamped": []
+      "clamped": [],
+      "ears": [
+        {
+          "box": [
+            0.28,
+            0.0,
+            0.47,
+            0.17
+          ],
+          "pivot": [
+            0.38,
+            0.17
+          ]
+        },
+        {
+          "box": [
+            0.62,
+            0.0,
+            0.81,
+            0.17
+          ],
+          "pivot": [
+            0.71,
+            0.17
+          ]
+        }
+      ],
+      "eyes": [
+        [
+          0.27,
+          0.195,
+          0.47,
+          0.41
+        ],
+        [
+          0.53,
+          0.2,
+          0.76,
+          0.41
+        ]
+      ],
+      "lid": [
+        0.64,
+        0.43,
+        0.7,
+        0.47
+      ]
     },
     "bandit": {
       "hip": 0.78,
@@ -35,7 +139,53 @@
       "legParts": 2,
       "feet": 0.998,
       "derived": false,
-      "clamped": []
+      "clamped": [],
+      "ears": [
+        {
+          "box": [
+            0.17,
+            0.0,
+            0.37,
+            0.17
+          ],
+          "pivot": [
+            0.27,
+            0.17
+          ]
+        },
+        {
+          "box": [
+            0.49,
+            0.0,
+            0.7,
+            0.17
+          ],
+          "pivot": [
+            0.6,
+            0.17
+          ]
+        }
+      ],
+      "eyes": [
+        [
+          0.33,
+          0.21,
+          0.5,
+          0.39
+        ],
+        [
+          0.505,
+          0.215,
+          0.575,
+          0.31
+        ]
+      ],
+      "lid": [
+        0.1,
+        0.33,
+        0.14,
+        0.4
+      ]
     },
     "chilli": {
       "hip": 0.77,
@@ -47,7 +197,65 @@
       "legParts": 2,
       "feet": 0.998,
       "derived": false,
-      "clamped": []
+      "clamped": [],
+      "tail": {
+        "box": [
+          0.66,
+          0.76,
+          1.0,
+          0.98
+        ],
+        "pivot": [
+          0.67,
+          0.8
+        ]
+      },
+      "ears": [
+        {
+          "box": [
+            0.21,
+            0.0,
+            0.43,
+            0.16
+          ],
+          "pivot": [
+            0.32,
+            0.16
+          ]
+        },
+        {
+          "box": [
+            0.51,
+            0.0,
+            0.73,
+            0.16
+          ],
+          "pivot": [
+            0.62,
+            0.16
+          ]
+        }
+      ],
+      "eyes": [
+        [
+          0.19,
+          0.2,
+          0.29,
+          0.3
+        ],
+        [
+          0.32,
+          0.2,
+          0.58,
+          0.41
+        ]
+      ],
+      "lid": [
+        0.62,
+        0.3,
+        0.68,
+        0.38
+      ]
     },
     "muffin": {
       "hip": 0.78,
@@ -59,7 +267,53 @@
       "legParts": 2,
       "feet": 0.998,
       "derived": false,
-      "clamped": []
+      "clamped": [],
+      "ears": [
+        {
+          "box": [
+            0.29,
+            0.0,
+            0.53,
+            0.2
+          ],
+          "pivot": [
+            0.41,
+            0.2
+          ]
+        },
+        {
+          "box": [
+            0.55,
+            0.0,
+            0.81,
+            0.2
+          ],
+          "pivot": [
+            0.68,
+            0.2
+          ]
+        }
+      ],
+      "eyes": [
+        [
+          0.4,
+          0.29,
+          0.62,
+          0.48
+        ],
+        [
+          0.635,
+          0.29,
+          0.78,
+          0.43
+        ]
+      ],
+      "lid": [
+        0.28,
+        0.32,
+        0.34,
+        0.4
+      ]
     },
     "socks": {
       "hip": 0.8105,
@@ -133,7 +387,65 @@
       "legParts": 2,
       "feet": 0.9785,
       "derived": false,
-      "clamped": []
+      "clamped": [],
+      "tail": {
+        "box": [
+          0.02,
+          0.7,
+          0.37,
+          0.92
+        ],
+        "pivot": [
+          0.36,
+          0.76
+        ]
+      },
+      "ears": [
+        {
+          "box": [
+            0.03,
+            0.03,
+            0.27,
+            0.36
+          ],
+          "pivot": [
+            0.25,
+            0.09
+          ]
+        },
+        {
+          "box": [
+            0.74,
+            0.03,
+            0.99,
+            0.36
+          ],
+          "pivot": [
+            0.76,
+            0.09
+          ]
+        }
+      ],
+      "eyes": [
+        [
+          0.385,
+          0.115,
+          0.545,
+          0.28
+        ],
+        [
+          0.565,
+          0.12,
+          0.665,
+          0.245
+        ]
+      ],
+      "lid": [
+        0.32,
+        0.33,
+        0.37,
+        0.4
+      ]
     },
     "judo": {
       "hip": 0.86,

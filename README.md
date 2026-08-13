@@ -50,9 +50,13 @@ its own attribution.
 Each character is one flat front-facing render. `public/data/rigs.json` names two
 lines across it — the neck and the hip — which cut it into head / torso / legs, and
 `public/js/sprites.js` draws those parts back to front with each one overlapping the
-joint below it, so a rotated part never opens a seam. Running, jumping, floating,
-cheering and breathing are all just numbers per part (`poseFor`), which is why
-**adding a character is data, not code**: an image, a credit entry and a rig.
+joint below it, so a rotated part never opens a seam. A rig can also name a tail,
+a pair of ears and the eyes: the tail and ears are cut out and swung about their
+own pivots, and a blink is wiped over the eyes in a colour measured off the face.
+Running, jumping, floating, cheering and breathing are all just numbers per part
+(`poseFor`), which is why **adding a character is data, not code**: an image, a
+credit entry and a rig. Every extra is optional — a rig with none of them draws
+exactly as it did before they existed.
 
 Sprites load lazily — the menu family at boot, a chapter's cast when its story card
 opens, the gallery's 25 as you scroll. Until an image is there (or if one 404s) the
@@ -60,9 +64,11 @@ old hand-drawn dog is still drawn in its place, so nothing ever renders empty.
 
 ```bash
 python3 scripts/fetch_assets.py --check   # every character credited, and a cut-out
-python3 scripts/build_rigs.py --check     # neck above hip, pivots agree with parts
+python3 scripts/build_rigs.py --check     # neck above hip, pivots agree with parts, lids off the eyes
 python3 scripts/build_rigs.py --sheet     # joint lines drawn over every sprite
 python3 scripts/shots.py                  # regenerate shots/
+python3 scripts/rig_frames.py bluey       # a strip of run frames, to look at
+python3 scripts/rig_frames.py bluey --blink
 ```
 
 ### Scoring
@@ -101,7 +107,7 @@ python -m pytest tests -q                                # boots its own server
 python -m pytest tests -q --base-url=https://<live-url>  # against the deployed site
 ```
 
-40 tests, ~12s either way. With no `--base-url` the session starts `node server.js`
+45 tests, ~14s either way. With no `--base-url` the session starts `node server.js`
 on a free port and stops it afterwards, so the suite needs nothing running and does
 not disturb a dev server on 3000. They share one browser page per viewport and run
 in file order, because the game is a sequence: a chapter has to be played before

@@ -329,6 +329,169 @@ def test_opening_a_chapter_fetches_that_chapter_s_cast(desktop):
         desktop.wait_for_selector("#btn-play")
 
 
+RIG_DIFF = """
+async ({ id, state, times, drop, dropOnce, nudge, region, pad }) => {
+  const s = await import('/js/sprites.js');
+  const art = await s.loadArt();
+  s.preload([id]);
+  for (let i = 0; i < 100 && !s.artState().loaded.includes(id); i++) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  const im = new Image();
+  im.src = art.credits.assets[id].file;
+  await im.decode();
+  const size = 320, h = size * 0.9, w = (h * im.width) / im.height;
+  const left = size / 2 - w / 2, top = size - h;
+  const rig = art.rigs[id];
+
+  // the region of interest, in canvas pixels, padded: a part swings outside
+  // the box it was cut from
+  const boxes = [];
+  if (region === 'tail' && rig.tail) boxes.push(rig.tail.box);
+  if (region === 'eyes') (rig.eyes || []).forEach((e) => boxes.push(e));
+  if (region === 'ears') (rig.ears || []).forEach((e) => boxes.push([e.box[0], 0, e.box[2], e.box[3]]));
+  const rects = boxes.map((b) => [
+    left + (b[0] - pad) * w, top + (b[1] - pad) * h,
+    left + (b[2] + pad) * w, top + (b[3] + pad) * h,
+  ]);
+
+  // 'blink' means "whenever this character happens to blink", found with the
+  // module's own clock rather than a copy of its offset
+  const at = times.map((t) => {
+    if (t !== 'blink') return t;
+    for (let u = 0; u < 4; u += 0.005) if (s.blinkAmount(id, u) > 0.99) return u;
+    return 0;
+  });
+
+  const shot = (t) => {
+    const c = document.createElement('canvas');
+    c.width = size; c.height = size + 4;
+    const ctx = c.getContext('2d');
+    s.drawCharacter(ctx, id, size / 2, size, h, null, t, state, 1);
+    return ctx.getImageData(0, 0, c.width, c.height).data;
+  };
+  // `drop` takes parts off the rig for both frames — the same animation played
+  // by a character who has no tail. `dropOnce` takes them off for the second
+  // frame only, which compares two rigs rather than two moments.
+  const saved = {};
+  const lift = (keys) => keys.forEach((k) => {
+    if (k in rig) { saved[k] = rig[k]; delete rig[k]; }
+  });
+  lift(drop);
+  const before = shot(at[0]);
+  lift(dropOnce);
+  // moving a part's pivot for the second frame makes the rig's own rotation the
+  // only difference between two otherwise identical draws: at an angle of zero
+  // spinning about a different point cannot change a pixel, and mid-swing it must
+  const held = nudge ? rig[nudge.part] : null;
+  if (held) {
+    const move = (pv) => [pv[0] + nudge.by[0], pv[1] + nudge.by[1]];
+    rig[nudge.part] = Array.isArray(held)
+      ? held.map((e) => ({ ...e, pivot: move(e.pivot) }))
+      : { ...held, pivot: move(held.pivot) };
+  }
+  const after = shot(at[1]);
+  if (held) rig[nudge.part] = held;
+  Object.assign(rig, saved);
+
+  let inside = 0, outside = 0;
+  const stray = [size, size, 0, 0]; // where the unexpected pixels are, for the message
+  for (let y = 0; y < size + 4; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = (y * size + x) * 4;
+      let d = 0;
+      for (let k = 0; k < 4; k++) d = Math.max(d, Math.abs(before[i + k] - after[i + k]));
+      if (d <= 12) continue;
+      if (rects.some((r) => x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3])) { inside++; continue; }
+      outside++;
+      stray[0] = Math.min(stray[0], x); stray[1] = Math.min(stray[1], y);
+      stray[2] = Math.max(stray[2], x); stray[3] = Math.max(stray[3], y);
+    }
+  }
+  return { inside, outside, stray, rects, drawn: s.artState().drawn[id], at };
+}
+"""
+
+
+def rig_diff(page, id, state, times, region=None, pad=0.0, drop=(), drop_once=(), nudge=None):
+    """Pixels that change between two frames, split by whether they fall in the
+    region of interest. `nudge` is (part, dx, dy). See RIG_DIFF."""
+    return page.evaluate(RIG_DIFF, {
+        "id": id, "state": state, "times": list(times), "region": region,
+        "pad": pad, "drop": list(drop), "dropOnce": list(drop_once),
+        "nudge": {"part": nudge[0], "by": list(nudge[1:])} if nudge else None,
+    })
+
+
+def test_the_tail_wags(desktop):
+    """The whole point of the rig, and the one thing that reads at gameplay
+    size.
+
+    Not a diff of two moments: in a run cycle the body lifts and squashes, so
+    the tail corner changes even for a dog whose tail never moves, and the
+    cut-out lands on different subpixels each frame. Instead the same moment is
+    drawn twice with the tail's pivot moved. Rotating about a different point
+    only shows if there is a rotation at all, so the frame a quarter of a wag in
+    must change and the frame where the angle passes through zero cannot.
+    """
+    swung = rig_diff(desktop, "bluey", "run", [0.0714, 0.0714], "tail", 0.2, nudge=("tail", 0.15, 0))
+    rest = rig_diff(desktop, "bluey", "run", [0, 0], "tail", 0.2, nudge=("tail", 0.15, 0))
+    assert swung["drawn"] == "rig", swung
+    assert rest["inside"] + rest["outside"] == 0, f"rotated at rest? {rest}"
+    assert swung["inside"] > 100, f"the pose is not swinging the tail: {swung}"
+
+
+def test_the_ears_flop(desktop):
+    """The same trick as the tail, on the pair of ears, which swing mirrored and
+    a third as far. Their zero is not at t=0 — the run pose runs them a little
+    behind the legs — so both moments are read off `ear: Math.sin(step - 0.7)`
+    with step = t * 11.
+    """
+    flop = rig_diff(desktop, "bluey", "run", [0.2064, 0.2064], "ears", 0.2, nudge=("ears", 0.15, 0))
+    rest = rig_diff(desktop, "bluey", "run", [0.0636, 0.0636], "ears", 0.2, nudge=("ears", 0.15, 0))
+    assert flop["drawn"] == "rig", flop
+    assert rest["inside"] + rest["outside"] < 3, f"rotated at rest? {rest}"
+    assert flop["inside"] > 100, f"the pose is not swinging the ears: {flop}"
+
+
+def test_removing_the_tail_changes_only_the_tail_corner(desktop):
+    """The tail is cut out of the leg band and redrawn at an angle. Cut wrong,
+    it tears a hole in a leg or leaves a copy behind — either way the picture
+    changes somewhere other than the tail.
+
+    Also the optional-part guarantee: with `tail` deleted the rig still draws
+    from the artwork rather than falling back to the procedural dog.
+    """
+    r = rig_diff(desktop, "bluey", "jump", [0, 0], "tail", 0.1, drop_once=["tail"])
+    assert r["drawn"] == "rig", r
+    assert r["outside"] < 30, f"dropping the tail changed the body at {r['stray']}: {r}"
+
+
+def test_the_eyes_shut_for_a_blink(desktop):
+    """A still pose sampled off a blink and again at its peak. Nothing else in
+    the pose moves — the check below proves that by replaying the same two
+    moments with the eye boxes removed and getting an identical picture — so
+    every pixel that changes is the blink, and it must land on the eyes.
+    """
+    r = rig_diff(desktop, "bluey", "jump", [0, "blink"], "eyes", 0.06)
+    blind = rig_diff(desktop, "bluey", "jump", [0, "blink"], "eyes", 0.06, drop=["eyes"])
+    assert r["drawn"] == "rig", r
+    assert blind["inside"] + blind["outside"] == 0, f"the pose is not still: {blind}"
+    assert r["inside"] > 200, f"the eyes did not close: {r}"
+    # a ratio, not zero: the pose leans and squashes the body, so a box measured
+    # on the flat artwork lands a few degrees off once it is drawn
+    assert r["outside"] < r["inside"] * 0.05, f"the blink painted across the face: {r}"
+
+
+def test_a_rig_with_no_extras_still_draws_its_character(desktop):
+    """Most of the twenty-five have no tail, ears or eyes measured. A rig
+    without them must still draw from the artwork rather than falling back to
+    the procedural dog."""
+    r = rig_diff(desktop, "bluey", "jump", [0, 0], drop_once=["tail", "ears", "eyes"])
+    assert r["drawn"] == "rig", f"drew as {r['drawn']} without its extras"
+    assert r["outside"] > 0, "dropping every part changed nothing — was anything drawn?"
+
+
 def test_no_console_errors_on_desktop(desktop):
     """Last, so it covers everything the tests above did."""
     assert not desktop.errors, str(desktop.errors[:3])
