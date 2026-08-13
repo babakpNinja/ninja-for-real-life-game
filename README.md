@@ -5,16 +5,23 @@
 A fan-made, unofficial side-scrolling adventure inspired by *Bluey* — built for a
 3-year-old to play on a phone, and for her dad to enjoy watching.
 
-**Fan-made, unofficial and non-commercial — a personal project, not a product.**
-Not affiliated with, endorsed by or sponsored by Ludo Studio, the ABC, BBC Studios
-or Disney. *Bluey* and all characters are © Ludo Studio Pty Ltd.
+> Fan-made, unofficial and non-commercial. Bluey © Ludo Studio Pty Ltd. Character
+> names and artwork are the property of their respective owners. Artwork retrieved
+> from the community Bluey wiki; each image links to its source page.
 
-The characters are the show's own artwork, used here for personal, non-commercial
-fan use. Every file is listed with its source and the date it was fetched in
-[`public/data/asset-credits.json`](public/data/asset-credits.json), the same list
-the in-game **Credits** screen and each bio card render from. The site asks not to
-be indexed (`robots.txt` + `noindex`). If you own this artwork and would rather it
-were not here, it comes down — open an issue.
+That paragraph is not written here: it is the `notice` field of
+[`public/data/asset-credits.json`](public/data/asset-credits.json), authored in
+`scripts/fetch_assets.py`, and `fetch_assets.py --check` fails if this file, the
+boot splash or the in-game credits screen drifts from it. This paragraph used to
+claim the opposite — that none of the art here was anyone else's — and it stayed
+that way after the artwork landed, because nothing failed.
+
+Not affiliated with, endorsed by or sponsored by Ludo Studio, the ABC, BBC Studios
+or Disney. The characters are the show's own artwork, used here for personal,
+non-commercial fan use — every file is listed with its source and the date it was
+fetched, the same list the in-game **Credits** screen and each bio card render
+from. The site asks not to be indexed (`robots.txt` + `noindex`). If you own this
+artwork and would rather it were not here, it comes down — open an issue.
 
 Everything else is original: the props, the backdrops and the parallax are drawn
 from scratch on a `<canvas>` at runtime, and all music and sound effects are
@@ -63,7 +70,7 @@ opens, the gallery's 25 as you scroll. Until an image is there (or if one 404s) 
 old hand-drawn dog is still drawn in its place, so nothing ever renders empty.
 
 ```bash
-python3 scripts/fetch_assets.py --check   # every character credited, and a cut-out
+python3 scripts/fetch_assets.py --check   # credited, a cut-out, and the notice above unchanged
 python3 scripts/build_rigs.py --check     # neck above hip, pivots agree with parts, lids off the eyes
 python3 scripts/build_rigs.py --sheet     # joint lines drawn over every sprite
 python3 scripts/shots.py                  # regenerate shots/
@@ -107,7 +114,7 @@ python -m pytest tests -q                                # boots its own server
 python -m pytest tests -q --base-url=https://<live-url>  # against the deployed site
 ```
 
-45 tests, ~14s either way. With no `--base-url` the session starts `node server.js`
+48 tests, ~15s either way. With no `--base-url` the session starts `node server.js`
 on a free port and stops it afterwards, so the suite needs nothing running and does
 not disturb a dev server on 3000. They share one browser page per viewport and run
 in file order, because the game is a sequence: a chapter has to be played before
@@ -135,5 +142,6 @@ scripts/fetch_assets.py  fetches the artwork and writes the credits file
 scripts/build_rigs.py    derives the rigs, with hand-measured overrides
 scripts/shots.py         walks the screens and writes shots/
 tests/test_game.py      end-to-end suite (pytest, --base-url)
+tests/test_prose.py     runs the --check scripts, so they are not hand-run
 tests/conftest.py       browser + page fixtures
 ```

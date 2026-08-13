@@ -8,10 +8,21 @@
 
 import { Game } from "./game.js";
 import { CHAPTERS, starsFor } from "./chapters.js";
-import { drawCharacter, loadArt, preload, creditFor, notice, artState } from "./sprites.js";
+import {
+  drawCharacter, loadArt, preload, creditFor, notice, noticeShort, artState,
+} from "./sprites.js";
 import { sound } from "./audio.js";
 
 const SAVE_KEY = "forreallife.save.v1";
+
+/*
+ * The licensing notice is authored in scripts/fetch_assets.py and shipped in
+ * data/asset-credits.json; the menu and the credits screen render it from
+ * there. This is what they show if that fetch failed — a screen that says
+ * nothing about who owns the artwork is not an acceptable failure mode.
+ * `fetch_assets.py --check` fails if this string drifts from the credits file.
+ */
+const NOTICE_SHORT = "Fan-made, unofficial and non-commercial. Bluey © Ludo Studio Pty Ltd.";
 
 const el = (id) => document.getElementById(id);
 const canvas = el("game");
@@ -118,8 +129,8 @@ function menu() {
       <button class="med-btn" id="btn-stats">Stats</button>
     </div>
     <p class="tap-hint">Tap anywhere to jump · hold to float</p>
-    <p class="credits">Fan-made, unofficial and non-commercial — a personal project, not for sale.<br />
-    Bluey © Ludo Studio Pty Ltd. Characters and artwork are the property of their respective owners.<br />
+    <p class="credits">${noticeShort() || NOTICE_SHORT}<br />
+    A personal project, not for sale.<br />
     <button class="link-btn" id="btn-credits">About &amp; credits →</button></p>
   `);
   drawMenuDogs();
@@ -148,8 +159,8 @@ function credits() {
       <p><b>This is a fan-made, unofficial, non-commercial game.</b> It is not affiliated with,
       endorsed by or connected to Ludo Studio, the ABC, BBC Studios or Disney. It is not for sale
       and carries no advertising.</p>
-      <p><b>Bluey © Ludo Studio Pty Ltd.</b> Bluey characters, names and artwork are the property
-      of their respective owners. ${notice() ? "Character artwork was retrieved from the community Bluey wiki; every character's bio card links to the page its picture came from." : ""}</p>
+      <p class="notice">${notice() || NOTICE_SHORT}</p>
+      <p>Every character's bio card links to the page its picture came from.</p>
       <p>Everything else here — the levels, the backgrounds, the music and the code — was made
       for this game.</p>
       <h3>Watch the real thing</h3>

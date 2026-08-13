@@ -173,6 +173,27 @@ def test_the_credits_screen_names_the_owner_and_links_to_the_show(desktop):
     assert all(h.startswith("https://") for h in hrefs), hrefs
 
 
+def test_the_menu_and_credits_screen_render_the_notice_from_the_credits_file(
+    desktop, art_credits
+):
+    """The licensing sentence has four copies (README, boot splash, menu line,
+    credits screen). asset-credits.json is the author of it; these two are the
+    ones a player actually reads, and they used to word it themselves — so a
+    corrected notice could ship while the game kept saying the old thing."""
+    notice = " ".join(art_credits["notice"].split())
+    short = " ".join(art_credits["notice_short"].split())
+    assert notice.startswith(short), (notice, short)
+
+    menu = " ".join(desktop.locator("#overlay .credits").inner_text().split())
+    assert short in menu, menu
+
+    desktop.click("#btn-credits")
+    desktop.wait_for_selector(".credits-body")
+    body = " ".join(desktop.locator(".credits-body").inner_text().split())
+    desktop.click("#btn-back")
+    assert notice in body, body[:300]
+
+
 def test_chapter_select_lists_five_chapters_with_four_locked(desktop):
     desktop.click("#btn-chapters")
     desktop.wait_for_selector(".chapter-card")

@@ -11,8 +11,10 @@ came from in public/data/asset-credits.json so the credits screen can show it.
 from __future__ import annotations
 
 import argparse
+import html
 import io
 import json
+import re
 import sys
 import time
 import urllib.parse
@@ -89,6 +91,34 @@ FILE_OVERRIDES = {
 
 MAX_H = 512  # stored height; sprites are drawn ~1/4 of this on screen
 MIN_CUTOUT = 0.12  # below this the "render" is really a screenshot with a background
+
+# --- the licensing fact, authored once --------------------------------------
+# Before the artwork shipped the README said "no copyrighted art is used or
+# shipped"; the moment 25 renders landed that was false, and nothing would have
+# failed if I had not happened to reread it. So the sentence lives here, gets
+# written into asset-credits.json by fetch(), and every other copy of it in the
+# app is checked against that file by --check.
+NOTICE_SHORT = "Fan-made, unofficial and non-commercial. Bluey © Ludo Studio Pty Ltd."
+NOTICE = (
+    NOTICE_SHORT + " Character names and artwork are the property of their "
+    "respective owners. Artwork retrieved from the community Bluey wiki; each "
+    "image links to its source page."
+)
+SOURCE_SITE = "https://bluey.fandom.com/"
+
+README = APP / "README.md"
+INDEX = APP / "public" / "index.html"
+MAIN_JS = APP / "public" / "js" / "main.js"
+
+# Claims that were true while every character was drawn on a canvas and are
+# false now that renders ship. Named specifically — the check is about this
+# fact, not about prose in general: "the props are drawn from scratch" is still
+# true, so a phrase only counts when its own sentence is about the characters.
+STALE_CLAIMS = (
+    ("drawn from scratch", "character"),
+    ("drawn procedurally", "character"),
+    ("no copyrighted", None),
+)
 
 
 def _get(url: str, tries: int = 3) -> bytes:
@@ -260,17 +290,106 @@ def fetch(force: bool) -> int:
         time.sleep(0.4)
 
     credits["assets"] = dict(sorted(assets.items()))
-    credits.setdefault(
-        "notice",
-        "Fan-made, unofficial and non-commercial. Bluey © Ludo Studio Pty Ltd. "
-        "Character names and artwork are the property of their respective owners. "
-        "Artwork retrieved from the community Bluey wiki; each image links to its source page.",
-    )
-    credits["source_site"] = "https://bluey.fandom.com/"
+    # Assigned, not setdefault: this file is the one author of the notice, so an
+    # edit made here must land rather than being kept out by an older copy.
+    credits["notice"] = NOTICE
+    credits["notice_short"] = NOTICE_SHORT
+    credits["source_site"] = SOURCE_SITE
     CREDITS.write_text(json.dumps(credits, indent=2) + "\n")
     for p in problems:
         print(f"  MISS  {p}")
     return 1 if problems else 0
+
+
+def _flat(text: str) -> str:
+    """One long line, so a sentence wrapped across a README still matches."""
+    return " ".join(text.split())
+
+
+def _sentences(text: str) -> list[str]:
+    return [s for s in re.split(r"(?<=[.!?])\s+", _flat(text)) if s]
+
+
+def _prose_only(markdown: str) -> str:
+    """Drop fenced code blocks and table rows.
+
+    A file listing ("art.js — props, backdrops and the fallback dog, drawn
+    procedurally") has no full stops, so it reads as one enormous sentence that
+    mentions everything and trips every phrase. Claims live in prose.
+    """
+    out, fenced = [], False
+    for line in markdown.splitlines():
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        if fenced or line.lstrip().startswith("|"):
+            continue
+        out.append(re.sub(r"^\s*>\s?", "", line))
+    return "\n".join(out)
+
+
+def _tag_text(pattern: str, path: Path) -> str | None:
+    """The visible text of the first element matching pattern, or None."""
+    m = re.search(pattern, path.read_text(), re.S)
+    if not m:
+        return None
+    inner = re.sub(r"<[^>]+>", " ", m.group(1))
+    return _flat(html.unescape(inner).replace(" ", " "))
+
+
+def prose_problems(credits: dict, shipped: int) -> list[str]:
+    """Every hand-written copy of the licensing notice must still be the notice.
+
+    `shipped` is how many character renders are on disk: the false claims are
+    only false once there is artwork to be wrong about.
+    """
+    notice, short = credits.get("notice", ""), credits.get("notice_short", "")
+    if not notice or not short:
+        return ["asset-credits.json has no notice/notice_short — run fetch_assets.py"]
+
+    problems = []
+    if not notice.startswith(short):
+        problems.append(
+            f"notice_short is not how notice begins, so the menu line and the "
+            f"credits screen say different things:\n      short:  {short}\n"
+            f"      notice: {notice}"
+        )
+
+    readme = _flat(_prose_only(README.read_text()))
+    if notice not in readme:
+        problems.append(
+            "README.md does not carry the notice from asset-credits.json — "
+            f"paste this sentence into its licensing paragraph:\n      {notice}"
+        )
+    if shipped:
+        for sentence in _sentences(_prose_only(README.read_text())):
+            low = sentence.lower()
+            for phrase, alongside in STALE_CLAIMS:
+                if phrase in low and (alongside is None or alongside in low):
+                    problems.append(
+                        f"README.md still claims {sentence!r} — false, "
+                        f"{shipped} character renders ship in "
+                        f"{OUT.relative_to(APP)}/"
+                    )
+
+    splash = _tag_text(r'<p class="credits">(.*?)</p>', INDEX)
+    if splash is None:
+        problems.append('index.html has no <p class="credits"> — the boot splash lost its notice')
+    elif splash != short:
+        problems.append(
+            f"index.html's boot splash notice has drifted:\n      is:     {splash}"
+            f"\n      should: {short}"
+        )
+
+    m = re.search(r'const NOTICE_SHORT = "(.*?)";', MAIN_JS.read_text())
+    if not m:
+        problems.append("main.js has no NOTICE_SHORT constant to fall back on")
+    elif m.group(1) != short:
+        problems.append(
+            f"main.js NOTICE_SHORT has drifted from asset-credits.json:\n"
+            f"      is:     {m.group(1)}\n      should: {short}"
+        )
+    return problems
 
 
 def check() -> int:
@@ -306,7 +425,9 @@ def check() -> int:
     for cid in assets:
         if cid not in {c["id"] for c in load_chars()}:
             problems.append(f"{cid}: credited but not a character")
-    print(f"{len(assets)} assets, {total // 1024}KB total")
+    shipped = len(list(OUT.glob("*.png"))) if OUT.exists() else 0
+    problems += prose_problems(credits, shipped)
+    print(f"{len(assets)} assets, {total // 1024}KB total, {shipped} renders on disk")
     for p in problems:
         print(f"  PROBLEM {p}")
     return 1 if problems else 0

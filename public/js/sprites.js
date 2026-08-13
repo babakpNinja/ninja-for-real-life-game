@@ -59,6 +59,11 @@ export function notice() {
   return (credits && credits.notice) || "";
 }
 
+/** The one-line version, for the menu. Same sentence the long notice starts with. */
+export function noticeShort() {
+  return (credits && credits.notice_short) || "";
+}
+
 /**
  * The image for a character, kicking off its download the first time it is
  * asked for. Returns null until it is ready, which is why every draw path
