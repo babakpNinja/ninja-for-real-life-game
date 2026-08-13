@@ -8,7 +8,7 @@
 
 import { Game } from "./game.js";
 import { CHAPTERS, starsFor } from "./chapters.js";
-import { drawDog } from "./art.js";
+import { drawCharacter, loadArt, preload, creditFor, notice, artState } from "./sprites.js";
 import { sound } from "./audio.js";
 
 const SAVE_KEY = "forreallife.save.v1";
@@ -83,7 +83,7 @@ function on(id, fn) {
 }
 
 /** A small looping portrait of a character, used all over the menus. */
-function portrait(node, palette, state = "idle", facing = 1) {
+function portrait(node, ch, state = "idle", facing = 1) {
   const c = node.getContext("2d");
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const w = node.clientWidth || 80;
@@ -95,7 +95,7 @@ function portrait(node, palette, state = "idle", facing = 1) {
     const t = performance.now() / 1000;
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
     c.clearRect(0, 0, w, h);
-    drawDog(c, w / 2, h - 6, Math.min(w, h) * 1.05, palette, t, state, facing);
+    drawCharacter(c, ch.id, w / 2, h - 6, Math.min(w, h) * 0.94, ch.palette, t, state, facing);
     requestAnimationFrame(draw);
   };
   draw();
@@ -118,14 +118,50 @@ function menu() {
       <button class="med-btn" id="btn-stats">Stats</button>
     </div>
     <p class="tap-hint">Tap anywhere to jump · hold to float</p>
-    <p class="credits">Fan-made and unofficial. Not affiliated with Ludo Studio, ABC or BBC.<br />
-    All art and music here is original and drawn &amp; synthesised in your browser.</p>
+    <p class="credits">Fan-made, unofficial and non-commercial — a personal project, not for sale.<br />
+    Bluey © Ludo Studio Pty Ltd. Characters and artwork are the property of their respective owners.<br />
+    <button class="link-btn" id="btn-credits">About &amp; credits →</button></p>
   `);
   drawMenuDogs();
   on("btn-play", () => storyCard(Math.min(save.unlocked, CHAPTERS.length - 1)));
   on("btn-chapters", chapterSelect);
   on("btn-gallery", gallery);
   on("btn-stats", stats);
+  on("btn-credits", credits);
+}
+
+/* --------------------------------------------------------------- credits -- */
+
+/** Where the artwork came from, and where to go and watch the real thing. */
+function credits() {
+  const shows = [
+    ["bluey.tv", "https://www.bluey.tv/", "The official Bluey site"],
+    ["ABC iview", "https://iview.abc.net.au/show/bluey", "Watch in Australia"],
+    ["Disney+", "https://www.disneyplus.com/", "Watch in the US and elsewhere"],
+    ["BBC iPlayer", "https://www.bbc.co.uk/iplayer/episodes/m000hcvz/bluey", "Watch in the UK"],
+    ["Ludo Studio", "https://www.ludostudio.com.au/", "The people who make it"],
+  ];
+  showOverlay(`
+    <h2>About &amp; credits</h2>
+    <p class="subtitle">Made by a dad, for one three-year-old.</p>
+    <div class="credits-body">
+      <p><b>This is a fan-made, unofficial, non-commercial game.</b> It is not affiliated with,
+      endorsed by or connected to Ludo Studio, the ABC, BBC Studios or Disney. It is not for sale
+      and carries no advertising.</p>
+      <p><b>Bluey © Ludo Studio Pty Ltd.</b> Bluey characters, names and artwork are the property
+      of their respective owners. ${notice() ? "Character artwork was retrieved from the community Bluey wiki; every character's bio card links to the page its picture came from." : ""}</p>
+      <p>Everything else here — the levels, the backgrounds, the music and the code — was made
+      for this game.</p>
+      <h3>Watch the real thing</h3>
+      <ul class="link-list">
+        ${shows.map(([n, u, d]) => `<li><a href="${u}" target="_blank" rel="noopener noreferrer">${n}</a> — ${d}</li>`).join("")}
+      </ul>
+      <p class="fine">If you own this artwork and would like it taken down, it will be — it is one
+      person's tablet, not a website.</p>
+    </div>
+    <button class="med-btn" id="btn-back">← Menu</button>
+  `);
+  on("btn-back", menu);
 }
 
 /** The family lined up along the bottom of the title panel. */
@@ -150,7 +186,7 @@ function drawMenuDogs() {
     cast.forEach((ch, i) => {
       const bounce = Math.sin(t * 2.2 + i * 0.7) * 4;
       // leave room under the feet: the art draws a contact shadow below the baseline
-      drawDog(c, gap * (i + 1), h - 14 + bounce, h * 0.82, ch.palette, t + i, "idle", i % 2 ? -1 : 1);
+      drawCharacter(c, ch.id, gap * (i + 1), h - 14 + bounce, h * 0.78, ch.palette, t + i, "idle", i % 2 ? -1 : 1);
     });
     requestAnimationFrame(draw);
   };
@@ -182,7 +218,7 @@ function chapterSelect() {
   `);
   overlay.querySelectorAll(".chapter-card canvas").forEach((node) => {
     const c = characters.find((x) => x.id === node.dataset.hero);
-    if (c) portrait(node, c.palette);
+    if (c) portrait(node, c);
   });
   overlay.querySelectorAll(".chapter-card[data-ch]").forEach((b) => {
     b.addEventListener("click", () => {
@@ -198,6 +234,9 @@ function chapterSelect() {
 function storyCard(index) {
   const ch = CHAPTERS[index];
   const hero = characters.find((c) => c.id === ch.hero);
+  // fetch this chapter's cast while the story is being read, so the cameo is
+  // never drawn as the fallback dog for the first second it is on screen
+  preload([ch.hero, ch.cameo].filter(Boolean));
   showOverlay(`
     <h2>Chapter ${ch.n} — ${ch.title}</h2>
     <p class="subtitle">${ch.where}</p>
@@ -211,7 +250,7 @@ function storyCard(index) {
     </div>
   `);
   const node = overlay.querySelector("#story-dog canvas");
-  if (node && hero) portrait(node, hero.palette, "cheer");
+  if (node && hero) portrait(node, hero, "cheer");
   on("btn-go", () => play(index));
   on("btn-auto", () => { save.walk = !save.walk; store(); storyCard(index); });
   on("btn-back", menu);
@@ -312,12 +351,21 @@ function gallery() {
   `);
   overlay.querySelectorAll(".char-card canvas").forEach((node) => {
     const c = characters.find((x) => x.id === node.dataset.pal);
-    if (c) portrait(node, c.palette, "idle", 1);
+    if (c) portrait(node, c, "idle", 1);
   });
   overlay.querySelectorAll(".char-card").forEach((b) => {
     b.addEventListener("click", () => { sound.unlock(); sound.ui(); bio(b.dataset.id); });
   });
   on("btn-back", menu);
+}
+
+/** Where this character's picture came from — shown on their own bio card. */
+function attribution(c) {
+  const src = creditFor(c.id);
+  if (!src) return "";
+  return `<p class="attrib" data-attrib="${c.id}">Artwork: ${c.name} © Ludo Studio Pty Ltd —
+    <a href="${src.source}" target="_blank" rel="noopener noreferrer">source</a>
+    (retrieved ${src.retrieved})</p>`;
 }
 
 function bio(id) {
@@ -334,13 +382,14 @@ function bio(id) {
       </div>
       <p>${c.personality}</p>
       <p class="fun">💡 ${c.funFact}</p>
+      ${attribution(c)}
     </div>
     <div class="btn-row">
       <button class="med-btn" id="btn-back">← All characters</button>
       <button class="med-btn" id="btn-menu">Menu</button>
     </div>
   `, { transparent: true });
-  portrait(el("bio-dog"), c.palette, "cheer");
+  portrait(el("bio-dog"), c, "cheer");
   on("btn-back", gallery);
   on("btn-menu", menu);
 }
@@ -470,12 +519,20 @@ async function boot() {
   const data = await res.json();
   characters = data.characters;
 
+  // Character artwork: the manifest first, then eagerly fetch only the cast the
+  // menu and the first chapters need. The other twenty load when the gallery
+  // asks for them, so a phone on mobile data is not made to wait for 25 images.
+  await loadArt();
+  preload(["bluey", "bingo", "bandit", "chilli", "muffin"]);
+
   game = new Game(canvas, characters);
   game.onEvent = (ev) => {
     if (ev.type === "toast") toast(ev.text);
     if (ev.type === "complete") { recordRun(ev); setTimeout(() => results(ev), 900); }
   };
   window.game = game;                       // handy for tests and for curious dads
+  window.__art = artState;                  // which sprites actually decoded
+  window.__cast = CHAPTERS.map((c) => [c.hero, c.cameo]);  // who each chapter needs
   window.__ready = true;
 
   el("btn-mute").textContent = save.muted ? "🔇" : "🔊";

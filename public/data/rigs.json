@@ -1,0 +1,324 @@
+{
+  "note": "Cut-out rig per character, derived by scripts/build_rigs.py from the sprite's alpha silhouette. Fractions of image size. Parts are drawn back-to-front (legs, torso, head) so each part covers the seam of the one below it.",
+  "rigs": {
+    "bluey": {
+      "hip": 0.76,
+      "neck": 0.55,
+      "legPivots": [
+        0.3192,
+        0.6356
+      ],
+      "legParts": 2,
+      "feet": 0.998,
+      "derived": false,
+      "clamped": []
+    },
+    "bingo": {
+      "hip": 0.78,
+      "neck": 0.57,
+      "legPivots": [
+        0.23,
+        0.7617
+      ],
+      "legParts": 2,
+      "feet": 0.998,
+      "derived": false,
+      "clamped": []
+    },
+    "bandit": {
+      "hip": 0.78,
+      "neck": 0.52,
+      "legPivots": [
+        0.2571,
+        0.719
+      ],
+      "legParts": 2,
+      "feet": 0.998,
+      "derived": false,
+      "clamped": []
+    },
+    "chilli": {
+      "hip": 0.77,
+      "neck": 0.53,
+      "legPivots": [
+        0.286,
+        0.5558
+      ],
+      "legParts": 2,
+      "feet": 0.998,
+      "derived": false,
+      "clamped": []
+    },
+    "muffin": {
+      "hip": 0.78,
+      "neck": 0.5,
+      "legPivots": [
+        0.4239,
+        0.6389
+      ],
+      "legParts": 2,
+      "feet": 0.998,
+      "derived": false,
+      "clamped": []
+    },
+    "socks": {
+      "hip": 0.8105,
+      "neck": 0.5131,
+      "legPivots": [
+        0.2415,
+        0.5073
+      ],
+      "legParts": 2,
+      "feet": 0.9967,
+      "derived": true,
+      "clamped": []
+    },
+    "stripe": {
+      "hip": 0.791,
+      "neck": 0.58,
+      "legPivots": [
+        0.5142,
+        0.7453
+      ],
+      "legParts": 2,
+      "feet": 0.998,
+      "derived": true,
+      "clamped": [
+        "neck"
+      ]
+    },
+    "trixie": {
+      "hip": 0.7793,
+      "neck": 0.4395,
+      "legPivots": [
+        0.5371,
+        0.7758
+      ],
+      "legParts": 2,
+      "feet": 0.998,
+      "derived": true,
+      "clamped": []
+    },
+    "nana_chris": {
+      "hip": 0.79,
+      "neck": 0.44,
+      "legPivots": [
+        0.5067,
+        0.7718
+      ],
+      "legParts": 2,
+      "feet": 0.998,
+      "derived": false,
+      "clamped": []
+    },
+    "bob": {
+      "hip": 0.7793,
+      "neck": 0.3613,
+      "legPivots": [
+        0.4837,
+        0.7663
+      ],
+      "legParts": 2,
+      "feet": 0.998,
+      "derived": true,
+      "clamped": []
+    },
+    "lucky": {
+      "hip": 0.75,
+      "neck": 0.42,
+      "legPivots": [
+        0.4502,
+        0.6797
+      ],
+      "legParts": 2,
+      "feet": 0.9785,
+      "derived": false,
+      "clamped": []
+    },
+    "judo": {
+      "hip": 0.86,
+      "neck": 0.3203,
+      "legPivots": [
+        0.4779,
+        0.7139
+      ],
+      "legParts": 2,
+      "feet": 0.998,
+      "derived": true,
+      "clamped": [
+        "hip"
+      ]
+    },
+    "honey": {
+      "hip": 0.86,
+      "neck": 0.3,
+      "legPivots": [
+        0.4417
+      ],
+      "legParts": 1,
+      "feet": 0.9956,
+      "derived": true,
+      "clamped": [
+        "neck",
+        "hip"
+      ]
+    },
+    "coco": {
+      "hip": 0.86,
+      "neck": 0.4277,
+      "legPivots": [
+        0.5065
+      ],
+      "legParts": 1,
+      "feet": 0.998,
+      "derived": true,
+      "clamped": [
+        "hip"
+      ]
+    },
+    "snickers": {
+      "hip": 0.8,
+      "neck": 0.36,
+      "legPivots": [
+        0.2313,
+        0.4229
+      ],
+      "legParts": 2,
+      "feet": 0.9977,
+      "derived": false,
+      "clamped": []
+    },
+    "chloe": {
+      "hip": 0.86,
+      "neck": 0.3,
+      "legPivots": [
+        0.3742,
+        0.5373
+      ],
+      "legParts": 2,
+      "feet": 0.998,
+      "derived": true,
+      "clamped": [
+        "neck",
+        "hip"
+      ]
+    },
+    "mackenzie": {
+      "hip": 0.7812,
+      "neck": 0.58,
+      "legPivots": [
+        0.4571,
+        0.6642
+      ],
+      "legParts": 2,
+      "feet": 0.998,
+      "derived": true,
+      "clamped": [
+        "neck"
+      ]
+    },
+    "rusty": {
+      "hip": 0.7715,
+      "neck": 0.3066,
+      "legPivots": [
+        0.5095,
+        0.7611
+      ],
+      "legParts": 2,
+      "feet": 0.9941,
+      "derived": true,
+      "clamped": []
+    },
+    "indy": {
+      "hip": 0.86,
+      "neck": 0.3,
+      "legPivots": [
+        0.4193
+      ],
+      "legParts": 1,
+      "feet": 0.9961,
+      "derived": true,
+      "clamped": [
+        "neck",
+        "hip"
+      ]
+    },
+    "winton": {
+      "hip": 0.7612,
+      "neck": 0.5796,
+      "legPivots": [
+        0.4089,
+        0.7054
+      ],
+      "legParts": 2,
+      "feet": 0.995,
+      "derived": true,
+      "clamped": []
+    },
+    "jean_luc": {
+      "hip": 0.86,
+      "neck": 0.58,
+      "legPivots": [
+        0.4469,
+        0.6719
+      ],
+      "legParts": 2,
+      "feet": 0.998,
+      "derived": true,
+      "clamped": [
+        "neck",
+        "hip"
+      ]
+    },
+    "calypso": {
+      "hip": 0.7708,
+      "neck": 0.58,
+      "legPivots": [
+        0.2739,
+        0.4686
+      ],
+      "legParts": 2,
+      "feet": 0.9978,
+      "derived": true,
+      "clamped": [
+        "neck"
+      ]
+    },
+    "frisky": {
+      "hip": 0.7539,
+      "neck": 0.4316,
+      "legPivots": [
+        0.4846,
+        0.6754
+      ],
+      "legParts": 2,
+      "feet": 0.998,
+      "derived": true,
+      "clamped": []
+    },
+    "rad": {
+      "hip": 0.7773,
+      "neck": 0.457,
+      "legPivots": [
+        0.4526,
+        0.7175
+      ],
+      "legParts": 2,
+      "feet": 0.998,
+      "derived": true,
+      "clamped": []
+    },
+    "chattermax": {
+      "hip": 0.9,
+      "neck": 0.34,
+      "legPivots": [
+        0.3575,
+        0.6014
+      ],
+      "legParts": 2,
+      "feet": 0.998,
+      "derived": false,
+      "clamped": []
+    }
+  }
+}

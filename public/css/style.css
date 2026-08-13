@@ -273,3 +273,20 @@ table.stats td:last-child, table.stats th:last-child { text-align: right; }
 
 /* the tap-to-play nudge on the very first screen */
 .tap-hint { font-size: clamp(13px, 2.4vw, 18px); color: #7A8894; margin-top: 6px; }
+
+/* ------------------------------------------------- credits & attribution -- */
+
+.link-btn {
+  background: none; border: 0; padding: 0; margin-top: 4px;
+  color: var(--blue); font: inherit; font-weight: 700; text-decoration: underline;
+  cursor: pointer;
+}
+.credits-body { text-align: left; max-width: 640px; margin: 0 auto; }
+.credits-body p { font-size: clamp(13px, 2.3vw, 17px); line-height: 1.5; color: #4A5A6A; }
+.credits-body h3 { margin: 18px 0 6px; color: var(--blue); font-size: clamp(16px, 3vw, 22px); }
+.credits-body .fine { font-size: clamp(11px, 2vw, 14px); color: #8A98A6; }
+.link-list { list-style: none; padding: 0; margin: 0; }
+.link-list li { padding: 7px 0; font-size: clamp(13px, 2.3vw, 17px); color: #4A5A6A; }
+.link-list a { color: var(--blue); font-weight: 700; }
+.bio .attrib { font-size: clamp(11px, 2vw, 13px); color: #8A98A6; line-height: 1.4; margin-top: 10px; }
+.bio .attrib a { color: #6A8AA6; }

@@ -8,9 +8,10 @@
  */
 
 import {
-  drawDog, drawTree, drawGumTree, drawHouse, drawCloud, drawBalloon,
+  drawTree, drawGumTree, drawHouse, drawCloud, drawBalloon,
   drawToken, drawObstacle, roundRect, star,
 } from "./art.js";
+import { drawCharacter } from "./sprites.js";
 import { sound } from "./audio.js";
 import { CHAPTERS, buildLevel, starsFor, GROUND_Y, WORLD_W, WORLD_H } from "./chapters.js";
 
@@ -552,7 +553,7 @@ export class Game {
     // cameo friend standing near the middle of the level
     const cam = this.characters.find((c) => c.id === ch.cameo);
     if (cam && this.cameoX > left && this.cameoX < right) {
-      drawDog(ctx, this.cameoX, GROUND_Y, 74, cam.palette, this.t, "cheer", -1);
+      drawCharacter(ctx, cam.id, this.cameoX, GROUND_Y, 74, cam.palette, this.t, "cheer", -1);
     }
 
     // the finish: Floppy the bunny / home
@@ -570,7 +571,7 @@ export class Game {
     ctx.globalAlpha = 1;
 
     const p = this.player;
-    drawDog(ctx, p.x, p.y, 92, this.palette(ch.hero), this.t, p.state, p.facing);
+    drawCharacter(ctx, ch.hero, p.x, p.y, 92, this.palette(ch.hero), this.t, p.state, p.facing);
   }
 
   renderGoal(ctx, left, right) {

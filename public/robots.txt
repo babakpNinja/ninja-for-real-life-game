@@ -1,0 +1,3 @@
+# Personal, non-commercial fan project. Please do not index it.
+User-agent: *
+Disallow: /

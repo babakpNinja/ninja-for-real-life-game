@@ -5,10 +5,20 @@
 A fan-made, unofficial side-scrolling adventure inspired by *Bluey* — built for a
 3-year-old to play on a phone, and for her dad to enjoy watching.
 
-**Fan-made and unofficial. Not affiliated with Ludo Studio, ABC or BBC.**
-No copyrighted art, audio or assets are used or shipped. Every character, prop and
-backdrop is drawn from scratch on a `<canvas>` at runtime, and all music and sound
-effects are synthesised in the browser with the WebAudio API.
+**Fan-made, unofficial and non-commercial — a personal project, not a product.**
+Not affiliated with, endorsed by or sponsored by Ludo Studio, the ABC, BBC Studios
+or Disney. *Bluey* and all characters are © Ludo Studio Pty Ltd.
+
+The characters are the show's own artwork, used here for personal, non-commercial
+fan use. Every file is listed with its source and the date it was fetched in
+[`public/data/asset-credits.json`](public/data/asset-credits.json), the same list
+the in-game **Credits** screen and each bio card render from. The site asks not to
+be indexed (`robots.txt` + `noindex`). If you own this artwork and would rather it
+were not here, it comes down — open an issue.
+
+Everything else is original: the props, the backdrops and the parallax are drawn
+from scratch on a `<canvas>` at runtime, and all music and sound effects are
+synthesised in the browser with the WebAudio API.
 
 ## The game
 
@@ -25,7 +35,8 @@ search takes the family across Brisbane and back home again:
 
 Each chapter has a story card you can read aloud, a playable Heeler, a cameo friend
 who says g'day as you run past, collectibles, one hidden "dollarbuck", and a star
-rating at the end. A **Character Gallery** holds bios for 25 characters.
+rating at the end. A **Character Gallery** holds bios for 25 characters, each with
+its own attribution.
 
 ### Toddler-friendly by design
 
@@ -33,6 +44,26 @@ rating at the end. A **Character Gallery** holds bios for 25 characters.
 * **No fail state** — falling in the creek is a splash and a friendly lift back up,
   bumping something is a "Whoops!" and a slow-down. Nothing is ever lost.
 * Big tap targets, generous hitboxes, large readable HUD, no reading required to play.
+
+### How the characters move
+
+Each character is one flat front-facing render. `public/data/rigs.json` names two
+lines across it — the neck and the hip — which cut it into head / torso / legs, and
+`public/js/sprites.js` draws those parts back to front with each one overlapping the
+joint below it, so a rotated part never opens a seam. Running, jumping, floating,
+cheering and breathing are all just numbers per part (`poseFor`), which is why
+**adding a character is data, not code**: an image, a credit entry and a rig.
+
+Sprites load lazily — the menu family at boot, a chapter's cast when its story card
+opens, the gallery's 25 as you scroll. Until an image is there (or if one 404s) the
+old hand-drawn dog is still drawn in its place, so nothing ever renders empty.
+
+```bash
+python3 scripts/fetch_assets.py --check   # every character credited, and a cut-out
+python3 scripts/build_rigs.py --check     # neck above hip, pivots agree with parts
+python3 scripts/build_rigs.py --sheet     # joint lines drawn over every sprite
+python3 scripts/shots.py                  # regenerate shots/
+```
 
 ### Scoring
 
@@ -70,7 +101,7 @@ python -m pytest tests -q                                # boots its own server
 python -m pytest tests -q --base-url=https://<live-url>  # against the deployed site
 ```
 
-31 tests, ~10s either way. With no `--base-url` the session starts `node server.js`
+40 tests, ~12s either way. With no `--base-url` the session starts `node server.js`
 on a free port and stops it afterwards, so the suite needs nothing running and does
 not disturb a dev server on 3000. They share one browser page per viewport and run
 in file order, because the game is a sequence: a chapter has to be played before
@@ -86,10 +117,17 @@ gates the release (is what Railway is serving playable?).
 server.js               static file server ($PORT)
 public/js/game.js       engine: physics, level generation, scoring
 public/js/chapters.js   the five chapters + story text
-public/js/art.js        every character and prop, drawn procedurally
+public/js/art.js        props, backdrops and the fallback dog, drawn procedurally
+public/js/sprites.js    the cut-out rig: loads the artwork and animates it
 public/js/audio.js      WebAudio music + SFX
-public/js/main.js       screens, HUD, gallery, save data
-public/data/characters.json  25 character bios
+public/js/main.js       screens, HUD, gallery, credits, save data
+public/assets/characters/  25 character images (~2.2 MB total)
+public/data/characters.json      25 character bios
+public/data/asset-credits.json   where each image came from, and when
+public/data/rigs.json            neck/hip/leg pivots per character
+scripts/fetch_assets.py  fetches the artwork and writes the credits file
+scripts/build_rigs.py    derives the rigs, with hand-measured overrides
+scripts/shots.py         walks the screens and writes shots/
 tests/test_game.py      end-to-end suite (pytest, --base-url)
 tests/conftest.py       browser + page fixtures
 ```

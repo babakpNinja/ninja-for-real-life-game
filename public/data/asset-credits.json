@@ -1,0 +1,281 @@
+{
+  "assets": {
+    "bandit": {
+      "file": "assets/characters/bandit.png",
+      "source": "https://bluey.fandom.com/wiki/Bandit_Heeler",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/9/97/Bandit_Website.png",
+      "retrieved": "2026-08-13",
+      "w": 315,
+      "h": 512,
+      "bytes": 99668,
+      "cutout": 0.396,
+      "shadow_px": 41086
+    },
+    "bingo": {
+      "file": "assets/characters/bingo.png",
+      "source": "https://bluey.fandom.com/wiki/Bingo_Heeler",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/2/27/Bingo_Website.png",
+      "retrieved": "2026-08-13",
+      "w": 363,
+      "h": 512,
+      "bytes": 106407,
+      "cutout": 0.456,
+      "shadow_px": 29772
+    },
+    "bluey": {
+      "file": "assets/characters/bluey.png",
+      "source": "https://bluey.fandom.com/wiki/Bluey_Heeler",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/3/3e/Bluey-Celebrating.png",
+      "retrieved": "2026-08-13",
+      "w": 354,
+      "h": 512,
+      "bytes": 91297,
+      "cutout": 0.513,
+      "shadow_px": 15245
+    },
+    "bob": {
+      "file": "assets/characters/bob.png",
+      "source": "https://bluey.fandom.com/wiki/Bob_Heeler",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/1/13/Bob_1.png",
+      "retrieved": "2026-08-13",
+      "w": 276,
+      "h": 512,
+      "bytes": 89862,
+      "cutout": 0.399,
+      "shadow_px": 2447
+    },
+    "calypso": {
+      "file": "assets/characters/calypso.png",
+      "source": "https://bluey.fandom.com/wiki/Calypso",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/0/0f/Calypso-Official_Profile.png",
+      "retrieved": "2026-08-13",
+      "w": 303,
+      "h": 445,
+      "bytes": 99571,
+      "cutout": 0.448,
+      "shadow_px": 1962
+    },
+    "chattermax": {
+      "file": "assets/characters/chattermax.png",
+      "source": "https://bluey.fandom.com/wiki/Chattermax",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/5/55/Bluey.tv_-_Chattermax_Icon.png",
+      "retrieved": "2026-08-13",
+      "w": 414,
+      "h": 512,
+      "bytes": 160466,
+      "cutout": 0.306,
+      "shadow_px": 72
+    },
+    "chilli": {
+      "file": "assets/characters/chilli.png",
+      "source": "https://bluey.fandom.com/wiki/Chilli_Heeler",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/c/c4/Chilli_Website.png",
+      "retrieved": "2026-08-13",
+      "w": 278,
+      "h": 512,
+      "bytes": 72119,
+      "cutout": 0.425,
+      "shadow_px": 19291
+    },
+    "chloe": {
+      "file": "assets/characters/chloe.png",
+      "source": "https://bluey.fandom.com/wiki/Chloe",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/a/ae/HD_Chloe.png",
+      "retrieved": "2026-08-13",
+      "w": 322,
+      "h": 512,
+      "bytes": 86873,
+      "cutout": 0.501,
+      "shadow_px": 19888
+    },
+    "coco": {
+      "file": "assets/characters/coco.png",
+      "source": "https://bluey.fandom.com/wiki/Coco",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/2/23/HD_Coco.png",
+      "retrieved": "2026-08-13",
+      "w": 308,
+      "h": 512,
+      "bytes": 88962,
+      "cutout": 0.428,
+      "shadow_px": 469
+    },
+    "frisky": {
+      "file": "assets/characters/frisky.png",
+      "source": "https://bluey.fandom.com/wiki/Frisky_Heeler",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/4/4f/Frisky_Website.png",
+      "retrieved": "2026-08-13",
+      "w": 325,
+      "h": 512,
+      "bytes": 91137,
+      "cutout": 0.464,
+      "shadow_px": 17670
+    },
+    "honey": {
+      "file": "assets/characters/honey.png",
+      "source": "https://bluey.fandom.com/wiki/Honey",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/f/f2/HD_Honey.png",
+      "retrieved": "2026-08-13",
+      "w": 283,
+      "h": 451,
+      "bytes": 52316,
+      "cutout": 0.398,
+      "shadow_px": 1303
+    },
+    "indy": {
+      "file": "assets/characters/indy.png",
+      "source": "https://bluey.fandom.com/wiki/Indy",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/5/5f/HD_Indy.png",
+      "retrieved": "2026-08-13",
+      "w": 378,
+      "h": 512,
+      "bytes": 136805,
+      "cutout": 0.437,
+      "shadow_px": 91
+    },
+    "jean_luc": {
+      "file": "assets/characters/jean_luc.png",
+      "source": "https://bluey.fandom.com/wiki/Jean-Luc",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/2/2b/Jean-luc_Website.png",
+      "retrieved": "2026-08-13",
+      "w": 320,
+      "h": 512,
+      "bytes": 87643,
+      "cutout": 0.409,
+      "shadow_px": 13428
+    },
+    "judo": {
+      "file": "assets/characters/judo.png",
+      "source": "https://bluey.fandom.com/wiki/Judo",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/7/7f/Judo_Website.png",
+      "retrieved": "2026-08-13",
+      "w": 339,
+      "h": 512,
+      "bytes": 111764,
+      "cutout": 0.365,
+      "shadow_px": 40923
+    },
+    "lucky": {
+      "file": "assets/characters/lucky.png",
+      "source": "https://bluey.fandom.com/wiki/Lucky",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/d/db/HD_Lucky.png",
+      "retrieved": "2026-08-13",
+      "w": 281,
+      "h": 512,
+      "bytes": 68421,
+      "cutout": 0.395,
+      "shadow_px": 31303
+    },
+    "mackenzie": {
+      "file": "assets/characters/mackenzie.png",
+      "source": "https://bluey.fandom.com/wiki/Mackenzie_Border_Collie",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/4/4e/Mackenzie_HD.png",
+      "retrieved": "2026-08-13",
+      "w": 338,
+      "h": 512,
+      "bytes": 76837,
+      "cutout": 0.529,
+      "shadow_px": 38489
+    },
+    "muffin": {
+      "file": "assets/characters/muffin.png",
+      "source": "https://bluey.fandom.com/wiki/Muffin_Heeler",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/7/7c/Muffin_1.png",
+      "retrieved": "2026-08-13",
+      "w": 414,
+      "h": 512,
+      "bytes": 106511,
+      "cutout": 0.443,
+      "shadow_px": 23974
+    },
+    "nana_chris": {
+      "file": "assets/characters/nana_chris.png",
+      "source": "https://bluey.fandom.com/wiki/Chris_Heeler",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/1/15/Nana_1.png",
+      "retrieved": "2026-08-13",
+      "w": 298,
+      "h": 512,
+      "bytes": 94119,
+      "cutout": 0.408,
+      "shadow_px": 1233
+    },
+    "rad": {
+      "file": "assets/characters/rad.png",
+      "source": "https://bluey.fandom.com/wiki/Radley_Heeler",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/e/ee/Radley_Website2.png",
+      "retrieved": "2026-08-13",
+      "w": 285,
+      "h": 512,
+      "bytes": 89963,
+      "cutout": 0.357,
+      "shadow_px": 27552
+    },
+    "rusty": {
+      "file": "assets/characters/rusty.png",
+      "source": "https://bluey.fandom.com/wiki/Rusty",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/8/87/Rusty_Website.png",
+      "retrieved": "2026-08-13",
+      "w": 316,
+      "h": 512,
+      "bytes": 69040,
+      "cutout": 0.475,
+      "shadow_px": 16940
+    },
+    "snickers": {
+      "file": "assets/characters/snickers.png",
+      "source": "https://bluey.fandom.com/wiki/Snickers",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/0/03/Snickers_1.png",
+      "retrieved": "2026-08-13",
+      "w": 214,
+      "h": 437,
+      "bytes": 66011,
+      "cutout": 0.418,
+      "shadow_px": 428
+    },
+    "socks": {
+      "file": "assets/characters/socks.png",
+      "source": "https://bluey.fandom.com/wiki/Socks_Heeler",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/e/ef/Socks.png",
+      "retrieved": "2026-08-13",
+      "w": 205,
+      "h": 306,
+      "bytes": 62415,
+      "cutout": 0.414,
+      "shadow_px": 10
+    },
+    "stripe": {
+      "file": "assets/characters/stripe.png",
+      "source": "https://bluey.fandom.com/wiki/Stripe_Heeler",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/9/96/Stripe.png",
+      "retrieved": "2026-08-13",
+      "w": 318,
+      "h": 512,
+      "bytes": 106337,
+      "cutout": 0.458,
+      "shadow_px": 4
+    },
+    "trixie": {
+      "file": "assets/characters/trixie.png",
+      "source": "https://bluey.fandom.com/wiki/Trixie_Heeler",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/c/c7/Aunt_Trixie.png",
+      "retrieved": "2026-08-13",
+      "w": 310,
+      "h": 512,
+      "bytes": 82084,
+      "cutout": 0.46,
+      "shadow_px": 2149
+    },
+    "winton": {
+      "file": "assets/characters/winton.png",
+      "source": "https://bluey.fandom.com/wiki/Winton",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/9/96/HD_Winton.png",
+      "retrieved": "2026-08-13",
+      "w": 280,
+      "h": 402,
+      "bytes": 82350,
+      "cutout": 0.266,
+      "shadow_px": 2020
+    }
+  },
+  "notice": "Fan-made, unofficial and non-commercial. Bluey \u00a9 Ludo Studio Pty Ltd. Character names and artwork are the property of their respective owners. Artwork retrieved from the community Bluey wiki; each image links to its source page.",
+  "source_site": "https://bluey.fandom.com/"
+}
