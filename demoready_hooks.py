@@ -57,7 +57,14 @@ MIN_PLAYABLE = 5
 # how the entry-point regex came to miss `<script src=... type="module">` (#98).
 LINK = re.compile(r"<link\b[^>]*>", re.I)
 SCRIPT = re.compile(r"<script\b[^>]*>", re.I)
-ATTR = re.compile(r'(\w[\w-]*)\s*=\s*"([^"]*)"')
+# All three ways HTML lets a value be written. Reading only `x="y"` (which this
+# did) made a single-quoted or bare `src=` parse to nothing: a false DOWN for the
+# stylesheet and the module, and — worse — a classic script that vanished from the
+# walk, so a 404 there went unreported (#103). Not `html.parser`: a HTMLParser
+# subclass is longer than this pair, and the tags here have no attribute whose
+# value could contain `>`. If a third gap in this parse shows up, that stops being
+# true and the stdlib parser becomes the shorter answer.
+ATTR = re.compile(r"""(\w[\w-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>=`]+))""")
 
 # An href the browser fetches from this site. A data: URI (the icon today) is
 # already in the page, and an absolute URL is somebody else's deploy: asking for
@@ -130,14 +137,21 @@ def cast(base: str) -> dict:
                       else f"{len(roster)} characters, {playable} playable, all drawable"}
 
 
-def tags_in(index: str, pattern: re.Pattern) -> list[dict[str, str]]:
-    """Every matching tag as a dict of its attributes, names lowercased.
+def attrs_of(tag: str) -> dict[str, str]:
+    """One tag's attributes, names lowercased, however the values are quoted.
 
     Lowercased because ``TYPE="module"`` is the same tag to a browser, and the
     thing being defended against here is a formatter or an editor writing the
-    same HTML a different way.
+    same HTML a different way. Exactly one of the three value groups matches, so
+    an empty ``href=""`` stays an empty string rather than becoming a miss.
     """
-    return [{k.lower(): v for k, v in ATTR.findall(tag)} for tag in pattern.findall(index)]
+    return {m[1].lower(): next(v for v in m.groups()[1:] if v is not None)
+            for m in ATTR.finditer(tag)}
+
+
+def tags_in(index: str, pattern: re.Pattern) -> list[dict[str, str]]:
+    """Every matching tag as a dict of its attributes."""
+    return [attrs_of(tag) for tag in pattern.findall(index)]
 
 
 def entry_points(index: str) -> tuple[list[str], list[str]]:
