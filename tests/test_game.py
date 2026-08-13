@@ -37,6 +37,18 @@ def phone(request, make_page):
     return make_page(request.param, touch=True)
 
 
+@pytest.fixture
+def own_page(make_page):
+    """A page of this test's own, for the tests that must not inherit a screen.
+
+    Everything else here shares ``desktop`` on purpose. Two things cannot: a page
+    whose artwork is blocked (the route would break every test after it) and
+    anything asserting a sprite has *not* been drawn yet, since by the end of the
+    file the gallery has drawn all twenty-five.
+    """
+    return make_page(DESKTOP)
+
+
 def play_chapter(page, index):
     """Start a chapter and fast-forward the physics until it completes."""
     page.evaluate(
@@ -315,8 +327,8 @@ def test_every_hero_played_as_its_real_self(desktop):
 
     Cameos are not asserted here: the chapters above are fast-forwarded through
     ``game.step()`` without a render pass, so a cameo standing mid-level is
-    never painted. What can be checked is that they *could* not fall back —
-    covered by the next test.
+    never painted. They get their own page and their own render, two tests
+    below.
     """
     art = desktop.evaluate("window.__art()")
     for cid in ["bluey", "bingo", "bandit", "chilli"]:
@@ -348,6 +360,113 @@ def test_opening_a_chapter_fetches_that_chapter_s_cast(desktop):
         assert all(c in rigged for c in want), f"chapter {i + 1}: no rig for {want}"
         desktop.click("#btn-back")
         desktop.wait_for_selector("#btn-play")
+
+
+RUN_TO_CAMEO = """
+(i) => {
+  const g = window.game;
+  document.getElementById('overlay').classList.add('hidden');
+  const before = window.__art().loaded.slice();
+  g.start(i);
+  g.paused = true;   // the rAF loop keeps painting; the physics is driven here
+  // same fast-forward as play_chapter, stopped just short of the cameo so it is
+  // on screen and the level is still running
+  for (let n = 0; n < 60000 && g.mode === 'playing' && g.player.x < g.cameoX - 40; n++) {
+    if (g.player.onGround && n % 26 === 0) g.press();
+    if (n % 26 === 12) g.release();
+    g.step(1 / 120);
+  }
+  g.render();
+  // read straight after the draw, before anything can decode: this is what the
+  // cameo looked like on its very first frame
+  return {
+    cameo: g.ch.cameo, x: g.player.x, cameoX: g.cameoX, mode: g.mode,
+    loadedBefore: before.includes(g.ch.cameo),
+    first: window.__art().drawn[g.ch.cameo],
+  };
+}
+"""
+
+
+def test_every_cameo_is_painted_from_its_own_artwork(own_page, art_credits):
+    """The cameo friends are the only characters no test has ever seen drawn.
+
+    ``play_chapter`` fast-forwards ``game.step()`` with no render pass, so a
+    cameo standing mid-level is never painted; the gallery draws portraits from
+    the character list, which is a different id. A cameo whose id does not match
+    its asset key would therefore wave as the procedural dog in the finished
+    game and every test would still pass.
+
+    Its own page, and the chapters are started directly rather than through the
+    story card — which preloads the cast — so the first paint is the uncached
+    one. Two of the five (Lucky, Nana) are in neither the menu family nor
+    anything drawn before this, and those two also prove the fallback branch
+    runs for real: an unloaded cameo *must* draw as the fallback dog first.
+    """
+    page = own_page
+    cast = page.evaluate("window.__cast")
+    assert [c for _, c in cast].count(None) == 0, cast
+
+    for i, (_hero, cameo) in enumerate(cast):
+        assert cameo in art_credits["assets"], f"chapter {i + 1} cameo {cameo!r} has no artwork"
+        run = page.evaluate(RUN_TO_CAMEO, i)
+        assert run["cameo"] == cameo, run
+        assert run["x"] >= run["cameoX"] - 60, f"never reached the cameo: {run}"
+        if not run["loadedBefore"]:
+            assert run["first"] == "fallback", (
+                f"{cameo} was not loaded yet and did not use the fallback: {run}")
+        page.wait_for_function(
+            "(c) => window.__art().loaded.includes(c)", arg=cameo, timeout=15000)
+        page.evaluate("() => window.game.render()")
+        drawn = page.evaluate("window.__art().drawn")
+        assert drawn.get(cameo) == "rig", f"chapter {i + 1}: {cameo} drew as {drawn.get(cameo)}"
+    page.evaluate("() => window.game.stop()")
+
+
+# --- when the pictures never arrive -----------------------------------------
+
+@pytest.fixture
+def no_art_page(own_page):
+    """The same game on a connection that will not give up the artwork.
+
+    The route is installed and then the page reloaded, because the sprites the
+    menu asks for are requested during boot — routing after that would block
+    nothing that matters.
+    """
+    own_page.route("**/assets/characters/*", lambda route: route.abort())
+    own_page.reload(wait_until="domcontentloaded")
+    own_page.wait_for_function("window.__ready === true", timeout=20000)
+    return own_page
+
+
+def test_the_fallback_dogs_carry_a_page_that_never_gets_its_artwork(no_art_page):
+    """The safety net, executed. Every other test asserts the opposite — that
+    nothing fell back — so this branch has never once run under test, and its
+    failure mode is a blank character in front of a three-year-old on exactly
+    the slow connection it exists for.
+    """
+    page = no_art_page
+    page.click("#btn-gallery")
+    page.wait_for_selector(".char-card")
+    page.wait_for_function("() => window.__art().failed.length >= 25", timeout=30000)
+    art = page.evaluate("window.__art()")
+    assert not art["loaded"], f"something loaded anyway: {art['loaded']}"
+    assert len(art["drawn"]) >= 25, f"only {len(art['drawn'])} characters were drawn at all"
+    rigged = [k for k, v in art["drawn"].items() if v != "fallback"]
+    assert not rigged, f"claimed to draw from artwork it never got: {rigged}"
+
+    # ...and a fallback that draws nothing is the failure this is guarding
+    ink = page.evaluate(
+        """() => [...document.querySelectorAll('.char-card canvas')].slice(0, 6).map((n) => {
+             const d = n.getContext('2d').getImageData(0, 0, n.width, n.height).data;
+             let on = 0;
+             for (let i = 3; i < d.length; i += 4) if (d[i] > 8) on++;
+             return { id: n.dataset.pal, part: on / (n.width * n.height) };
+           })"""
+    )
+    blank = [c for c in ink if c["part"] < 0.02]
+    assert not blank, f"fallback drew (almost) nothing for {blank}"
+    assert not any("Uncaught" in e for e in page.errors), str(page.errors[:3])
 
 
 RIG_DIFF = """

@@ -107,14 +107,17 @@ That one endpoint feeds `tools/uptime.py`'s content floors, `demoready`'s
 
 Playwright end-to-end suite — plays every chapter to the finish line, checks
 scoring, stars, persistence, the gallery, mobile viewports (iPhone + Pixel),
-touch input, WebAudio unlock-on-tap and console errors.
+touch input, WebAudio unlock-on-tap and console errors. Two of them open a page
+of their own: one paints the cameo friends, whom the fast-forwarded chapters
+never render, and one blocks the artwork outright to watch the fallback dogs
+carry the whole game.
 
 ```bash
 python -m pytest tests -q                                # boots its own server
 python -m pytest tests -q --base-url=https://<live-url>  # against the deployed site
 ```
 
-48 tests, ~15s either way. With no `--base-url` the session starts `node server.js`
+50 tests, ~17s either way. With no `--base-url` the session starts `node server.js`
 on a free port and stops it afterwards, so the suite needs nothing running and does
 not disturb a dev server on 3000. They share one browser page per viewport and run
 in file order, because the game is a sequence: a chapter has to be played before
