@@ -83,13 +83,16 @@ def main() -> int:
         base = page.evaluate(BLINK_AT, a.character) if a.blink else 0.0
         times = [round(base + span * i / (a.frames - 1), 4) for i in range(a.frames)]
         how = page.evaluate(DRAW, [a.character, a.state, times, a.size])
-        if how != "rig":
-            print(f"  PROBLEM {a.character} drew as {how}, not from its artwork")
+        if how == "fallback":
+            print(f"  PROBLEM {a.character} drew as the fallback dog, not from its artwork")
             return 1
         name = f"frames-{a.character}-{'blink' if a.blink else a.state}.png"
         page.screenshot(path=str(OUT / name))
         browser.close()
-    print(f"  frames -> {(OUT / name).relative_to(APP)}  t={times[0]}..{times[-1]}")
+    # "rig" is the standing render cut into bands; "pose" is the artist's own
+    # drawing of this state. Which one it was is the first thing to know when
+    # looking at a strip that has come out wrong.
+    print(f"  frames -> {(OUT / name).relative_to(APP)}  t={times[0]}..{times[-1]}  drawn as {how}")
     return 0
 
 

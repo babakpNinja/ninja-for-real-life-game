@@ -1,6 +1,11 @@
-# For Real Life!
+# Ana Bingo!
 
 **Play it: https://for-real-life-game-production.up.railway.app**
+
+(It was called *For Real Life!* until August 2026.) <!-- old-name-on-purpose: this sentence exists to explain the URL, so it has to say it -->
+The URL keeps the old name on purpose: it is the link that has already been shared,
+and renaming the Railway service would break it. Every *visible* copy of the name is
+checked against `GAME_NAME` in `scripts/fetch_assets.py` by `fetch_assets.py --check`.
 
 A fan-made, unofficial side-scrolling adventure inspired by *Bluey* — built for a
 3-year-old to play on a phone, and for her dad to enjoy watching.
@@ -54,14 +59,26 @@ its own attribution.
 
 ### How the characters move
 
-Each character is one flat front-facing render. `public/data/rigs.json` names two
-lines across it — the neck and the hip — which cut it into head / torso / legs, and
-`public/js/sprites.js` draws those parts back to front with each one overlapping the
-joint below it, so a rotated part never opens a seam. A rig can also name a tail,
-a pair of ears and the eyes: the tail and ears are cut out and swung about their
-own pivots, and a blink is wiped over the eyes in a colour measured off the face.
-Running, jumping, floating, cheering and breathing are all just numbers per part
-(`poseFor`), which is why **adding a character is data, not code**: an image, a
+Where the artist drew the action, that drawing is what you see.
+`public/data/poses.json` maps a character and a state — run, jump, cheer — to the
+side-on renders in `public/assets/poses/`, and `public/js/sprites.js` draws the
+whole frame, flipped to face the way it is travelling, with a bob, a squash and a
+lean about the feet on top. Nothing is cut up, so nothing can tear. Seven of these
+exist today, because the wiki has exactly one running render per character; the
+format takes a list per state, so a real multi-frame cycle is data, not code.
+
+Everything else is one flat front-facing render animated as a cut-out rig.
+`public/data/rigs.json` names two lines across it — the neck and the hip — which
+cut it into head / torso / legs, and those parts are drawn back to front with each
+one overlapping the joint below it, so a rotated part never opens a seam. A rig can
+also name a tail, a pair of ears and the eyes: the tail and ears are cut out and
+swung about their own pivots, and a blink is wiped over the eyes in a colour
+measured off the face. The legs are **not** rotated — a band cut below the hip of a
+front-facing render is not a leg but a rectangle holding both legs, the gap between
+them and, for Muffin, her tail, and swinging it slid a grey slab out sideways. So
+the rig's job is to keep a character alive — breathing, wag, ears, blink — and a
+pose frame's job is to make it run. Both are just numbers per part (`poseFor`,
+`frameMotion`), which is why **adding a character is data, not code**: an image, a
 credit entry and a rig. Every extra is optional — a rig with none of them draws
 exactly as it did before they existed. Twenty-three of the twenty-five blink and
 thirteen flop their ears; the boxes for those were proposed from the artwork by
@@ -161,12 +178,14 @@ server.js               static file server ($PORT)
 public/js/game.js       engine: physics, level generation, scoring
 public/js/chapters.js   the five chapters + story text
 public/js/art.js        props, backdrops and the fallback dog, drawn procedurally
-public/js/sprites.js    the cut-out rig: loads the artwork and animates it
+public/js/sprites.js    pose frames + the cut-out rig: loads the artwork and animates it
 public/js/audio.js      WebAudio music + SFX
 public/js/main.js       screens, HUD, gallery, credits, save data
 public/assets/characters/  25 character images (~2.2 MB total)
+public/assets/poses/       the side-on action renders, one per character/state
 public/data/characters.json      25 character bios
 public/data/asset-credits.json   where each image came from, and when
+public/data/poses.json           which frames a character uses for which state
 public/data/rigs.json            neck/hip/leg pivots per character
 scripts/fetch_assets.py  fetches the artwork and writes the credits file
 scripts/build_rigs.py    derives the rigs, with hand-measured overrides

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""What "safe to show" means for *For Real Life!* (#29).
+"""What "safe to show" means for *Ana Bingo!* (#29).
 
 ``tools/demoready.py`` already knows the game is up and that the menu renders,
 and ``uptime`` already holds the content floors (25 characters, 5 chapters). This

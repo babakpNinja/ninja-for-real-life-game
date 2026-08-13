@@ -1,0 +1,33 @@
+{
+  "frames": {
+    "bluey": {
+      "run": [
+        "assets/poses/bluey-run-0.png"
+      ],
+      "jump": [
+        "assets/poses/bluey-jump-0.png"
+      ],
+      "cheer": [
+        "assets/poses/bluey-cheer-0.png"
+      ]
+    },
+    "bingo": {
+      "run": [
+        "assets/poses/bingo-run-0.png"
+      ],
+      "cheer": [
+        "assets/poses/bingo-cheer-0.png"
+      ]
+    },
+    "bandit": {
+      "run": [
+        "assets/poses/bandit-run-0.png"
+      ]
+    },
+    "chilli": {
+      "cheer": [
+        "assets/poses/chilli-cheer-0.png"
+      ]
+    }
+  }
+}

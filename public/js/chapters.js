@@ -1,5 +1,5 @@
 /*
- * chapters.js — the five chapters of "For Real Life!".
+ * chapters.js — the five chapters of "Ana Bingo!".
  *
  * Each chapter is a small data description plus a `build(rng)` that lays out the
  * level: ground platforms, collectibles, soft obstacles and cameo spots. Levels

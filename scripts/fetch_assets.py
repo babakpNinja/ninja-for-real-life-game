@@ -92,6 +92,59 @@ FILE_OVERRIDES = {
 MAX_H = 512  # stored height; sprites are drawn ~1/4 of this on screen
 MIN_CUTOUT = 0.12  # below this the "render" is really a screenshot with a background
 
+# --- action poses -----------------------------------------------------------
+# The rig animates one front-facing render by cutting it into bands and
+# rotating them. That is fine for breathing and a blink; for a run it tore the
+# character apart — leg columns shearing sideways, the tail sliding out as a
+# dark slab at hip height. The fix is not a better rig, it is the artist's own
+# drawing of the pose: the wiki has genuine side-on running renders.
+#
+# `--poses` fetches these into public/assets/poses/ and writes the frame sets
+# to public/data/poses.json, so `sprites.js` can swap a frame in for a state
+# and only fall back to the rig where there is no artwork for it.
+#
+# What is NOT here matters as much: there is exactly one running render per
+# character on the wiki, so a "run" is one frame plus motion, not a six-frame
+# cycle — the file format takes a list so more frames are data if they ever
+# exist. Chilli has no running render at all (her only dynamic pose is a
+# dance) and Muffin has six files in total, none of them usable. Those two run
+# on the rig, which is why the rig's run still has to look right.
+POSES = {
+    "bluey": {
+        "run": ["Bluey-Running.png"],
+        "jump": ["Bluey-Leaping.png"],
+        "cheer": ["Bluey-Celebrating.png"],
+    },
+    "bingo": {
+        "run": ["Bingo-Running.png"],
+        "cheer": ["Bingo-Dance.png"],
+    },
+    "bandit": {
+        "run": ["Bandit-Obstacle_Course-Running.png"],
+    },
+    "chilli": {
+        "cheer": ["Chilli-Dancing.png"],
+    },
+}
+POSES_OUT = APP / "public" / "assets" / "poses"
+POSES_JSON = APP / "public" / "data" / "poses.json"
+SPRITES_JS = APP / "public" / "js" / "sprites.js"
+
+
+def states() -> set[str]:
+    """The animation states, read out of the code that draws them.
+
+    A state named in poses.json that `poseFor` has no case for is a pose
+    fetched, credited and never drawn — and a typo ("jumping") looks exactly
+    like a deliberate one. sprites.js is the author; this reads its switch
+    rather than keeping a second list here to drift.
+    """
+    body = SPRITES_JS.read_text().split("function poseFor(", 1)[-1]
+    found = set(re.findall(r'case "(\w+)":', body))
+    if "default:" in body:
+        found.add("idle")  # poseFor's default arm; the caller's name for it
+    return found
+
 # --- the licensing fact, authored once --------------------------------------
 # Before the artwork shipped the README said "no copyrighted art is used or
 # shipped"; the moment 25 renders landed that was false, and nothing would have
@@ -106,9 +159,23 @@ NOTICE = (
 )
 SOURCE_SITE = "https://bluey.fandom.com/"
 
+# --- the game's name, authored once -----------------------------------------
+# It was "For Real Life!" and it is now "Ana Bingo!", and renaming it meant
+# finding eight hand-written copies across five files — a title tag, a meta
+# description, an <h1>, a package description, a README heading, a server log
+# line and two docstrings. Nothing would have failed if I had missed one, and
+# the menu would have disagreed with the tab. Same treatment as the notice: it
+# lives here, `fetch()` writes it into asset-credits.json, and `--check` reads
+# every visible copy back and compares.
+GAME_NAME = "Ana Bingo!"
+GAME_TAGLINE = "a heeler family adventure"
+OLD_NAME_OK = "old-name-on-purpose:"  # a line may say the old name if it says why
+
 README = APP / "README.md"
 INDEX = APP / "public" / "index.html"
 MAIN_JS = APP / "public" / "js" / "main.js"
+PACKAGE = APP / "package.json"
+SERVER_JS = APP / "server.js"
 
 # Claims that were true while every character was drawn on a canvas and are
 # false now that renders ship. Named specifically — the check is about this
@@ -301,6 +368,121 @@ def fetch(force: bool) -> int:
     return 1 if problems else 0
 
 
+def pose_id(cid: str, state: str, i: int) -> str:
+    return f"{cid}:{state}:{i}"
+
+
+def fetch_poses(force: bool) -> int:
+    """Fetch the action-pose renders and write public/data/poses.json.
+
+    Each frame is credited exactly like a character render — same normalise(),
+    same shadow strip, same cutout score — because it is the same kind of
+    thing: someone else's artwork, shipped here, which has to say where it came
+    from. They live under a separate `poses` key so the per-character checks
+    above keep meaning "every character has its render".
+    """
+    credits = json.loads(CREDITS.read_text()) if CREDITS.exists() else {}
+    poses = credits.get("poses", {})
+    frames: dict[str, dict[str, list[str]]] = {}
+    problems = []
+    for cid, states in POSES.items():
+        for state, files in states.items():
+            for i, name in enumerate(files):
+                key = pose_id(cid, state, i)
+                rel = f"assets/poses/{cid}-{state}-{i}.png"
+                dest = APP / "public" / rel
+                frames.setdefault(cid, {}).setdefault(state, []).append(rel)
+                if dest.exists() and not force and key in poses:
+                    print(f"  have  {key}")
+                    continue
+                try:
+                    url = file_image(f"File:{name}")
+                    if not url:
+                        problems.append(f"{key}: File:{name} has no image")
+                        continue
+                    info = normalise(_get(url), dest)
+                except Exception as exc:
+                    problems.append(f"{key}: {exc}")
+                    continue
+                poses[key] = {
+                    "file": rel,
+                    "source": "https://bluey.fandom.com/wiki/"
+                    + urllib.parse.quote(f"File:{name}".replace(" ", "_")),
+                    "image": url.split("/revision/")[0],
+                    "retrieved": date.today().isoformat(),
+                    **info,
+                }
+                flag = "  OPAQUE?" if info["cutout"] < MIN_CUTOUT else ""
+                print(
+                    f"  got   {key}  {info['w']}x{info['h']}"
+                    f"  {info['bytes'] // 1024}KB  cutout={info['cutout']}"
+                    f"  <- {name}{flag}"
+                )
+                time.sleep(0.4)
+
+    credits["poses"] = dict(sorted(poses.items()))
+    CREDITS.write_text(json.dumps(credits, indent=2) + "\n")
+    POSES_JSON.write_text(json.dumps({"frames": frames}, indent=2) + "\n")
+    for p in problems:
+        print(f"  MISS  {p}")
+    return 1 if problems else 0
+
+
+def pose_problems() -> list[str]:
+    """poses.json, the files it names and their credits must all agree.
+
+    Three ways this goes wrong and none of them fail on their own: a frame in
+    poses.json with no file (the character silently drops back to the rig mid
+    chapter), a file on disk nobody credits, and a state named here that
+    `sprites.js` never asks for — a pose fetched, credited and never drawn.
+    """
+    if not POSES_JSON.exists():
+        return ["no public/data/poses.json — run fetch_assets.py --poses"]
+    credits = json.loads(CREDITS.read_text())
+    poses = credits.get("poses", {})
+    frames = json.loads(POSES_JSON.read_text()).get("frames", {})
+    ids = {c["id"] for c in load_chars()}
+    problems = []
+    named = set()
+    for cid, by_state in frames.items():
+        if cid not in ids:
+            problems.append(f"poses.json has frames for {cid}, which is not a character")
+        for state, files in by_state.items():
+            if state not in states():
+                problems.append(
+                    f"{cid}: poses.json names the state {state!r}, which sprites.js "
+                    f"never draws — one of {sorted(states())}"
+                )
+            for i, rel in enumerate(files):
+                named.add(rel)
+                key = pose_id(cid, state, i)
+                if not (APP / "public" / rel).exists():
+                    problems.append(f"{key}: {rel} missing on disk")
+                entry = poses.get(key)
+                if not entry:
+                    problems.append(f"{key}: no credit entry")
+                    continue
+                if entry.get("file") != rel:
+                    problems.append(f"{key}: credited as {entry.get('file')}, drawn from {rel}")
+                for k in ("source", "image", "retrieved"):
+                    if not entry.get(k):
+                        problems.append(f"{key}: credit entry has no {k}")
+                if entry.get("cutout", 0) < MIN_CUTOUT:
+                    problems.append(
+                        f"{key}: cutout {entry.get('cutout')} < {MIN_CUTOUT} — that is a "
+                        "screenshot with a background, not a transparent render"
+                    )
+    for key, entry in poses.items():
+        if entry.get("file") not in named:
+            problems.append(f"{key}: credited but poses.json never draws it")
+    if POSES_OUT.exists():
+        for f in sorted(POSES_OUT.glob("*.png")):
+            rel = f"assets/poses/{f.name}"
+            if rel not in named:
+                problems.append(f"{rel}: on disk but poses.json never draws it")
+    return problems
+
+
 def _flat(text: str) -> str:
     """One long line, so a sentence wrapped across a README still matches."""
     return " ".join(text.split())
@@ -335,6 +517,73 @@ def _tag_text(pattern: str, path: Path) -> str | None:
         return None
     inner = re.sub(r"<[^>]+>", " ", m.group(1))
     return _flat(html.unescape(inner).replace(" ", " "))
+
+
+def name_problems() -> list[str]:
+    """Every visible copy of the game's name must still be the game's name.
+
+    The name is not data the app fetches — the tab title and the meta
+    description have to be right before any JavaScript runs, so they are static
+    text, and static text is what drifts. `GAME_NAME` above is the author; each
+    copy below is read back out of the file that carries it and compared.
+
+    `package.json`'s *name* is deliberately not on this list: it is the Railway
+    service (`for-real-life-game`), which stays put so the URL Babak already has
+    keeps working. Only its human-readable description is a copy of this fact.
+    """
+    problems = []
+
+    def want(where, got, must_contain=GAME_NAME):
+        if got is None:
+            problems.append(f"{where} is missing — nothing there to carry the game's name")
+        elif must_contain not in got:
+            problems.append(f"{where} does not say {must_contain!r}:\n      is: {got}")
+
+    index = INDEX.read_text()
+    m = re.search(r"<title>(.*?)</title>", index, re.S)
+    want("index.html <title>", _flat(html.unescape(m.group(1))) if m else None)
+    m = re.search(r'<meta name="description" content="(.*?)"', index, re.S)
+    want("index.html meta description", _flat(html.unescape(m.group(1))) if m else None)
+
+    # both of them: index.html carries the menu heading as static markup so the
+    # panel is not empty before main.js runs, and main.js writes it again when it
+    # rebuilds the overlay. Checking one found eight of the nine copies.
+    for where in (INDEX, MAIN_JS):
+        want(f'{where.name} <h1 class="title">',
+             _tag_text(r'<h1 class="title">(.*?)</h1>', where))
+
+    pkg = json.loads(PACKAGE.read_text())
+    want("package.json description", pkg.get("description"))
+
+    m = re.search(r"^#\s+(.*)$", README.read_text(), re.M)
+    want("README.md's heading", _flat(m.group(1)) if m else None)
+
+    m = re.search(r"console\.log\(`(.*?) listening", SERVER_JS.read_text())
+    want("server.js's startup line", m.group(1) if m else None)
+
+    # ...and no copy of the old one left behind. A rename that half happened is
+    # worse than either name: the tab and the menu disagree and it reads as a
+    # different site. Comments and docstrings count — they are what the next
+    # reader believes.
+    #
+    # One sentence has to say the old name out loud: the README paragraph that
+    # explains why the URL still carries it. A scan for a phrase always ends up
+    # banning its own explanation, and the wrong answer is to reword the
+    # explanation until the scan is happy. So a line may opt out by saying so,
+    # in the file, with the reason attached — a marker with nothing after it is
+    # still a problem, because "why" is the part worth reading.
+    for path in (INDEX, MAIN_JS, README, PACKAGE, SERVER_JS, APP / "public" / "js" / "chapters.js"):
+        for i, line in enumerate(path.read_text().splitlines(), 1):
+            # the <h1> writes it as "For Real&nbsp;Life!", which is the same
+            # words to a reader and a different string to a scan
+            line = html.unescape(line).replace("\xa0", " ")  # escaped: an invisible one reads as a no-op
+            if OLD_NAME_OK in line:
+                if not line.split(OLD_NAME_OK, 1)[1].strip():
+                    problems.append(f"{path.name}:{i} claims {OLD_NAME_OK} and gives no reason")
+                continue
+            if "For Real Life" in line and "for-real-life-game" not in line:
+                problems.append(f"{path.name}:{i} still says the old name: {line.strip()}")
+    return problems
 
 
 def prose_problems(credits: dict, shipped: int) -> list[str]:
@@ -427,7 +676,12 @@ def check() -> int:
             problems.append(f"{cid}: credited but not a character")
     shipped = len(list(OUT.glob("*.png"))) if OUT.exists() else 0
     problems += prose_problems(credits, shipped)
-    print(f"{len(assets)} assets, {total // 1024}KB total, {shipped} renders on disk")
+    problems += name_problems()
+    problems += pose_problems()
+    frames = sum(len(f) for s in json.loads(POSES_JSON.read_text())["frames"].values()
+                 for f in s.values()) if POSES_JSON.exists() else 0
+    print(f"{len(assets)} assets, {total // 1024}KB total, {shipped} renders on disk, "
+          f"{frames} pose frames, and every visible copy of {GAME_NAME!r} checked")
     for p in problems:
         print(f"  PROBLEM {p}")
     return 1 if problems else 0
@@ -437,8 +691,13 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--check", action="store_true")
+    ap.add_argument("--poses", action="store_true", help="fetch the action-pose frames")
     a = ap.parse_args()
-    return check() if a.check else fetch(a.force)
+    if a.check:
+        return check()
+    if a.poses:
+        return fetch_poses(a.force)
+    return fetch(a.force)
 
 
 if __name__ == "__main__":

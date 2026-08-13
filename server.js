@@ -82,7 +82,7 @@ const server = http.createServer((req, res) => {
 // would otherwise read 0 chapters and be told the deploy is truncated
 countContent().then(() => {
   server.listen(PORT, "0.0.0.0", () => {
-    console.log(`For Real Life! listening on ${PORT} ` +
+    console.log(`Ana Bingo! listening on ${PORT} ` +
                 `(${CONTENT.characters} characters, ${CONTENT.chapters} chapters)`);
   });
 });

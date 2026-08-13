@@ -313,3 +313,83 @@ def test_a_box_with_no_artwork_to_read_it_on_is_a_problem(rigs, tmp_path, monkey
     out = capsys.readouterr().out
     assert "0 face box(es) read back" in out, out
     assert "has face boxes but no sprite" in out, out
+
+
+# --------------------------------------------- the game has one name (#164)
+# It was renamed from "For Real Life!" to "Ana Bingo!", and the name had eight
+# hand-written copies across five files — a <title>, a meta description, an
+# <h1>, a package description, a README heading, a server log line and two
+# docstrings. Nothing would have failed if one had been missed, and a half-done
+# rename reads as a different site in the tab than in the menu.
+
+@pytest.fixture(scope="module")
+def fetch_assets():
+    """fetch_assets as a module, loaded by path for the same reason as `rigs`."""
+    spec = importlib.util.spec_from_file_location(
+        "fetch_assets", APP / "scripts" / "fetch_assets.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def a_readme(tmp_path, body: str, mod):
+    """A stand-in README with a correct heading, plus whatever `body` says."""
+    p = tmp_path / "README.md"
+    p.write_text(f"# {mod.GAME_NAME}\n\n{body}\n")
+    return p
+
+
+def test_a_copy_of_the_old_name_left_behind_is_a_problem(fetch_assets, tmp_path, monkeypatch):
+    mod = fetch_assets
+    monkeypatch.setattr(mod, "README", a_readme(tmp_path, "Welcome to For Real Life!", mod))
+    problem, = [p for p in mod.name_problems() if "old name" in p]
+    assert "README.md:3" in problem, problem
+
+
+def test_the_scan_reads_the_name_as_a_person_would(fetch_assets, tmp_path, monkeypatch):
+    """The <h1> writes it "For Real&nbsp;Life!", which no plain substring finds.
+
+    This is the copy that mattered — the menu heading is the biggest words on
+    the screen — and it is the one written in a way the obvious scan misses.
+    """
+    mod = fetch_assets
+    monkeypatch.setattr(mod, "README",
+                        a_readme(tmp_path, "<h1>For Real&nbsp;Life!</h1>", mod))
+    assert [p for p in mod.name_problems() if "old name" in p]
+
+
+def test_a_sentence_may_say_the_old_name_if_it_says_why(fetch_assets, tmp_path, monkeypatch):
+    """A phrase scan always ends up banning its own explanation.
+
+    The README has to name "For Real Life!" once, to explain why the URL still
+    does. Rewording that sentence until the scan is happy would be the check
+    editing the docs; opting out with a stated reason is the check being told.
+    """
+    mod = fetch_assets
+    line = f"It was For Real Life! <!-- {mod.OLD_NAME_OK} the URL still carries it -->"
+    monkeypatch.setattr(mod, "README", a_readme(tmp_path, line, mod))
+    assert not [p for p in mod.name_problems() if "old name" in p]
+
+
+def test_the_opt_out_must_carry_a_reason(fetch_assets, tmp_path, monkeypatch):
+    """...or it is a way to silence the check without saying anything."""
+    mod = fetch_assets
+    line = f"It was For Real Life! <!-- {mod.OLD_NAME_OK} -->".replace("-->", "")
+    monkeypatch.setattr(mod, "README", a_readme(tmp_path, line, mod))
+    problem, = [p for p in mod.name_problems() if "no reason" in p]
+    assert "README.md:3" in problem, problem
+
+
+def test_a_copy_that_disagrees_with_GAME_NAME_is_a_problem(fetch_assets, tmp_path, monkeypatch):
+    """The other half: not a leftover, just wrong.
+
+    A name scan can only find the name it knows about. Renaming the game a
+    second time — or a typo in one copy — leaves no trace of "For Real Life!"
+    anywhere, so the leftover scan above stays silent and every copy still has
+    to be compared to the one that authored it.
+    """
+    mod = fetch_assets
+    monkeypatch.setattr(mod, "README", a_readme(tmp_path, "nothing to see", mod).with_suffix(".x"))
+    (tmp_path / "README.x").write_text("# Anna Bingo\n")
+    problem, = [p for p in mod.name_problems() if "heading" in p]
+    assert mod.GAME_NAME in problem and "Anna Bingo" in problem, problem

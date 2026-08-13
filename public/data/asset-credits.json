@@ -278,5 +278,84 @@
   },
   "notice": "Fan-made, unofficial and non-commercial. Bluey \u00a9 Ludo Studio Pty Ltd. Character names and artwork are the property of their respective owners. Artwork retrieved from the community Bluey wiki; each image links to its source page.",
   "source_site": "https://bluey.fandom.com/",
-  "notice_short": "Fan-made, unofficial and non-commercial. Bluey \u00a9 Ludo Studio Pty Ltd."
+  "notice_short": "Fan-made, unofficial and non-commercial. Bluey \u00a9 Ludo Studio Pty Ltd.",
+  "poses": {
+    "bandit:run:0": {
+      "file": "assets/poses/bandit-run-0.png",
+      "source": "https://bluey.fandom.com/wiki/File%3ABandit-Obstacle_Course-Running.png",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/6/60/Bandit-Obstacle_Course-Running.png",
+      "retrieved": "2026-08-13",
+      "w": 369,
+      "h": 512,
+      "bytes": 89927,
+      "cutout": 0.502,
+      "shadow_px": 8893
+    },
+    "bingo:cheer:0": {
+      "file": "assets/poses/bingo-cheer-0.png",
+      "source": "https://bluey.fandom.com/wiki/File%3ABingo-Dance.png",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/6/66/Bingo-Dance.png",
+      "retrieved": "2026-08-13",
+      "w": 376,
+      "h": 482,
+      "bytes": 51814,
+      "cutout": 0.451,
+      "shadow_px": 3156
+    },
+    "bingo:run:0": {
+      "file": "assets/poses/bingo-run-0.png",
+      "source": "https://bluey.fandom.com/wiki/File%3ABingo-Running.png",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/3/36/Bingo-Running.png",
+      "retrieved": "2026-08-13",
+      "w": 350,
+      "h": 470,
+      "bytes": 98233,
+      "cutout": 0.486,
+      "shadow_px": 3683
+    },
+    "bluey:cheer:0": {
+      "file": "assets/poses/bluey-cheer-0.png",
+      "source": "https://bluey.fandom.com/wiki/File%3ABluey-Celebrating.png",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/3/3e/Bluey-Celebrating.png",
+      "retrieved": "2026-08-13",
+      "w": 354,
+      "h": 512,
+      "bytes": 91297,
+      "cutout": 0.513,
+      "shadow_px": 15245
+    },
+    "bluey:jump:0": {
+      "file": "assets/poses/bluey-jump-0.png",
+      "source": "https://bluey.fandom.com/wiki/File%3ABluey-Leaping.png",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/2/23/Bluey-Leaping.png",
+      "retrieved": "2026-08-13",
+      "w": 370,
+      "h": 512,
+      "bytes": 115658,
+      "cutout": 0.523,
+      "shadow_px": 829
+    },
+    "bluey:run:0": {
+      "file": "assets/poses/bluey-run-0.png",
+      "source": "https://bluey.fandom.com/wiki/File%3ABluey-Running.png",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/c/ce/Bluey-Running.png",
+      "retrieved": "2026-08-13",
+      "w": 408,
+      "h": 512,
+      "bytes": 119965,
+      "cutout": 0.524,
+      "shadow_px": 12933
+    },
+    "chilli:cheer:0": {
+      "file": "assets/poses/chilli-cheer-0.png",
+      "source": "https://bluey.fandom.com/wiki/File%3AChilli-Dancing.png",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/1/1e/Chilli-Dancing.png",
+      "retrieved": "2026-08-13",
+      "w": 369,
+      "h": 512,
+      "bytes": 75365,
+      "cutout": 0.519,
+      "shadow_px": 12389
+    }
+  }
 }

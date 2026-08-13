@@ -119,7 +119,7 @@ function menu() {
   hud.classList.add("hidden");
   const resume = save.unlocked > 0 || Object.keys(save.chapters).length;
   showOverlay(`
-    <h1 class="title">For Real&nbsp;Life!</h1>
+    <h1 class="title">Ana&nbsp;Bingo!</h1>
     <p class="subtitle">A backyard adventure with the heeler family</p>
     <div id="menu-dogs"><canvas></canvas></div>
     <button class="big-btn" id="btn-play">▶ ${resume ? "Keep playing" : "Play"}</button>

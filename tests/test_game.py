@@ -1,5 +1,5 @@
 """
-End-to-end tests for "For Real Life!".
+End-to-end tests for "Ana Bingo!".
 
 Runs against any base URL, so the same suite covers the local server and the
 deployed site:
@@ -18,10 +18,19 @@ place their state belongs.
 """
 
 import json
+import re
 import urllib.request
 from pathlib import Path
 
 import pytest
+
+APP = Path(__file__).resolve().parent.parent
+
+# The game's name is authored once, in fetch_assets.py. `--check` proves the
+# static copies agree with it; this suite is the only thing that can say the
+# *rendered* page does, which is the copy anyone actually reads.
+GAME_NAME = re.search(r'^GAME_NAME = "(.*)"$',
+                      (APP / "scripts" / "fetch_assets.py").read_text(), re.M).group(1)
 
 DESKTOP = {"width": 1280, "height": 800}
 IPHONE = {"width": 390, "height": 844}
@@ -30,10 +39,15 @@ PIXEL = {"width": 412, "height": 915}
 # Read from the tree, not from the server, because it decides how many tests
 # there are: a rig that lost its eyes should make this file shorter in the diff
 # that lost them, not quietly test one dog less.
-RIGS = json.loads((Path(__file__).resolve().parent.parent
-                   / "public" / "data" / "rigs.json").read_text())["rigs"]
+RIGS = json.loads((APP / "public" / "data" / "rigs.json").read_text())["rigs"]
 EYED = sorted(cid for cid, r in RIGS.items() if r.get("eyes"))
 EARED = sorted(cid for cid, r in RIGS.items() if r.get("ears"))
+
+# Same rule for the pose frames: every (character, state) the data claims is a
+# test, so a pose that stops being drawn takes its test with it rather than
+# leaving one that passes over nothing.
+POSES = json.loads((APP / "public" / "data" / "poses.json").read_text())["frames"]
+POSED = sorted((cid, state) for cid, by in POSES.items() for state in by)
 
 
 @pytest.fixture(scope="module")
@@ -159,6 +173,9 @@ def test_the_page_asks_not_to_be_indexed(base_url):
 
 def test_title_screen_renders(desktop):
     assert desktop.locator("h1.title").is_visible()
+    # the tab and the menu have to be the same game
+    assert desktop.locator("h1.title").inner_text().replace("\u00a0", " ") == GAME_NAME
+    assert GAME_NAME in desktop.title()
     assert desktop.locator("#btn-play").is_visible()
     assert desktop.evaluate("document.getElementById('game').width") > 0
 
@@ -428,7 +445,11 @@ def test_every_cameo_is_painted_from_its_own_artwork(own_page, art_credits):
             "(c) => window.__art().loaded.includes(c)", arg=cameo, timeout=15000)
         page.evaluate("() => window.game.render()")
         drawn = page.evaluate("window.__art().drawn")
-        assert drawn.get(cameo) == "rig", f"chapter {i + 1}: {cameo} drew as {drawn.get(cameo)}"
+        # "its own artwork" is either way of using it: the cut-out rig, or a
+        # pose frame the artist drew. What this test is here to catch is
+        # "fallback" — the procedural dog standing in for a real character.
+        assert drawn.get(cameo) in ("rig", "pose"), (
+            f"chapter {i + 1}: {cameo} drew as {drawn.get(cameo)}")
     page.evaluate("() => window.game.stop()")
 
 
@@ -538,7 +559,7 @@ def test_one_dropped_request_is_not_the_final_answer(own_page):
     page.wait_for_function("() => window.__art().loaded.includes('bluey')", timeout=15000)
     art = page.evaluate("window.__art()")
     assert "bluey" not in art["failed"], "still marked failed after it loaded"
-    assert art["drawn"].get("bluey") == "rig", (
+    assert art["drawn"].get("bluey") in ("rig", "pose"), (
         f"the menu is still drawing the fallback dog: {art['drawn']}")
     # the retry must not be answerable from whatever cached the failure
     assert any("retry=" in u for u in retried), f"retried the identical URL: {retried}"
@@ -549,6 +570,14 @@ RIG_DIFF = """
 async ({ id, state, times, drop, dropOnce, nudge, region, pad }) => {
   const s = await import('/js/sprites.js');
   const art = await s.loadArt();
+  // Every caller of this helper is asking a question about the *rig* — does
+  // this tail rotate, is this ear box cut from the right place. A character
+  // with pose art for `state` draws that instead and the rig is never touched,
+  // so the answer would be "nothing moved" for a reason that has nothing to do
+  // with the rig. Take the poses off for the duration; `art.poses` is the
+  // module's own object, the same aliasing `drop` uses on `art.rigs`.
+  const heldPoses = art.poses[id];
+  delete art.poses[id];
   s.preload([id]);
   for (let i = 0; i < 100 && !s.artState().loaded.includes(id); i++) {
     await new Promise((r) => setTimeout(r, 50));
@@ -609,6 +638,7 @@ async ({ id, state, times, drop, dropOnce, nudge, region, pad }) => {
   const after = shot(at[1]);
   if (held) rig[nudge.part] = held;
   Object.assign(rig, saved);
+  if (heldPoses) art.poses[id] = heldPoses;
 
   let inside = 0, outside = 0;
   const stray = [size, size, 0, 0]; // where the unexpected pixels are, for the message
@@ -726,6 +756,173 @@ def test_a_rig_with_no_extras_still_draws_its_character(desktop):
     r = rig_diff(desktop, "bluey", "jump", [0, 0], drop_once=["tail", "ears", "eyes"])
     assert r["drawn"] == "rig", f"drew as {r['drawn']} without its extras"
     assert r["outside"] > 0, "dropping every part changed nothing — was anything drawn?"
+
+
+# --- pose frames: the artist's own drawing of the action --------------------
+
+POSE_DIFF = """
+async ({ a, b, mirror }) => {
+  const s = await import('/js/sprites.js');
+  const art = await s.loadArt();
+  const size = 320;
+
+  const shot = async (spec) => {
+    // `frames` replaces what poses.json says for this character, so a test can
+    // ask "which file did it draw?" by naming a different one. art.poses is
+    // the module's own object; the rig tests lean on the same aliasing.
+    const held = art.poses[spec.id];
+    if (spec.frames) art.poses[spec.id] = spec.frames;
+    s.preload([spec.id]);
+    const want = Object.values(art.poses[spec.id] || {}).flat();
+    for (let i = 0; i < 100; i++) {
+      const have = s.artState().poseFrames;
+      if (want.every((f) => have.includes(f))) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const c = document.createElement('canvas');
+    c.width = size; c.height = size + 4;
+    const ctx = c.getContext('2d');
+    s.drawCharacter(ctx, spec.id, size / 2, size, size * 0.9, null,
+                    spec.t, spec.state, spec.facing === undefined ? 1 : spec.facing);
+    const out = {
+      data: ctx.getImageData(0, 0, c.width, c.height).data,
+      drawn: s.artState().drawn[spec.id],
+    };
+    if (held === undefined) delete art.poses[spec.id]; else art.poses[spec.id] = held;
+    return out;
+  };
+
+  const A = await shot(a);
+  const B = await shot(b);
+  // `mirror` compares A against B flipped about the vertical centre line, which
+  // is what facing is supposed to do to the picture.
+  let changed = 0, opaqueA = 0, opaqueB = 0;
+  for (let y = 0; y < size + 4; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = (y * size + x) * 4;
+      const j = (y * size + (mirror ? size - 1 - x : x)) * 4;
+      if (A.data[i + 3] > 8) opaqueA++;
+      if (B.data[j + 3] > 8) opaqueB++;
+      let d = 0;
+      for (let k = 0; k < 4; k++) d = Math.max(d, Math.abs(A.data[i + k] - B.data[j + k]));
+      if (d > 12) changed++;
+    }
+  }
+  return { changed, opaqueA, opaqueB, a: A.drawn, b: B.drawn };
+}
+"""
+
+
+def pose_diff(page, a, b, mirror=False):
+    """Pixels that differ between two draws of the same character. See POSE_DIFF."""
+    return page.evaluate(POSE_DIFF, {"a": a, "b": b, "mirror": mirror})
+
+
+@pytest.mark.parametrize("cid,state", POSED, ids=[f"{c}-{s}" for c, s in POSED])
+def test_a_pose_frame_is_drawn_instead_of_the_rig(desktop, cid, state):
+    """The point of the whole change: where there is a drawing of the action,
+    that drawing is what appears — not a standing render cut into bands.
+
+    Drawn *and* different from the rig's version of the same moment. Reporting
+    "pose" while painting nothing would satisfy the first half on its own.
+    """
+    r = pose_diff(desktop,
+                  {"id": cid, "state": state, "t": 0.31},
+                  {"id": cid, "state": state, "t": 0.31, "frames": {}})
+    assert r["a"] == "pose", f"{cid} in {state} drew as {r['a']}"
+    assert r["b"] == "rig", f"with no pose frames {cid} drew as {r['b']} — not the rig"
+    assert r["opaqueA"] > 1000, f"the pose frame painted almost nothing: {r}"
+    assert r["changed"] > r["opaqueA"] * 0.1, (
+        f"the pose render is the same picture as the rig's: {r}")
+
+
+@pytest.mark.parametrize("cid,state", POSED, ids=[f"{c}-{s}" for c, s in POSED])
+def test_the_pose_drawn_is_the_file_the_data_names(desktop, cid, state):
+    """A pose that draws *some* frame is not the same as one that draws the
+    right frame: `poseFrame` picks by index into a list, so an off-by-one or a
+    stale cache key would still show a dog.
+
+    Rather than re-doing the draw transform here to compare against the PNG —
+    the mistake #157 records — the same draw is asked for twice with only the
+    named file changed. Identical output would mean the name is not what it is
+    drawing from.
+    """
+    other = "assets/poses/bluey-cheer-0.png" if cid != "bluey" else "assets/poses/bingo-cheer-0.png"
+    r = pose_diff(desktop,
+                  {"id": cid, "state": state, "t": 0.31},
+                  {"id": cid, "state": state, "t": 0.31, "frames": {state: [other]}})
+    assert r["a"] == "pose" and r["b"] == "pose", r
+    assert r["opaqueA"] > 1000 and r["opaqueB"] > 1000, f"one of them is blank: {r}"
+    assert r["changed"] > r["opaqueA"] * 0.2, (
+        f"swapping the frame file changed almost nothing — is it drawing what "
+        f"poses.json names? {r}")
+
+
+@pytest.mark.parametrize("cid,state", POSED, ids=[f"{c}-{s}" for c, s in POSED])
+def test_a_pose_faces_the_way_it_is_travelling(desktop, cid, state):
+    """Every pose render is drawn facing one way. A side-scroller that ignores
+    `facing` has the character running backwards the moment it turns around,
+    which is worse than the front-facing standing render it replaced.
+
+    The check is that facing -1 is facing 1 *mirrored*, not merely different: a
+    draw that ignored facing and happened to move would pass 'different'.
+    """
+    same = pose_diff(desktop,
+                     {"id": cid, "state": state, "t": 0.31, "facing": 1},
+                     {"id": cid, "state": state, "t": 0.31, "facing": -1},
+                     mirror=True)
+    assert same["a"] == "pose" and same["b"] == "pose", same
+    assert same["opaqueA"] > 1000, f"nothing was drawn: {same}"
+    # not zero: the sprite is tilted, so the mirror of a lean is not the lean —
+    # the two pictures agree on the body and disagree along the edges
+    assert same["changed"] < same["opaqueA"] * 0.35, (
+        f"facing -1 is not the mirror of facing 1: {same}")
+
+    unmirrored = pose_diff(desktop,
+                           {"id": cid, "state": state, "t": 0.31, "facing": 1},
+                           {"id": cid, "state": state, "t": 0.31, "facing": -1})
+    assert unmirrored["changed"] > same["changed"], (
+        f"flipping made no difference to the picture — facing is ignored: {unmirrored}")
+
+
+def test_a_multi_frame_pose_advances_through_its_frames(desktop):
+    """Every set in poses.json is one frame today — the wiki has exactly one
+    running render per character — so the cycling code is unreached by the
+    shipped data, and would stay unreached until the day a second frame lands.
+
+    So it is driven here: the same character, the same moment, drawn once from
+    a one-frame set and once from a two-frame set. At a time whose frame index
+    is 1 the two must differ; at a time whose index is 0 they must be identical.
+    Same clock both times, so the motion is not what is being measured.
+    """
+    one = ["assets/poses/bluey-run-0.png"]
+    two = ["assets/poses/bluey-run-0.png", "assets/poses/bluey-cheer-0.png"]
+    fps = 12  # POSE_FPS in sprites.js; asserted below rather than trusted
+    second = 1.5 / fps  # frame index 1
+    first = 0.5 / fps   # frame index 0
+
+    on = pose_diff(desktop,
+                   {"id": "bluey", "state": "run", "t": second, "frames": {"run": one}},
+                   {"id": "bluey", "state": "run", "t": second, "frames": {"run": two}})
+    assert on["a"] == "pose" and on["b"] == "pose", on
+    assert on["changed"] > on["opaqueA"] * 0.2, (
+        f"the second frame of the set was never drawn: {on}")
+
+    off = pose_diff(desktop,
+                    {"id": "bluey", "state": "run", "t": first, "frames": {"run": one}},
+                    {"id": "bluey", "state": "run", "t": first, "frames": {"run": two}})
+    assert off["changed"] == 0, (
+        f"a two-frame set drew something else at frame index 0: {off}")
+
+
+def test_the_pose_cadence_in_the_test_matches_the_code():
+    """The test above names 12fps to pick its two moments. If sprites.js changes
+    its cadence, that test starts sampling the wrong frames and its failure
+    would read as a broken run cycle."""
+    src = (APP / "public" / "js" / "sprites.js").read_text()
+    assert re.search(r"^const POSE_FPS = 12;$", src, re.M), (
+        "POSE_FPS is no longer 12 — test_a_multi_frame_pose_advances_through_its_frames "
+        "picks its sample times from that number")
 
 
 def test_no_console_errors_on_desktop(desktop):

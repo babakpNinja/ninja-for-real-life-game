@@ -1,5 +1,14 @@
 /*
- * sprites.js — draws the real character artwork as an animated cut-out rig.
+ * sprites.js — draws the real character artwork, two ways.
+ *
+ * First choice is a pose frame: public/data/poses.json maps a character and a
+ * state to the side-on renders in public/assets/poses/, and the whole frame is
+ * drawn as one piece — flipped to face the way it is travelling, with a bob, a
+ * squash and a lean about the feet on top (`frameMotion`). Nothing is cut up,
+ * so nothing can tear. That is how a run cycle happens.
+ *
+ * Everything else falls through to the rig below, which is the same character
+ * standing still, kept alive rather than made to run.
  *
  * Each sprite is one front-facing render (see public/data/asset-credits.json for
  * where every file came from). A rig in public/data/rigs.json names two lines
@@ -22,11 +31,19 @@
 
 import { drawDog } from "./art.js";
 
-const images = new Map(); // id -> HTMLImageElement once decoded
-const pending = new Set();
-const failed = new Map(); // id -> { tries, retryAt }, everything not showing its artwork
-const drawn = new Map(); // id -> "rig" | "fallback", how it was last drawn
+/** One image cache. The artwork is keyed by character id, poses by file path. */
+function cache() {
+  return {
+    images: new Map(), // key -> HTMLImageElement once decoded
+    pending: new Set(),
+    failed: new Map(), // key -> { tries, retryAt }, everything not showing yet
+  };
+}
+const art = cache();
+const poseArt = cache();
+const drawn = new Map(); // id -> "pose" | "rig" | "fallback", how it was last drawn
 let rigs = {};
+let poses = {}; // id -> state -> [frame, ...]
 let credits = null;
 
 /** Parts overlap their joint by this fraction of sprite height. */
@@ -49,10 +66,14 @@ const BACKOFF_MAX = 2000; // ...up to this, so giving up takes ~5s, not ~8
 // next frame. Without this, a long tunnel is still permanent: five tries take
 // under eight seconds and the connection is back a minute later.
 if (typeof window !== "undefined" && window.addEventListener) {
-  window.addEventListener("online", () => failed.clear());
+  window.addEventListener("online", () => {
+    art.failed.clear();
+    poseArt.failed.clear();
+  });
 }
 
 export function artState() {
+  const { images, pending, failed } = art;
   return {
     loaded: [...images.keys()],
     pending: [...pending],
@@ -65,16 +86,26 @@ export function artState() {
     tries: Object.fromEntries([...failed].map(([id, f]) => [id, f.tries])),
     rigged: Object.keys(rigs),
     drawn: Object.fromEntries(drawn),
+    // Pose frames are a separate cache keyed by path, deliberately: everything
+    // above is per character, and a caller asking "is bluey loaded?" means her
+    // render, not whether her run frame happens to have arrived too.
+    posed: Object.keys(poses),
+    poseFrames: [...poseArt.images.keys()],
     credits,
   };
 }
 
 export async function loadArt() {
   const grab = (p) => fetch(p).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-  const [c, r] = await Promise.all([grab("data/asset-credits.json"), grab("data/rigs.json")]);
+  const [c, r, p] = await Promise.all([
+    grab("data/asset-credits.json"),
+    grab("data/rigs.json"),
+    grab("data/poses.json"),
+  ]);
   credits = c;
   rigs = (r && r.rigs) || {};
-  return { credits, rigs };
+  poses = (p && p.frames) || {};
+  return { credits, rigs, poses };
 }
 
 export function creditFor(id) {
@@ -96,32 +127,43 @@ export function noticeShort() {
  * is ready, which is why every draw path has a fallback: the gallery must not
  * block on 25 downloads.
  */
-export function sprite(id) {
-  if (images.has(id)) return images.get(id);
-  if (pending.has(id)) return null;
-  const gone = failed.get(id);
+function load(store, key, url) {
+  const { images, pending, failed } = store;
+  if (images.has(key)) return images.get(key);
+  if (pending.has(key)) return null;
+  const gone = failed.get(key);
   if (gone && (gone.tries >= TRIES || Date.now() < gone.retryAt)) return null;
-  const entry = creditFor(id);
-  if (!entry) return null;
-  pending.add(id);
+  pending.add(key);
   const img = new Image();
   img.decoding = "async";
-  img.onload = () => { pending.delete(id); failed.delete(id); images.set(id, img); };
+  img.onload = () => { pending.delete(key); failed.delete(key); images.set(key, img); };
   img.onerror = () => {
-    pending.delete(id);
+    pending.delete(key);
     const tries = (gone ? gone.tries : 0) + 1;
     const wait = Math.min(BACKOFF * 2 ** (tries - 1), BACKOFF_MAX);
-    failed.set(id, { tries, retryAt: Date.now() + wait });
+    failed.set(key, { tries, retryAt: Date.now() + wait });
   };
   // A retry asks for a different URL: whatever went wrong the first time —
   // an error response, a proxy — must not be answered from the cache.
-  img.src = gone ? `${entry.file}?retry=${gone.tries}` : entry.file;
+  img.src = gone ? `${url}?retry=${gone.tries}` : url;
   return null;
+}
+
+export function sprite(id) {
+  const entry = creditFor(id);
+  if (!entry) return art.images.get(id) || null;
+  return load(art, id, entry.file);
 }
 
 /** Warm the cache for characters we know are about to be on screen. */
 export function preload(ids) {
-  ids.forEach((id) => sprite(id));
+  ids.forEach((id) => {
+    sprite(id);
+    // ...and their action poses. A frame that arrives mid-chapter would pop
+    // the character from the rig to the pose render in the middle of a run.
+    Object.values(poses[id] || {}).forEach((frames) =>
+      frames.forEach((f) => load(poseArt, f, f)));
+  });
 }
 
 /* ------------------------------------------------------------------ poses -- */
@@ -132,9 +174,17 @@ export function preload(ids) {
  *   sx, sy  — squash and stretch about the feet
  *   lean    — torso rotation about the hip, radians
  *   head    — head rotation about the neck, on top of the lean
- *   legs    — rotation per leg part about its own hip pivot
  *   tail    — wag about the tail's root
  *   ear     — ear rotation, mirrored left/right, lagging the head
+ *
+ * There is deliberately no leg rotation here. The source artwork is one
+ * front-facing standing render, so a band cut below the hip is not a leg: it
+ * is a rectangle holding both legs, the gap between them and — for Muffin —
+ * her tail. Swinging that slid a grey slab out sideways at hip height, which
+ * is most of what "the characters look messed up" was. A pose the artist drew
+ * (poses.json) is the way to get a run cycle; the rig's job is now to keep a
+ * character that has no pose art *alive* — breathing, wag, ears, blink —
+ * without ever taking its legs apart.
  */
 function poseFor(state, t) {
   const step = t * 11; // run cadence
@@ -146,16 +196,17 @@ function poseFor(state, t) {
         lift: air * 0.045,
         sx: 1 + (1 - air) * 0.03,
         sy: 1 - (1 - air) * 0.04,
-        lean: 0.05 + swing * 0.02,
+        // small: with no leg swing under it, a big lean is just the body
+        // sliding off its own hips
+        lean: 0.02 + swing * 0.015,
         head: -0.02 + Math.sin(step * 0.5) * 0.04,
-        legs: [swing * 0.4, -swing * 0.4],
         tail: Math.sin(step * 2) * 0.34,
         ear: Math.sin(step - 0.7) * 0.11,
       };
     }
     case "jump":
       return {
-        lift: 0, sx: 0.96, sy: 1.06, lean: 0.1, head: 0.06, legs: [-0.55, -0.3],
+        lift: 0, sx: 0.96, sy: 1.06, lean: 0.1, head: 0.06,
         tail: 0.3, ear: -0.16,
       };
     case "float": {
@@ -166,7 +217,6 @@ function poseFor(state, t) {
         sy: 1,
         lean: -0.04 + sway * 0.05,
         head: 0.1,
-        legs: [0.5 + sway * 0.1, 0.6 - sway * 0.1],
         tail: sway * 0.22,
         ear: -0.1 + sway * 0.06,
       };
@@ -179,7 +229,6 @@ function poseFor(state, t) {
         sy: 1 + hop * 0.05,
         lean: Math.sin(t * 6) * 0.04,
         head: -0.09 + Math.sin(t * 12) * 0.04,
-        legs: [Math.sin(t * 6) * 0.25, -Math.sin(t * 6) * 0.25],
         tail: Math.sin(t * 12) * 0.5,
         ear: Math.sin(t * 6 - 0.6) * 0.15,
       };
@@ -193,12 +242,75 @@ function poseFor(state, t) {
         sy: 1 + breath * 0.012,
         lean: Math.sin(t * 1.3) * 0.015,
         head: Math.sin(t * 1.6 + 0.6) * 0.05,
-        legs: [Math.sin(t * 1.3) * 0.05, Math.sin(t * 1.3) * 0.05],
         tail: Math.sin(t * 2.2) * 0.13,
         ear: Math.sin(t * 1.6) * 0.03,
       };
     }
   }
+}
+
+/* ------------------------------------------------------------ pose frames -- */
+
+/**
+ * Motion applied to a *whole* pose render — no cutting, no rotating parts.
+ *
+ * The rig above exists because one standing render has to do everything. Where
+ * the artist drew the pose (public/data/poses.json), the drawing is already
+ * right and the only job left is to keep it alive: a bob, a squash on contact,
+ * a lean. Nothing here can tear a character, because nothing here takes one
+ * apart.
+ *
+ * `tilt` rotates about the feet rather than the hip, which is what a whole
+ * body does; the rig's `lean` rotates the torso against stationary legs.
+ */
+function frameMotion(state, t) {
+  switch (state) {
+    case "run": {
+      const stride = t * 11; // same cadence as the rig, so a fallback matches
+      const air = Math.abs(Math.sin(stride)); // 0 at contact, 1 at full stretch
+      return {
+        lift: air * 0.05,
+        sx: 1 + (1 - air) * 0.04,
+        sy: 1 - (1 - air) * 0.05,
+        tilt: 0.03 + Math.sin(stride * 2) * 0.015,
+      };
+    }
+    case "jump":
+      return { lift: 0, sx: 0.97, sy: 1.05, tilt: -0.07 };
+    case "float": {
+      const sway = Math.sin(t * 5);
+      return { lift: 0, sx: 1, sy: 1, tilt: -0.05 + sway * 0.06 };
+    }
+    case "cheer": {
+      const hop = Math.abs(Math.sin(t * 6));
+      return { lift: hop * 0.08, sx: 1 - hop * 0.04, sy: 1 + hop * 0.05,
+               tilt: Math.sin(t * 6) * 0.05 };
+    }
+    default: {
+      const breath = Math.sin(t * 2);
+      return {
+        lift: 0.004 + breath * 0.004,
+        sx: 1 - breath * 0.012,
+        sy: 1 + breath * 0.012,
+        tilt: Math.sin(t * 1.3) * 0.02,
+      };
+    }
+  }
+}
+
+/** How fast a multi-frame set cycles. One frame ignores this entirely. */
+const POSE_FPS = 12;
+
+/**
+ * The frame to draw for `id` in `state`, or null if there is no pose artwork
+ * for it or it has not arrived yet — in which case the caller uses the rig.
+ */
+function poseFrame(id, state, t) {
+  const frames = (poses[id] || {})[state];
+  if (!frames || !frames.length) return null;
+  const path = frames[Math.floor(t * POSE_FPS) % frames.length];
+  const img = load(poseArt, path, path);
+  return img && img.width ? img : null;
 }
 
 /* --------------------------------------------------------------- blinking -- */
@@ -223,6 +335,25 @@ export function blinkAmount(id, t) {
 }
 
 /* ------------------------------------------------------------------- draw -- */
+
+/**
+ * A pose render is the same dog drawn at a different height on the page: a
+ * running Bluey is crouched, so scaling her to the same pixel height as the
+ * standing render makes her *grow* the moment she starts running. This is the
+ * fraction of the nominal size a pose is drawn at, measured by drawing the two
+ * side by side (scripts/rig_frames.py) until the heads match.
+ */
+const POSE_SIZE = 0.86;
+
+function shadow(ctx, x, y, size, alpha) {
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, alpha);
+  ctx.fillStyle = "#000000";
+  ctx.beginPath();
+  ctx.ellipse(x, y + 1, size * 0.3, size * 0.055, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
 
 function rotateAbout(ctx, px, py, angle) {
   ctx.translate(px, py);
@@ -347,6 +478,28 @@ function blink(ctx, img, colour, eye, amount) {
  * character id added: drawCharacter(ctx, id, x, y, size, pal, t, state, facing).
  */
 export function drawCharacter(ctx, id, x, y, size, pal, t, state = "run", facing = 1) {
+  const airborne = state === "jump" || state === "float";
+
+  // the artist's own drawing of this pose, if there is one — preferred over
+  // anything the rig can assemble out of a standing render
+  const frame = poseFrame(id, state, t);
+  if (frame) {
+    const m = frameMotion(state, t);
+    drawn.set(id, "pose");
+    shadow(ctx, x, y, size, airborne ? 0.1 : 0.2 - m.lift * 1.2);
+    ctx.save();
+    ctx.translate(x, y - m.lift * size);
+    ctx.scale(facing, 1);
+    ctx.rotate(m.tilt); // about the feet: the whole dog leans, nothing shears
+    ctx.scale(m.sx, m.sy);
+    const s = (size * POSE_SIZE) / frame.height;
+    ctx.scale(s, s);
+    ctx.translate(-frame.width / 2, -frame.height);
+    ctx.drawImage(frame, 0, 0);
+    ctx.restore();
+    return true;
+  }
+
   const img = sprite(id);
   const rig = rigs[id];
   if (!img || !img.width || !rig) {
@@ -357,17 +510,10 @@ export function drawCharacter(ctx, id, x, y, size, pal, t, state = "run", facing
   drawn.set(id, "rig");
 
   const p = poseFor(state, t);
-  const airborne = state === "jump" || state === "float";
 
   // contact shadow — the baked-in one is stripped from every asset so that
   // this one can track how far off the ground the character actually is
-  ctx.save();
-  ctx.globalAlpha = airborne ? 0.1 : 0.2 - p.lift * 1.2;
-  ctx.fillStyle = "#000000";
-  ctx.beginPath();
-  ctx.ellipse(x, y + 1, size * 0.3, size * 0.055, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
+  shadow(ctx, x, y, size, airborne ? 0.1 : 0.2 - p.lift * 1.2);
 
   const k = size / img.height;
   const hipY = rig.hip * img.height;
@@ -389,17 +535,10 @@ export function drawCharacter(ctx, id, x, y, size, pal, t, state = "run", facing
     part(ctx, img, rig.tail.box, rig.tail.pivot, p.tail || 0);
   }
 
-  // legs: each part swings about its own hip pivot, and carries a little
-  // material from above the hip so the rotation has something to hinge on
-  const pivots = rig.legPivots || [0.5];
-  const bounds = legBounds(pivots, img.width);
-  pivots.forEach((pv, i) => {
-    ctx.save();
-    rotateAbout(ctx, pv * img.width, hipY, p.legs[i % p.legs.length] || 0);
-    const [x0, x1] = bounds[i];
-    drawMinus(ctx, img, [x0, hipY - seam, x1, img.height], holes);
-    ctx.restore();
-  });
+  // legs: drawn whole and upright. See poseFor — nothing rotates them, so the
+  // band is one piece and carries a little material from above the hip for the
+  // leaning torso to cover.
+  drawMinus(ctx, img, [0, hipY - seam, img.width, img.height], holes);
 
   // torso leans about the hip and covers the hip seam
   ctx.save();
@@ -431,11 +570,3 @@ export function drawCharacter(ctx, id, x, y, size, pal, t, state = "run", facing
   return true;
 }
 
-/** Split the leg band into one column per pivot, cutting midway between them. */
-function legBounds(pivots, width) {
-  return pivots.map((p, i) => {
-    const lo = i === 0 ? 0 : ((pivots[i - 1] + p) / 2) * width;
-    const hi = i === pivots.length - 1 ? width : ((p + pivots[i + 1]) / 2) * width;
-    return [Math.round(lo), Math.round(hi)];
-  });
-}
