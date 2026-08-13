@@ -47,6 +47,18 @@ npm start          # http://localhost:3000  (no dependencies)
 
 Serves `public/` and listens on `$PORT`, bound to `0.0.0.0` (Railway-ready).
 
+`GET /api/health` (also `/healthz`) reports what this particular container is
+running — `revision` is the deployed commit, `characters` and `chapters` are
+counted off the files on disk, so a truncated copy shows up as a number that is
+too small rather than as a page that looks fine until someone opens the gallery:
+
+```json
+{"status": "ok", "revision": "b48c6c8…", "characters": 25, "chapters": 5}
+```
+
+That one endpoint feeds `tools/uptime.py`'s content floors, `demoready`'s
+"is the container current?" check, and `mirror.py push bluey-game --wait`.
+
 ## Tests
 
 Playwright end-to-end suite — plays every chapter to the finish line, checks

@@ -1,0 +1,4 @@
+{
+  "type": "module",
+  "description": "Not a package: browsers already treat these as ES modules, but Node needs telling when server.js imports chapters.js to count them for /api/health."
+}

@@ -5,6 +5,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const { pathToFileURL } = require("url");
 
 const ROOT = path.join(__dirname, "public");
 const PORT = process.env.PORT || 3000;
@@ -20,22 +21,26 @@ const TYPES = {
   ".webmanifest": "application/manifest+json",
 };
 
-// What a half-copied deploy would get wrong. Counted once at boot: the files in
-// a container never change under it, and health is polled every push.
-const CONTENT = (() => {
-  const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
-  const count = (fn) => {
-    try {
-      return fn();
-    } catch (err) {
-      return 0;   // 0 is the honest answer; the uptime floor turns it into a failure
-    }
-  };
-  return {
-    characters: count(() => JSON.parse(read("data/characters.json")).characters.length),
-    chapters: count(() => (read("js/chapters.js").match(/^ {4}id: "/gm) || []).length),
-  };
-})();
+// What a half-copied deploy would get wrong. Counted once at boot — the files in
+// a container never change under it — from the same structures the game loads,
+// so reformatting a source file cannot move the numbers. 0 is the honest answer
+// when something is missing; the uptime floor turns it into a failure.
+const CONTENT = { characters: 0, chapters: 0 };
+
+async function countContent() {
+  try {
+    const raw = fs.readFileSync(path.join(ROOT, "data/characters.json"), "utf8");
+    CONTENT.characters = JSON.parse(raw).characters.length;
+  } catch (err) {
+    console.error("health: cannot count characters —", err.message);
+  }
+  try {
+    const mod = await import(pathToFileURL(path.join(ROOT, "js/chapters.js")).href);
+    CONTENT.chapters = mod.CHAPTERS.length;
+  } catch (err) {
+    console.error("health: cannot count chapters —", err.message);
+  }
+}
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
@@ -73,6 +78,11 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`For Real Life! listening on ${PORT}`);
+// count first, then listen: a health poll landing in the first milliseconds
+// would otherwise read 0 chapters and be told the deploy is truncated
+countContent().then(() => {
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`For Real Life! listening on ${PORT} ` +
+                `(${CONTENT.characters} characters, ${CONTENT.chapters} chapters)`);
+  });
 });
