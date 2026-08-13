@@ -469,6 +469,73 @@ def test_the_fallback_dogs_carry_a_page_that_never_gets_its_artwork(no_art_page)
     assert not any("Uncaught" in e for e in page.errors), str(page.errors[:3])
 
 
+def test_a_page_that_never_gets_its_artwork_stops_asking(no_art_page):
+    """The retry has to give up, and coming back online has to undo that.
+
+    `sprite()` is called from the render loop, so a failure retried
+    unconditionally is one request per character per frame — sixty a second,
+    forever, on the connection least able to afford it. Five tries take under
+    five seconds, though, and a tunnel lasts longer than that, so the giving up
+    is only allowed to be final until the browser says the connection is back.
+    """
+    page = no_art_page
+    asked = []
+    page.on("request", lambda r: asked.append(r.url) if "/characters/" in r.url else None)
+    page.click("#btn-gallery")
+    page.wait_for_selector(".char-card")
+    page.wait_for_function("() => window.__art().gaveUp.length >= 25", timeout=30000)
+    settled = len(asked)
+    # longer than the longest backoff, so "no new requests" means stopped rather
+    # than merely waiting: a retry that never gives up is throttled too, and a
+    # window shorter than its delay cannot tell the two apart
+    page.wait_for_timeout(2500)
+    assert len(asked) == settled, (
+        f"still asking for artwork after giving up on it: {len(asked) - settled} more requests")
+    tries = page.evaluate("() => window.__art().tries")
+    assert set(tries.values()) == {5}, f"gave up after the wrong number of tries: {tries}"
+
+    # the tunnel ends: the browser fires this, and giving up has to be undone by it
+    page.evaluate("() => window.dispatchEvent(new Event('online'))")
+    page.wait_for_timeout(300)
+    assert len(asked) > settled, "coming back online asked for nothing"
+
+
+def test_one_dropped_request_is_not_the_final_answer(own_page):
+    """A dropped connection is not a missing file. This is the phone-in-a-car
+    case: the first request for a character fails, every later one succeeds, and
+    the character must end up drawn from its own artwork rather than staying a
+    procedural dog until someone reloads — which a three-year-old will not do.
+    """
+    page = own_page
+    dropped, retried = [], []
+
+    def once(route):
+        # bluey is the menu's first dog and is asked for during boot, so the drop
+        # lands on the real path rather than on a request invented by the test
+        if "bluey" in route.request.url and not dropped:
+            dropped.append(route.request.url)
+            route.abort()
+        else:
+            if "bluey" in route.request.url:
+                retried.append(route.request.url)
+            route.continue_()
+
+    page.route("**/assets/characters/*", once)
+    page.reload(wait_until="domcontentloaded")
+    page.wait_for_function("window.__ready === true", timeout=20000)
+    page.wait_for_function("() => window.__art().failed.includes('bluey')", timeout=15000)
+    assert dropped, "the route never fired: nothing was dropped, so nothing is being tested"
+
+    page.wait_for_function("() => window.__art().loaded.includes('bluey')", timeout=15000)
+    art = page.evaluate("window.__art()")
+    assert "bluey" not in art["failed"], "still marked failed after it loaded"
+    assert art["drawn"].get("bluey") == "rig", (
+        f"the menu is still drawing the fallback dog: {art['drawn']}")
+    # the retry must not be answerable from whatever cached the failure
+    assert any("retry=" in u for u in retried), f"retried the identical URL: {retried}"
+    page.unroute("**/assets/characters/*")
+
+
 RIG_DIFF = """
 async ({ id, state, times, drop, dropOnce, nudge, region, pad }) => {
   const s = await import('/js/sprites.js');

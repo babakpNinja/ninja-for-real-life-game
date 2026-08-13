@@ -24,7 +24,7 @@ import { drawDog } from "./art.js";
 
 const images = new Map(); // id -> HTMLImageElement once decoded
 const pending = new Set();
-const failed = new Set();
+const failed = new Map(); // id -> { tries, retryAt }, everything not showing its artwork
 const drawn = new Map(); // id -> "rig" | "fallback", how it was last drawn
 let rigs = {};
 let credits = null;
@@ -32,11 +32,37 @@ let credits = null;
 /** Parts overlap their joint by this fraction of sprite height. */
 const SEAM = 0.05;
 
+/*
+ * A dropped request is not a verdict. This is played on a phone in a car: one
+ * tunnel while the gallery is pulling 25 images and that character used to be
+ * the procedural dog until someone reloaded the page — which a three-year-old
+ * does not do. So a failure is retried, with a delay that doubles, and then
+ * given up on: `sprite()` is called from the render loop, so an unconditional
+ * retry would be one request per character per frame.
+ */
+const TRIES = 5;
+const BACKOFF = 500; // ms before the first retry; doubles each time
+const BACKOFF_MAX = 2000; // ...up to this, so giving up takes ~5s, not ~8
+
+// ...and the tunnel ending is a real event, not a guess. Coming back online
+// clears the record, so everything that gave up is asked for once more on the
+// next frame. Without this, a long tunnel is still permanent: five tries take
+// under eight seconds and the connection is back a minute later.
+if (typeof window !== "undefined" && window.addEventListener) {
+  window.addEventListener("online", () => failed.clear());
+}
+
 export function artState() {
   return {
     loaded: [...images.keys()],
     pending: [...pending],
-    failed: [...failed],
+    // Still 'not showing its artwork right now', which is what every caller and
+    // test reads it as — an id leaves this set only by actually loading.
+    failed: [...failed.keys()],
+    // ...and the ids nothing will ask for again, which is a different thing: a
+    // file that is genuinely gone, rather than a connection that dropped.
+    gaveUp: [...failed].filter(([, f]) => f.tries >= TRIES).map(([id]) => id),
+    tries: Object.fromEntries([...failed].map(([id, f]) => [id, f.tries])),
     rigged: Object.keys(rigs),
     drawn: Object.fromEntries(drawn),
     credits,
@@ -66,20 +92,30 @@ export function noticeShort() {
 
 /**
  * The image for a character, kicking off its download the first time it is
- * asked for. Returns null until it is ready, which is why every draw path
- * has a fallback: the gallery must not block on 25 downloads.
+ * asked for — and again, later, if that download failed. Returns null until it
+ * is ready, which is why every draw path has a fallback: the gallery must not
+ * block on 25 downloads.
  */
 export function sprite(id) {
   if (images.has(id)) return images.get(id);
-  if (pending.has(id) || failed.has(id)) return null;
+  if (pending.has(id)) return null;
+  const gone = failed.get(id);
+  if (gone && (gone.tries >= TRIES || Date.now() < gone.retryAt)) return null;
   const entry = creditFor(id);
   if (!entry) return null;
   pending.add(id);
   const img = new Image();
   img.decoding = "async";
-  img.onload = () => { pending.delete(id); images.set(id, img); };
-  img.onerror = () => { pending.delete(id); failed.add(id); };
-  img.src = entry.file;
+  img.onload = () => { pending.delete(id); failed.delete(id); images.set(id, img); };
+  img.onerror = () => {
+    pending.delete(id);
+    const tries = (gone ? gone.tries : 0) + 1;
+    const wait = Math.min(BACKOFF * 2 ** (tries - 1), BACKOFF_MAX);
+    failed.set(id, { tries, retryAt: Date.now() + wait });
+  };
+  // A retry asks for a different URL: whatever went wrong the first time —
+  // an error response, a proxy — must not be answered from the cache.
+  img.src = gone ? `${entry.file}?retry=${gone.tries}` : entry.file;
   return null;
 }
 

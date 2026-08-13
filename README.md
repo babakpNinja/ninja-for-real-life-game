@@ -68,6 +68,12 @@ exactly as it did before they existed.
 Sprites load lazily — the menu family at boot, a chapter's cast when its story card
 opens, the gallery's 25 as you scroll. Until an image is there (or if one 404s) the
 old hand-drawn dog is still drawn in its place, so nothing ever renders empty.
+A failed request is retried with a doubling backoff (five tries, ~5s) and then
+dropped, because `sprite()` is called from the render loop and an unconditional
+retry would be a request per character per *frame*; the `online` event clears the
+record, so a tunnel is not permanent. This matters more than it sounds: one
+dropped connection used to mean that character stayed a procedural dog until
+someone reloaded the page, and a three-year-old does not reload the page.
 
 ```bash
 python3 scripts/fetch_assets.py --check   # credited, a cut-out, and the notice above unchanged
@@ -107,17 +113,19 @@ That one endpoint feeds `tools/uptime.py`'s content floors, `demoready`'s
 
 Playwright end-to-end suite — plays every chapter to the finish line, checks
 scoring, stars, persistence, the gallery, mobile viewports (iPhone + Pixel),
-touch input, WebAudio unlock-on-tap and console errors. Two of them open a page
+touch input, WebAudio unlock-on-tap and console errors. Four of them open a page
 of their own: one paints the cameo friends, whom the fast-forwarded chapters
-never render, and one blocks the artwork outright to watch the fallback dogs
-carry the whole game.
+never render, and three break the network — the artwork blocked outright (the
+fallback dogs carry the whole game), blocked forever (the retries have to stop,
+then resume when the connection returns), and dropped exactly once (that
+character still ends up drawn from its own artwork).
 
 ```bash
 python -m pytest tests -q                                # boots its own server
 python -m pytest tests -q --base-url=https://<live-url>  # against the deployed site
 ```
 
-50 tests, ~17s either way. With no `--base-url` the session starts `node server.js`
+52 tests, ~30s either way. With no `--base-url` the session starts `node server.js`
 on a free port and stops it afterwards, so the suite needs nothing running and does
 not disturb a dev server on 3000. They share one browser page per viewport and run
 in file order, because the game is a sequence: a chapter has to be played before
