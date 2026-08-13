@@ -71,11 +71,16 @@ OVERRIDES: dict[str, dict] = {
 # is drawn in, because the fur immediately above an eye is as often a marking
 # (Bandit's mask, Chilli's brow) as it is skin.
 #
-# There is no silhouette rule for these: an ear is the same colour as the head
-# it grows out of, and a tail only exists in a render where the character
-# happens to be standing side-on. So they are measured, only for the characters
-# who appear large (the four heroes and the cameos who cheer), and every one is
-# optional — sprites.js draws a rig without them exactly as it did before.
+# There is no silhouette rule for a tail: it only exists in a render where the
+# character happens to be standing side-on, and it is the same colour as the leg
+# it crosses. Ears and eyes do have one, and `--suggest` runs it — an ear is a
+# lobe the silhouette splits into above the head, an eye is a white blob with a
+# pupil in it, above the neck, next to a matching one. Neither rule fires often:
+# a dog with hanging ears, a hat or a fringe between the ears never splits, and a
+# pair of eyes that touch comes back as one blob. Where a rule finds nothing the
+# character says so in a comment rather than saying nothing, because "this one
+# has no ears to box" and "nobody has looked at this one" are different states.
+# Every part is optional — sprites.js draws a rig without them exactly as before.
 #
 # A box must contain *only* the part: it gets cut out of the body, so a box
 # that clips an arm punches a hole in the arm. Where the part cannot be boxed
@@ -135,7 +140,338 @@ PARTS: dict[str, dict] = {
         "eyes": [[0.385, 0.115, 0.545, 0.28], [0.565, 0.12, 0.665, 0.245]],
         "lid": [0.32, 0.33, 0.37, 0.40],
     },
+    # Below here the boxes were proposed by `--suggest` and then looked at, one
+    # character at a time, on the contact sheet and in a rendered blink (#139).
+    "socks": {
+        "ears": [
+            {"box": [0.083, 0.0, 0.346, 0.186], "pivot": [0.212, 0.186]},
+            {"box": [0.346, 0.0, 0.629, 0.186], "pivot": [0.49, 0.186]},
+        ],
+        "eyes": [[0.088, 0.265, 0.263, 0.389], [0.307, 0.261, 0.532, 0.474]],
+        "lid": [0.576, 0.261, 0.61, 0.297],
+    },
+    "stripe": {
+        "ears": [
+            {"box": [0.368, 0.0, 0.667, 0.15], "pivot": [0.514, 0.15]},
+            {"box": [0.679, 0.0, 0.972, 0.15], "pivot": [0.807, 0.15]},
+        ],
+        "eyes": [[0.506, 0.193, 0.701, 0.359], [0.717, 0.193, 0.871, 0.295]],
+        "lid": [0.443, 0.252, 0.478, 0.287],
+    },
+    "trixie": {
+        "ears": [
+            {"box": [0.384, 0.0, 0.632, 0.154], "pivot": [0.508, 0.154]},
+            {"box": [0.632, 0.0, 0.923, 0.154], "pivot": [0.779, 0.154]},
+        ],
+        "eyes": [[0.497, 0.205, 0.719, 0.385], [0.745, 0.203, 0.894, 0.303]],
+        "lid": [0.455, 0.238, 0.49, 0.273],
+    },
+    "nana_chris": {
+        "ears": [
+            {"box": [0.369, 0.0, 0.611, 0.146], "pivot": [0.487, 0.146]},
+            {"box": [0.611, 0.0, 0.883, 0.146], "pivot": [0.75, 0.146]},
+        ],
+        "eyes": [[0.44, 0.201, 0.664, 0.305], [0.688, 0.199, 0.842, 0.311]],
+        "lid": [0.393, 0.234, 0.426, 0.27],
+    },
+    "bob": {
+        "ears": [
+            {"box": [0.29, 0.0, 0.569, 0.145], "pivot": [0.429, 0.145]},
+            {"box": [0.569, 0.0, 0.866, 0.145], "pivot": [0.719, 0.145]},
+        ],
+        "eyes": [[0.438, 0.207, 0.659, 0.359], [0.67, 0.197, 0.848, 0.309]],
+        "lid": [0.37, 0.244, 0.406, 0.279],
+    },
+    "judo": {
+        "eyes": [[0.46, 0.209, 0.664, 0.318], [0.773, 0.254, 0.847, 0.318]],
+        "lid": [0.378, 0.209, 0.413, 0.244],
+        # no ears (fluffy head, no split in the silhouette)
+    },
+    "honey": {
+        "eyes": [[0.138, 0.204, 0.36, 0.298], [0.367, 0.133, 0.594, 0.298]],
+        "lid": [0.731, 0.144, 0.767, 0.18],
+        # no ears (they hang beside her head)
+    },
+    "coco": {
+        "eyes": [[0.403, 0.252, 0.581, 0.383], [0.591, 0.24, 0.724, 0.326]],
+        "lid": [0.351, 0.275, 0.386, 0.311],
+        # no ears (buried in curls)
+    },
+    "snickers": {
+        # no ears (under his cap), eyes (the two whites touch, so they come
+        #   back as one blob and there is no second eye to pair it with)
+    },
+    "chloe": {
+        "eyes": [[0.161, 0.094, 0.307, 0.199], [0.311, 0.104, 0.525, 0.291]],
+        "lid": [0.531, 0.117, 0.565, 0.152],
+        # no ears (they hang)
+    },
+    "mackenzie": {
+        "ears": [
+            {"box": [0.24, 0.0, 0.488, 0.176], "pivot": [0.361, 0.176]},
+            {"box": [0.547, 0.0, 0.754, 0.176], "pivot": [0.654, 0.176]},
+        ],
+        "eyes": [[0.438, 0.26, 0.615, 0.42], [0.645, 0.258, 0.766, 0.34]],
+        "lid": [0.213, 0.258, 0.249, 0.293],
+    },
+    "rusty": {
+        "ears": [
+            {"box": [0.348, 0.0, 0.608, 0.16], "pivot": [0.476, 0.16]},
+            {"box": [0.608, 0.0, 0.861, 0.16], "pivot": [0.737, 0.16]},
+        ],
+        "eyes": [[0.494, 0.238, 0.69, 0.305], [0.722, 0.223, 0.861, 0.305]],
+        "lid": [0.313, 0.223, 0.348, 0.258],
+    },
+    "indy": {
+        "eyes": [[0.228, 0.139, 0.357, 0.24], [0.381, 0.148, 0.561, 0.298]],
+        "lid": [0.18, 0.186, 0.214, 0.221],
+        # no ears (under her hair)
+    },
+    "winton": {
+        "eyes": [[0.357, 0.137, 0.625, 0.386], [0.664, 0.134, 0.857, 0.331]],
+        "lid": [0.096, 0.134, 0.132, 0.169],
+        # no ears (they hang)
+    },
+    "jean_luc": {
+        "eyes": [[0.419, 0.098, 0.634, 0.283], [0.669, 0.1, 0.825, 0.236]],
+        "lid": [0.197, 0.262, 0.231, 0.297],
+        # no ears (they hang)
+    },
+    "calypso": {
+        "eyes": [[0.142, 0.175, 0.274, 0.276], [0.3, 0.151, 0.502, 0.328]],
+        "lid": [0.624, 0.151, 0.66, 0.187],
+        # no ears (down, under her fringe)
+    },
+    "frisky": {
+        "eyes": [[0.422, 0.227, 0.609, 0.393], [0.631, 0.217, 0.76, 0.316]],
+        "lid": [0.157, 0.252, 0.191, 0.287],
+        # no ears (under her fringe)
+    },
+    "rad": {
+        "eyes": [[0.337, 0.191, 0.554, 0.367], [0.618, 0.188, 0.839, 0.32]],
+        "lid": [0.895, 0.188, 0.93, 0.223],
+        # no ears (pointed, but his fringe fills the gap between them)
+    },
+    "chattermax": {
+        # no ears (he has none), eyes (they sit below the neck line — his head
+        #   is most of him)
+    },
 }
+
+
+def suggest(ids: list[str]) -> int:
+    """Propose ear/eye/lid boxes for characters that have none, as PARTS source.
+
+    Measuring nineteen characters by eye is a day of grid-reading, and the
+    boxes that *can* be found by rule are exactly the ones a rule finds more
+    accurately than I do: an eye is a white blob with a pupil in it, ears are
+    the two runs at the very top of the silhouette before they merge into the
+    head, and a lid patch is the flattest square of opaque face that touches
+    neither. A tail is deliberately not suggested — there is no silhouette rule
+    for one, and a wrong tail box punches a hole in whatever it clipped.
+
+    The output is Python for PARTS, not a file the build reads: every box still
+    lands in the diff where it can be argued with, and a suggestion that is
+    wrong is edited or deleted by hand like the measured ones above it.
+    """
+    from PIL import Image
+
+    for cid in ids:
+        f = ASSETS / f"{cid}.png"
+        if not f.exists():
+            print(f"  # PROBLEM {cid}: no sprite")
+            continue
+        im = Image.open(f).convert("RGBA")
+        rig = derive(im)
+        rig.update(OVERRIDES.get(cid, {}))
+        neck = rig.get("neck", NECK_DEFAULT)
+        parts = {}
+        ears = find_ears(im, neck)
+        eyes = find_eyes(im, neck)
+        lid = find_lid(im, neck, eyes) if eyes else None
+        if ears:
+            parts["ears"] = ears
+        if eyes and lid:
+            parts["eyes"], parts["lid"] = eyes, lid
+        print(f'    "{cid}": {{')
+        for k, v in parts.items():
+            if k == "ears":
+                print('        "ears": [')
+                for ear in v:
+                    print(f'            {{"box": {ear["box"]}, "pivot": {ear["pivot"]}}},')
+                print("        ],")
+            else:
+                print(f'        "{k}": {json.dumps(v)},')
+        # a placeholder, not the note: the rule knows it found nothing, only a
+        # person looking at the picture knows why, and PARTS wants the why
+        missing = [k for k in ("ears", "eyes") if k not in parts]
+        if missing:
+            print(f"        # no {', '.join(missing)} (say why here)")
+        print("    },")
+    return 0
+
+
+def find_ears(im, neck: float) -> list[dict]:
+    """The two runs at the top of the silhouette, down to where they merge.
+
+    An upright ear is the only part of a dog that the alpha channel gives away:
+    above the skull there is nothing between the ears, so the top rows hold two
+    runs and the row where they become one is the base to pivot about. A
+    character whose ears hang, or whose head is one dome, produces nothing here
+    — which is the right answer, since a box that clips the head cuts a hole in
+    it.
+    """
+    w, h = im.size
+    rr = rows(im)
+    first = next((y for y in range(h) if len(rr[y]) >= 2), None)
+    if first is None:
+        return []          # one dome, or one ear taller than the other all the way down
+    base = first
+    while base + 1 < h and len(rr[base + 1]) >= 2:
+        base += 1
+    first = next(y for y in range(h) if rr[y])   # the box starts at the taller ear's tip
+    depth = (base - first) / h
+    # A shallow split is a tuft of hair or a hat brim, not a pair of ears — the
+    # six measured by hand all run 0.15–0.19 of the height. A pair that is
+    # wildly lopsided is the same mistake seen from the side: one ear and the
+    # top of the skull.
+    if depth < 0.09 or base / h > neck * 0.8:
+        return []
+    left = min(min(r[0] for r in rr[y]) for y in range(first, base + 1))
+    right = max(max(r[1] for r in rr[y]) for y in range(first, base + 1))
+    lobes = sorted(rr[base], key=lambda r: r[1] - r[0], reverse=True)[:2]
+    if len(lobes) < 2:
+        return []
+    wide, narrow = (max(b - a for a, b in lobes), min(b - a for a, b in lobes))
+    if wide > 2.0 * narrow:
+        return []
+    lobes.sort()
+    out = []
+    for i, (a, b) in enumerate(lobes):
+        x0 = left if i == 0 else max(a - 2, (lobes[0][1] + lobes[1][0]) // 2)
+        x1 = right if i == 1 else min(b + 2, (lobes[0][1] + lobes[1][0]) // 2)
+        out.append({"box": [rnd(x0 / w), round(first / h, 3), rnd(x1 / w), rnd((base + 1) / h)],
+                    "pivot": [rnd((a + b) / 2 / w), rnd((base + 1) / h)]})
+    return out
+
+
+def find_eyes(im, neck: float) -> list[list[float]]:
+    """The best pair of white-with-a-pupil blobs above the neck.
+
+    Cartoon eyes are the whitest thing on a face and the only white that
+    contains black — but on half these characters an eye touches the white
+    muzzle, so the biggest white blob is *both eyes and the snout* and picking
+    the largest two gets a hole punched through the face. Hence a pair search
+    over eye-shaped candidates: a blob that fills its own bounding box (an eye
+    is a rounded blot; an eye-plus-muzzle is an L), is roughly as tall as it is
+    wide, and is small enough to be a feature rather than a region.
+    """
+    w, h = im.size
+    px = im.load()
+    white = {(x, y) for y in range(round(neck * h)) for x in range(w)
+             if px[x, y][3] > 200 and min(px[x, y][:3]) > 205}
+    cands = []
+    for blob in components(white):
+        x0 = min(p[0] for p in blob); x1 = max(p[0] for p in blob)
+        y0 = min(p[1] for p in blob); y1 = max(p[1] for p in blob)
+        bw, bh = x1 - x0 + 1, y1 - y0 + 1
+        if len(blob) < 0.0004 * w * h or bw < 5 or bh < 5:
+            continue
+        if bw > 0.4 * w or bh > 0.3 * h:
+            continue                              # a region of the body, not a feature
+        if not 0.4 < bw / bh < 2.5:
+            continue                              # a stripe of fur, not an eye
+        dark = sum(max(px[x, y][:3]) < 90 and px[x, y][3] > 200
+                   for y in range(y0, y1 + 1) for x in range(x0, x1 + 1))
+        if not dark:
+            continue                              # white with no pupil in it is not an eye
+        # An eye fills its box: white and pupil together are the whole blot. An
+        # eye fused to the muzzle is an L, and the corner it leaves empty is
+        # neither — which is the only thing separating the two by shape.
+        if (len(blob) + dark) / (bw * bh) < 0.6:
+            continue
+        cands.append((len(blob), [x0 - 1, y0 - 1, x1 + 2, y1 + 2]))
+    best = None
+    for i, (na, a) in enumerate(cands):
+        for nb, b in cands[i + 1:]:
+            left, right = sorted((a, b))
+            if left[2] > right[0]:
+                continue                          # overlapping in x: the same eye twice
+            overlap = min(left[3], right[3]) - max(left[1], right[1])
+            if overlap < 0.4 * min(left[3] - left[1], right[3] - right[1]):
+                continue                          # stacked, not side by side
+            tall = sorted((left[3] - left[1], right[3] - right[1]))
+            if tall[1] > 2.2 * tall[0] or right[0] - left[2] > 0.35 * w:
+                continue                          # mismatched, or on opposite sides of a body
+            if best is None or na + nb > best[0]:
+                best = (na + nb, [left, right])
+    if not best:
+        return []
+    # The 2px of padding can push the box a whisker past the chin line on a
+    # character whose neck was derived high; trim rather than lose the eye,
+    # since a box that crosses the neck is refused by check().
+    chin = neck * h - 1
+    return [[rnd(x0 / w), rnd(y0 / h), rnd(x1 / w), rnd(min(y1, chin) / h)]
+            for x0, y0, x1, y1 in best[1]]
+
+
+def find_lid(im, neck: float, eyes: list[list[float]]) -> list[float] | None:
+    """The flattest opaque square of face *beside* the eyes.
+
+    'Plain face' is measurable: the eyelid is drawn in this patch's average
+    colour, so what matters is that the patch has only one colour in it. The
+    search returns the lowest-variance candidate rather than the first
+    acceptable one, because a marking's interior is flat too and only loses to
+    the cheek beside it.
+
+    Flatness alone is not enough, though: the flattest square on a face is
+    often the muzzle between the eyes, and a lid drawn in muzzle white reads as
+    an eye rolled back. So the search is confined to the temple either side of
+    the eyes, at eye height — where the six hand-measured lids were taken from.
+    """
+    w, h = im.size
+    px = im.load()
+    bw, bh = max(4, round(0.035 * w)), max(4, round(0.035 * h))
+    top, low = round(min(e[1] for e in eyes) * h), round(max(e[3] for e in eyes) * h)
+    outer = (round(min(e[0] for e in eyes) * w), round(max(e[2] for e in eyes) * w))
+    best, best_spread = None, None
+    for y in range(top, min(low, round(neck * h) - bh), max(2, bh // 3)):
+        for x in range(0, w - bw, max(2, bw // 3)):
+            box = [x / w, y / h, (x + bw) / w, (y + bh) / h]
+            if x + bw > outer[0] and x < outer[1]:
+                continue                           # between or under the eyes, not beside them
+            vals = [px[i, j] for j in range(y, y + bh) for i in range(x, x + bw)]
+            if any(v[3] < 250 for v in vals):
+                continue                           # over an edge: half of it is background
+            spread = sum(max(v[c] for v in vals) - min(v[c] for v in vals) for c in range(3))
+            if best_spread is None or spread < best_spread:
+                best, best_spread = box, spread
+    if best is None or best_spread > 60:
+        return None
+    return [rnd(v) for v in best]
+
+
+def components(points: set) -> list[list[tuple[int, int]]]:
+    """4-connected blobs, iteratively — a recursive flood fill blows the stack."""
+    seen, out = set(), []
+    for p in points:
+        if p in seen:
+            continue
+        blob, stack = [], [p]
+        seen.add(p)
+        while stack:
+            x, y = stack.pop()
+            blob.append((x, y))
+            for n in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                if n in points and n not in seen:
+                    seen.add(n)
+                    stack.append(n)
+        out.append(blob)
+    return out
+
+
+def rnd(v: float) -> float:
+    return round(min(max(v, 0.0), 1.0), 3)
 
 
 def rows(im):
@@ -454,7 +790,14 @@ def main() -> int:
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--grid", help="comma-separated ids to measure boxes off")
     ap.add_argument("--zoom", help="crop the grid to a y range, e.g. 0,0.45")
+    ap.add_argument("--suggest", nargs="?", const="", metavar="IDS",
+                    help="propose ear/eye/lid boxes as PARTS source (default: every "
+                         "character that has none)")
     a = ap.parse_args()
+    if a.suggest is not None:
+        ids = [i.strip() for i in a.suggest.split(",") if i.strip()]
+        return suggest(ids or [c["id"] for c in json.loads(CHARS.read_text())["characters"]
+                               if c["id"] not in PARTS])
     if a.grid:
         zoom = tuple(float(v) for v in a.zoom.split(",")) if a.zoom else None
         return grid([i.strip() for i in a.grid.split(",") if i.strip()], zoom)

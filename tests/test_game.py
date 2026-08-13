@@ -19,12 +19,21 @@ place their state belongs.
 
 import json
 import urllib.request
+from pathlib import Path
 
 import pytest
 
 DESKTOP = {"width": 1280, "height": 800}
 IPHONE = {"width": 390, "height": 844}
 PIXEL = {"width": 412, "height": 915}
+
+# Read from the tree, not from the server, because it decides how many tests
+# there are: a rig that lost its eyes should make this file shorter in the diff
+# that lost them, not quietly test one dog less.
+RIGS = json.loads((Path(__file__).resolve().parent.parent
+                   / "public" / "data" / "rigs.json").read_text())["rigs"]
+EYED = sorted(cid for cid, r in RIGS.items() if r.get("eyes"))
+EARED = sorted(cid for cid, r in RIGS.items() if r.get("ears"))
 
 
 @pytest.fixture(scope="module")
@@ -648,16 +657,23 @@ def test_the_tail_wags(desktop):
     assert swung["inside"] > 100, f"the pose is not swinging the tail: {swung}"
 
 
-def test_the_ears_flop(desktop):
+@pytest.mark.parametrize("cid", EARED)
+def test_the_ears_flop(desktop, cid):
     """The same trick as the tail, on the pair of ears, which swing mirrored and
     a third as far. Their zero is not at t=0 — the run pose runs them a little
     behind the legs — so both moments are read off `ear: Math.sin(step - 0.7)`
     with step = t * 11.
+
+    Every character with ears (#139): an ear is *cut out* of the head and redrawn
+    rotated, so a box that takes too little leaves the ear behind and one that
+    takes too much rotates a slice of skull with it. Both show up as movement.
     """
-    flop = rig_diff(desktop, "bluey", "run", [0.2064, 0.2064], "ears", 0.2, nudge=("ears", 0.15, 0))
-    rest = rig_diff(desktop, "bluey", "run", [0.0636, 0.0636], "ears", 0.2, nudge=("ears", 0.15, 0))
+    flop = rig_diff(desktop, cid, "run", [0.2064, 0.2064], "ears", 0.2, nudge=("ears", 0.15, 0))
+    rest = rig_diff(desktop, cid, "run", [0.0636, 0.0636], "ears", 0.2, nudge=("ears", 0.15, 0))
     assert flop["drawn"] == "rig", flop
-    assert rest["inside"] + rest["outside"] < 3, f"rotated at rest? {rest}"
+    # not zero: the cut edge lands on different subpixels when the pivot moves,
+    # which is single digits of antialiasing next to hundreds for a real swing
+    assert rest["inside"] + rest["outside"] < 10, f"rotated at rest? {rest}"
     assert flop["inside"] > 100, f"the pose is not swinging the ears: {flop}"
 
 
@@ -674,26 +690,39 @@ def test_removing_the_tail_changes_only_the_tail_corner(desktop):
     assert r["outside"] < 30, f"dropping the tail changed the body at {r['stray']}: {r}"
 
 
-def test_the_eyes_shut_for_a_blink(desktop):
+@pytest.mark.parametrize("cid", EYED)
+def test_the_eyes_shut_for_a_blink(desktop, cid):
     """A still pose sampled off a blink and again at its peak. Nothing else in
     the pose moves — the check below proves that by replaying the same two
     moments with the eye boxes removed and getting an identical picture — so
     every pixel that changes is the blink, and it must land on the eyes.
+
+    Every character with eyes, not just Bluey: most of these boxes were proposed
+    by ``build_rigs.py --suggest`` from the artwork's own white blobs (#139), and
+    a wipe that misses does not fail anywhere else — it just paints a slab of fur
+    colour across a cheek, twice a chapter, on one dog.
+
+    What this cannot tell you is whether the box is on an *eye*: the region it
+    compares against is the rig's own box, so a box measured onto a muzzle would
+    pass here happily. That much is a looking-at-it job (``--sheet``); this is
+    the part a machine can hold, that each of them blinks and that the wipe stays
+    where the rig says it will.
     """
-    r = rig_diff(desktop, "bluey", "jump", [0, "blink"], "eyes", 0.06)
-    blind = rig_diff(desktop, "bluey", "jump", [0, "blink"], "eyes", 0.06, drop=["eyes"])
+    r = rig_diff(desktop, cid, "jump", [0, "blink"], "eyes", 0.1)
+    blind = rig_diff(desktop, cid, "jump", [0, "blink"], "eyes", 0.1, drop=["eyes"])
     assert r["drawn"] == "rig", r
     assert blind["inside"] + blind["outside"] == 0, f"the pose is not still: {blind}"
     assert r["inside"] > 200, f"the eyes did not close: {r}"
-    # a ratio, not zero: the pose leans and squashes the body, so a box measured
-    # on the flat artwork lands a few degrees off once it is drawn
+    # a ratio and a tenth of the width of padding, not zero: the pose leans and
+    # squashes the body, so a box measured on the flat artwork lands a few
+    # degrees off once it is drawn — Bandit's small right eye by about 7px
     assert r["outside"] < r["inside"] * 0.05, f"the blink painted across the face: {r}"
 
 
 def test_a_rig_with_no_extras_still_draws_its_character(desktop):
-    """Most of the twenty-five have no tail, ears or eyes measured. A rig
-    without them must still draw from the artwork rather than falling back to
-    the procedural dog."""
+    """Two of the twenty-five have no tail, ears or eyes measured, and most of
+    the rest are missing at least one. A rig without them must still draw from
+    the artwork rather than falling back to the procedural dog."""
     r = rig_diff(desktop, "bluey", "jump", [0, 0], drop_once=["tail", "ears", "eyes"])
     assert r["drawn"] == "rig", f"drew as {r['drawn']} without its extras"
     assert r["outside"] > 0, "dropping every part changed nothing — was anything drawn?"

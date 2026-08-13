@@ -63,7 +63,10 @@ own pivots, and a blink is wiped over the eyes in a colour measured off the face
 Running, jumping, floating, cheering and breathing are all just numbers per part
 (`poseFor`), which is why **adding a character is data, not code**: an image, a
 credit entry and a rig. Every extra is optional — a rig with none of them draws
-exactly as it did before they existed.
+exactly as it did before they existed. Twenty-three of the twenty-five blink and
+thirteen flop their ears; the boxes for those were proposed from the artwork by
+`--suggest` and then looked at, and where a rule found nothing the character
+carries a note in `PARTS` saying why, so a gap is a decision and not an oversight.
 
 Sprites load lazily — the menu family at boot, a chapter's cast when its story card
 opens, the gallery's 25 as you scroll. Until an image is there (or if one 404s) the
@@ -79,6 +82,7 @@ someone reloaded the page, and a three-year-old does not reload the page.
 python3 scripts/fetch_assets.py --check   # credited, a cut-out, and the notice above unchanged
 python3 scripts/build_rigs.py --check     # neck above hip, pivots agree with parts, lids off the eyes
 python3 scripts/build_rigs.py --sheet     # joint lines drawn over every sprite
+python3 scripts/build_rigs.py --suggest   # propose ear/eye boxes, as PARTS source to paste
 python3 scripts/shots.py                  # regenerate shots/
 python3 scripts/rig_frames.py bluey       # a strip of run frames, to look at
 python3 scripts/rig_frames.py bluey --blink
