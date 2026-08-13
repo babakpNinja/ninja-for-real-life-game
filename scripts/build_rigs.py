@@ -36,6 +36,22 @@ SHEET = APP / "shots" / "_debug" / "rig-contact-sheet.png"
 ALPHA = 40  # a pixel counts as opaque above this
 MIN_RUN = 3  # ignore hairline runs (antialiasing, a stray whisker)
 
+# What "eye white" and "pupil" mean in a pixel, used by the finder that proposes
+# a box and by the check that reads the stored one back. One definition: the
+# check is only worth anything if it can disagree with the finder, and it cannot
+# disagree about a threshold they do not share.
+WHITE_MIN = 205   # every channel above this, i.e. near-white
+DARK_MAX = 90     # every channel below this, i.e. ink
+SOLID = 200       # alpha: ignore the antialiased rim of a shape
+
+# How much of a stored eye box has to be eye, measured on the artwork it was
+# taken from. The floor across the 46 boxes in rigs.json today is 38% white and
+# a pupil covering 6% of the box; these sit well under that, because the
+# question is "is this box on an eye at all" and not "is this box perfect". A
+# box on Bluey's snout scores 9% white — the gap is the whole check.
+EYE_WHITE = 0.30
+EYE_PUPIL = 0.03
+
 NECK_RANGE = (0.30, 0.58)  # a cartoon dog's chin, as a fraction of its height
 HIP_RANGE = (0.66, 0.86)
 NECK_DEFAULT, HIP_DEFAULT = 0.45, 0.76
@@ -369,7 +385,7 @@ def find_eyes(im, neck: float) -> list[list[float]]:
     w, h = im.size
     px = im.load()
     white = {(x, y) for y in range(round(neck * h)) for x in range(w)
-             if px[x, y][3] > 200 and min(px[x, y][:3]) > 205}
+             if is_white(px[x, y])}
     cands = []
     for blob in components(white):
         x0 = min(p[0] for p in blob); x1 = max(p[0] for p in blob)
@@ -381,7 +397,7 @@ def find_eyes(im, neck: float) -> list[list[float]]:
             continue                              # a region of the body, not a feature
         if not 0.4 < bw / bh < 2.5:
             continue                              # a stripe of fur, not an eye
-        dark = sum(max(px[x, y][:3]) < 90 and px[x, y][3] > 200
+        dark = sum(is_dark(px[x, y])
                    for y in range(y0, y1 + 1) for x in range(x0, x1 + 1))
         if not dark:
             continue                              # white with no pupil in it is not an eye
@@ -449,6 +465,14 @@ def find_lid(im, neck: float, eyes: list[list[float]]) -> list[float] | None:
     if best is None or best_spread > 60:
         return None
     return [rnd(v) for v in best]
+
+
+def is_white(p) -> bool:
+    return p[3] > SOLID and min(p[:3]) > WHITE_MIN
+
+
+def is_dark(p) -> bool:
+    return p[3] > SOLID and max(p[:3]) < DARK_MAX
 
 
 def components(points: set) -> list[list[tuple[int, int]]]:
@@ -761,13 +785,71 @@ def overlaps(a: list, b: list) -> bool:
     return a[0] < b[2] and a[2] > b[0] and a[1] < b[3] and a[3] > b[1]
 
 
+def eye_pixels(im, box: list) -> tuple[float, float, int]:
+    """What is inside a box, as fractions of it: near-white, biggest ink blob.
+
+    The pupil is the largest *connected* dark blob rather than all the dark
+    pixels, because "dark somewhere in here" is also true of a box straddling an
+    outline, and an eye is one blot of ink in a field of white.
+    """
+    w, h = im.size
+    px = im.load()
+    x0, y0 = max(0, round(box[0] * w)), max(0, round(box[1] * h))
+    x1, y1 = min(w, round(box[2] * w)), min(h, round(box[3] * h))
+    area = max(0, x1 - x0) * max(0, y1 - y0)
+    if area < 9:
+        return 0.0, 0.0, area
+    white = {(x, y) for y in range(y0, y1) for x in range(x0, x1) if is_white(px[x, y])}
+    dark = {(x, y) for y in range(y0, y1) for x in range(x0, x1) if is_dark(px[x, y])}
+    pupil = max((len(b) for b in components(dark)), default=0)
+    return len(white) / area, pupil / area, area
+
+
+def eye_problems(cid: str, r: dict, im) -> list[str]:
+    """Ask the artwork whether each stored eye box is on an eye.
+
+    `box_problems` validates the *geometry* of these boxes — on the image, above
+    the chin, not overlapping the lid patch — and a box measured onto a muzzle
+    satisfies all of that. Nor can the e2e suite tell: its region of interest is
+    built from the same box, so a blink wiped over a snout lands inside its own
+    rectangle and passes. Until this existed, the only thing between a mistyped
+    digit and a dog blinking on its cheek was me looking at a contact sheet, and
+    17 of the 23 boxes were proposed by `--suggest` rather than measured (#139).
+
+    This reads the *stored* numbers back off the artwork, so it also fires when
+    an image is replaced by a different render of the same character and every
+    box silently moves — which is the failure `--suggest` cannot warn about,
+    because it is not run again.
+    """
+    problems = []
+    for i, box in enumerate(r.get("eyes", [])):
+        if len(box) != 4 or not (0 <= box[0] < box[2] <= 1 and 0 <= box[1] < box[3] <= 1):
+            continue                      # box_problems already said so; do not say it twice
+        white, pupil, area = eye_pixels(im, box)
+        if area < 9:
+            problems.append(f"{cid}: eye{i} box is {area}px on this image — too small to read")
+            continue
+        if white < EYE_WHITE:
+            problems.append(
+                f"{cid}: eye{i} box is {white:.0%} near-white, under {EYE_WHITE:.0%} — "
+                f"that is not eye white, so the blink would be wiped over face")
+        elif pupil < EYE_PUPIL:
+            problems.append(
+                f"{cid}: eye{i} box has no pupil in it (biggest ink blob {pupil:.0%} of "
+                f"the box, under {EYE_PUPIL:.0%}) — white face, not an eye")
+    return problems
+
+
 def check() -> int:
+    from PIL import Image
+
     if not RIGS.exists():
         print("no rigs.json")
         return 1
     rigs = json.loads(RIGS.read_text())["rigs"]
     chars = json.loads(CHARS.read_text())["characters"]
     problems = []
+    read = 0
     for c in chars:
         r = rigs.get(c["id"])
         if not r:
@@ -778,7 +860,17 @@ def check() -> int:
         if len(r["legPivots"]) != r["legParts"]:
             problems.append(f"{c['id']}: {r['legParts']} leg parts but {len(r['legPivots'])} pivots")
         problems += box_problems(c["id"], r)
-    print(f"{len(rigs)} rigs for {len(chars)} characters")
+        if not r.get("eyes"):
+            continue
+        f = ASSETS / f"{c['id']}.png"
+        if not f.exists():
+            # not "clean": the boxes are there and nothing looked at them
+            problems.append(f"{c['id']}: has eye boxes but no sprite, so they were not checked")
+            continue
+        problems += eye_problems(c["id"], r, Image.open(f).convert("RGBA"))
+        read += len(r["eyes"])
+    print(f"{len(rigs)} rigs for {len(chars)} characters, "
+          f"{read} eye box(es) read back off the artwork")
     for p in problems:
         print(f"  PROBLEM {p}")
     return 1 if problems else 0
