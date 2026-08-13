@@ -66,9 +66,15 @@ scoring, stars, persistence, the gallery, mobile viewports (iPhone + Pixel),
 touch input, WebAudio unlock-on-tap and console errors.
 
 ```bash
-python tests/test_game.py                     # against localhost:3000
-python tests/test_game.py https://<live-url>  # against the deployed site
+python -m pytest tests -q                                # against localhost:3000
+python -m pytest tests -q --base-url=https://<live-url>  # against the deployed site
 ```
+
+31 tests, ~11s against the live site. They share one browser page per viewport and
+run in file order, because the game is a sequence: a chapter has to be played
+before there is any progress to persist. `tools/ship.py` runs this as the
+`verify` step, *after* the deploy is live — it needs a server, so it cannot gate
+the push.
 
 ## Layout
 
@@ -80,5 +86,6 @@ public/js/art.js        every character and prop, drawn procedurally
 public/js/audio.js      WebAudio music + SFX
 public/js/main.js       screens, HUD, gallery, save data
 public/data/characters.json  25 character bios
-tests/test_game.py      end-to-end suite
+tests/test_game.py      end-to-end suite (pytest, --base-url)
+tests/conftest.py       browser + page fixtures
 ```
