@@ -48,7 +48,13 @@ REQUIRED_COLOURS = ("coat", "belly", "patch")
 MIN_PLAYABLE = 5
 
 ENTRY = re.compile(r'<script[^>]+type="module"[^>]+src="([^"]+)"')
-IMPORT = re.compile(r'^\s*import\s+[^;]*?from\s+["\'](\.{1,2}/[^"\']+)["\']', re.M)
+
+# The three ways one module can pull in another. Only the first is used today,
+# but the other two are the ones that would go *unnoticed*: a module the walk
+# cannot see is a 404 nobody reports, so they are matched before they are used.
+IMPORT = re.compile(r'^\s*(?:import|export)\s+[^;]*?from\s+["\'](\.{1,2}/[^"\']+)["\']', re.M)
+BARE_IMPORT = re.compile(r'^\s*import\s+["\'](\.{1,2}/[^"\']+)["\']', re.M)   # side effects only
+LAZY_IMPORT = re.compile(r'\bimport\(\s*["\'](\.{1,2}/[^"\']+)["\']')         # dynamic import()
 
 # The one line that has to survive every redeploy of a fan-made tribute.
 CREDIT_MARKERS = ("Fan-made", "Ludo Studio")
@@ -104,6 +110,30 @@ def cast(base: str) -> dict:
                       else f"{len(roster)} characters, {playable} playable, all drawable"}
 
 
+def imports_in(body: str) -> list[str]:
+    """Every relative module this file pulls in, in all three spellings."""
+    return [*IMPORT.findall(body), *BARE_IMPORT.findall(body), *LAZY_IMPORT.findall(body)]
+
+
+def walk(base: str, entries: list[str]) -> dict[str, int]:
+    """{module path: status}, following imports out from the entry points."""
+    seen: dict[str, int] = {}
+    queue = [e.lstrip("./") for e in entries]
+    while queue:
+        path = queue.pop()
+        if path in seen:
+            continue
+        code_status, body = _get(base, path)
+        seen[path] = code_status
+        if code_status != 200:
+            continue
+        folder = path.rsplit("/", 1)[0] if "/" in path else ""
+        for rel in imports_in(body):
+            target = rel.lstrip("./")
+            queue.append(f"{folder}/{target}" if folder else target)
+    return seen
+
+
 def modules(base: str) -> dict:
     """Walk the ES-module graph the browser would walk, from index.html.
 
@@ -119,21 +149,7 @@ def modules(base: str) -> dict:
         return {"name": "modules", "state": DOWN,
                 "detail": "index.html loads no module — the page cannot start the game"}
 
-    seen: dict[str, int] = {}
-    queue = [e.lstrip("./") for e in entries]
-    while queue:
-        path = queue.pop()
-        if path in seen:
-            continue
-        code_status, body = _get(base, path)
-        seen[path] = code_status
-        if code_status != 200:
-            continue
-        folder = path.rsplit("/", 1)[0] if "/" in path else ""
-        for rel in IMPORT.findall(body):
-            target = rel.lstrip("./")
-            queue.append(f"{folder}/{target}" if folder else target)
-
+    seen = walk(base, entries)
     missing = sorted(p for p, s in seen.items() if s != 200)
     return {"name": "modules", "state": DOWN if missing else READY,
             "detail": (f"{len(missing)} module(s) the page imports are not deployed: "
