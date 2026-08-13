@@ -393,3 +393,48 @@ def test_a_copy_that_disagrees_with_GAME_NAME_is_a_problem(fetch_assets, tmp_pat
     (tmp_path / "README.x").write_text("# Anna Bingo\n")
     problem, = [p for p in mod.name_problems() if "heading" in p]
     assert mod.GAME_NAME in problem and "Anna Bingo" in problem, problem
+
+
+# ------------------------------------ a shot run replaces its own shots (#164)
+# `--prefix live` and `--prefix live-` have to name the same files. Given the
+# first, shots.py used to write `live00-menu.png` next to the `live-00-menu.png`
+# an earlier run left — a second, parallel set that no rerun ever overwrites and
+# nothing tracks. It took a while to work out that the strays were mine.
+
+@pytest.fixture(scope="module")
+def shots():
+    """shots.py as a module, loaded by path for the same reason as `rigs`."""
+    spec = importlib.util.spec_from_file_location("shots", APP / "scripts" / "shots.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.mark.parametrize("given", ["live", "live-", "live_", "live."])
+def test_a_prefix_ends_in_a_separator(shots, given):
+    assert shots.separated(given)[-1] in "-_."
+    assert shots.separated(given).startswith("live")
+    assert len(shots.separated(given)) == 5
+
+
+def test_no_prefix_stays_empty(shots):
+    """The default names the shots the README points at: `00-menu.png`."""
+    assert shots.separated("") == ""
+
+
+def test_both_spellings_of_a_prefix_name_one_file(shots):
+    assert shots.separated("live") == shots.separated("live-")
+
+
+def test_the_walk_is_given_the_separated_prefix(shots):
+    """Normalising and then not using it would be the same bug, silently.
+
+    `separated` is called once, in main(); the two walk() calls have to be
+    handed its result rather than the raw argparse value.
+    """
+    src = (APP / "scripts" / "shots.py").read_text()
+    body = src[src.index("def main()"):]
+    assert body.count("a.prefix") == 1, "the raw --prefix is used past main()"
+    assert "separated(a.prefix)" in body
+    assert re.search(r"walk\(page, url, prefix\)", body)
+    assert re.search(r'walk\(mob, url, prefix \+ "mobile-"', body)

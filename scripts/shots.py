@@ -7,7 +7,7 @@ piling up stale ones next to the new.
 
   python3 scripts/shots.py                       # local
   python3 scripts/shots.py --base-url https://…  # the deployed site
-  python3 scripts/shots.py --prefix live-        # name them apart
+  python3 scripts/shots.py --prefix live         # name them apart
 """
 from __future__ import annotations
 
@@ -56,6 +56,17 @@ def server():
 # reach the first one. Unlock them the same way playing does: in localStorage.
 SAVE = """() => localStorage.setItem('forreallife.save.v1', JSON.stringify(
   {chapters: {0:{stars:3},1:{stars:3},2:{stars:3},3:{stars:3},4:{stars:3}}, unlocked: 4}))"""
+
+
+def separated(prefix: str) -> str:
+    """`live` and `live-` must name the same files.
+
+    A rerun is supposed to replace the shots it took last time. A prefix given
+    without its separator doesn't collide with the previous run — it forks a
+    second, parallel set (`live00-menu.png` beside `live-00-menu.png`), which
+    looks like someone else's output and gets left behind untracked.
+    """
+    return prefix + "-" if prefix and prefix[-1] not in "-_." else prefix
 
 
 def walk(page, url, prefix, wide=True):
@@ -120,6 +131,7 @@ def main() -> int:
     ap.add_argument("--base-url")
     ap.add_argument("--prefix", default="")
     a = ap.parse_args()
+    prefix = separated(a.prefix)
     from playwright.sync_api import sync_playwright
 
     SHOTS.mkdir(exist_ok=True)
@@ -127,13 +139,13 @@ def main() -> int:
     with ctx as url, sync_playwright() as pw:
         browser = pw.chromium.launch()
         page = browser.new_page(viewport={"width": 1024, "height": 640})
-        walk(page, url, a.prefix)
+        walk(page, url, prefix)
         page.close()
         mob = browser.new_page(
             viewport={"width": 844, "height": 390},
             device_scale_factor=2, is_mobile=True, has_touch=True,
         )
-        walk(mob, url, a.prefix + "mobile-", wide=False)
+        walk(mob, url, prefix + "mobile-", wide=False)
         mob.close()
         browser.close()
     print(f"shots -> {SHOTS}")
