@@ -20,11 +20,35 @@ const TYPES = {
   ".webmanifest": "application/manifest+json",
 };
 
+// What a half-copied deploy would get wrong. Counted once at boot: the files in
+// a container never change under it, and health is polled every push.
+const CONTENT = (() => {
+  const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
+  const count = (fn) => {
+    try {
+      return fn();
+    } catch (err) {
+      return 0;   // 0 is the honest answer; the uptime floor turns it into a failure
+    }
+  };
+  return {
+    characters: count(() => JSON.parse(read("data/characters.json")).characters.length),
+    chapters: count(() => (read("js/chapters.js").match(/^ {4}id: "/gm) || []).length),
+  };
+})();
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-  if (url.pathname === "/healthz") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ ok: true }));
+  if (url.pathname === "/api/health" || url.pathname === "/healthz") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify({
+      status: "ok",
+      // which commit is actually serving — Railway injects it at deploy time, and it
+      // is the only thing that proves a push swapped the container rather than the
+      // old one still answering
+      revision: process.env.RAILWAY_GIT_COMMIT_SHA || process.env.DEPLOY_REVISION || null,
+      ...CONTENT,
+    }));
   }
 
   let rel = decodeURIComponent(url.pathname);

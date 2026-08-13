@@ -12,8 +12,10 @@ engine, which is the only way to be sure the level generator, the collectibles
 and the results screen all still work.
 """
 
+import json
 import sys
 import time
+import urllib.request
 
 from playwright.sync_api import sync_playwright
 
@@ -81,7 +83,24 @@ def play_chapter(page, index):
     return page.evaluate("window.__result")
 
 
+def check_health():
+    """What the deploy says about itself: the content floors monitoring reads."""
+    print("\n/api/health")
+    try:
+        with urllib.request.urlopen(f"{BASE}/api/health", timeout=15) as resp:
+            data = json.loads(resp.read())
+    except Exception as exc:  # noqa: BLE001 — any failure here is a failed check
+        return check("health endpoint answers", False, f"{type(exc).__name__}: {exc}")
+
+    check("health says ok", data.get("status") == "ok", str(data)[:120])
+    check("all 25 characters shipped", data.get("characters") == 25, f"got {data.get('characters')}")
+    check("all 5 chapters shipped", data.get("chapters") == 5, f"got {data.get('chapters')}")
+    # null locally, a sha once Railway injects RAILWAY_GIT_COMMIT_SHA
+    print(f"  ..   serving revision {data.get('revision')}")
+
+
 def run():
+    check_health()
     with sync_playwright() as p:
         browser = p.chromium.launch()
 
