@@ -66,15 +66,19 @@ scoring, stars, persistence, the gallery, mobile viewports (iPhone + Pixel),
 touch input, WebAudio unlock-on-tap and console errors.
 
 ```bash
-python -m pytest tests -q                                # against localhost:3000
+python -m pytest tests -q                                # boots its own server
 python -m pytest tests -q --base-url=https://<live-url>  # against the deployed site
 ```
 
-31 tests, ~11s against the live site. They share one browser page per viewport and
-run in file order, because the game is a sequence: a chapter has to be played
-before there is any progress to persist. `tools/ship.py` runs this as the
-`verify` step, *after* the deploy is live — it needs a server, so it cannot gate
-the push.
+31 tests, ~10s either way. With no `--base-url` the session starts `node server.js`
+on a free port and stops it afterwards, so the suite needs nothing running and does
+not disturb a dev server on 3000. They share one browser page per viewport and run
+in file order, because the game is a sequence: a chapter has to be played before
+there is any progress to persist.
+
+`tools/ship.py` runs it twice, and the two runs answer different questions: the
+local one gates the push (is the working tree playable?), the `--base-url` one
+gates the release (is what Railway is serving playable?).
 
 ## Layout
 
