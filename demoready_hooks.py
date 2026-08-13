@@ -14,6 +14,10 @@ hook is for what neither can see over a status code:
   imports the next. A module that did not deploy is a 404 the server answers
   instantly and cheerfully, and the page then shows a menu that does nothing.
   Walking the import graph is the closest HTTP equivalent of "does it run".
+- **styles** — the same half-landed deploy that loses a module can lose
+  ``css/style.css``, and nothing above would notice: the game runs, serves 200s
+  and renders a menu, unstyled and collapsed. A stylesheet the page links and the
+  server does not have is DOWN; a missing icon or manifest is only DIRTY.
 - **credits** — it is an unofficial fan tribute. The disclaimer is not decoration;
   showing this to anyone with it missing is the embarrassing case, which is what
   DIRTY means here.
@@ -31,6 +35,7 @@ Playwright launch per demo is the kind of cost that gets a cron switched off.
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import urllib.error
 import urllib.request
@@ -48,6 +53,16 @@ REQUIRED_COLOURS = ("coat", "belly", "patch")
 MIN_PLAYABLE = 5
 
 ENTRY = re.compile(r'<script[^>]+type="module"[^>]+src="([^"]+)"')
+
+# The page's <link> tags, read in two steps because the attributes come in any
+# order: one regex per attribute would have to be written twice over.
+LINK = re.compile(r"<link\b[^>]*>", re.I)
+ATTR = re.compile(r'(\w[\w-]*)\s*=\s*"([^"]*)"')
+
+# An href the browser fetches from this site. A data: URI (the icon today) is
+# already in the page, and an absolute URL is somebody else's deploy: asking for
+# either would report on something this check cannot fix.
+EXTERNAL = ("data:", "http://", "https://", "//", "mailto:")
 
 # The three ways one module can pull in another. Only the first is used today,
 # but the other two are the ones that would go *unnoticed*: a module the walk
@@ -115,22 +130,51 @@ def imports_in(body: str) -> list[str]:
     return [*IMPORT.findall(body), *BARE_IMPORT.findall(body), *LAZY_IMPORT.findall(body)]
 
 
-def walk(base: str, entries: list[str]) -> dict[str, int]:
-    """{module path: status}, following imports out from the entry points."""
-    seen: dict[str, int] = {}
-    queue = [e.lstrip("./") for e in entries]
+OUTSIDE = "outside the site root"
+
+
+def resolve(folder: str, ref: str) -> str | None:
+    """Where an import written inside ``folder`` actually points.
+
+    The browser resolves it against the *importing file's* folder, so this has to
+    as well: ``../lib/x.js`` from ``js/main.js`` is ``lib/x.js``, not ``js/lib/x.js``.
+    Stripping the leading dots (which is what this used to do) re-rooted every
+    parent-relative import under the child folder and reported a deployed module
+    as missing — a false DOWN on a healthy demo, which is how a check teaches
+    people to ignore it (#93).
+
+    ``None`` for a reference that climbs above the site root: the server has no
+    such URL to answer, so it is the app that is wrong, not the deploy.
+    """
+    target = posixpath.normpath(posixpath.join(folder, ref))
+    if target.startswith("..") or target.startswith("/"):
+        return None
+    return target
+
+
+def walk(base: str, entries: list[str]) -> dict[str, int | str]:
+    """{path: status}, following imports out from the entry points.
+
+    A path that cannot be resolved is kept with ``OUTSIDE`` as its status rather
+    than dropped: silently skipping it would turn a broken import into a clean
+    walk, which is the failure this whole check exists to prevent.
+    """
+    seen: dict[str, int | str] = {}
+    queue = [(".", e) for e in entries]
     while queue:
-        path = queue.pop()
+        folder, ref = queue.pop()
+        path = resolve(folder, ref)
+        if path is None:
+            seen[posixpath.join(folder, ref).lstrip("./")] = OUTSIDE
+            continue
         if path in seen:
             continue
         code_status, body = _get(base, path)
         seen[path] = code_status
         if code_status != 200:
             continue
-        folder = path.rsplit("/", 1)[0] if "/" in path else ""
-        for rel in imports_in(body):
-            target = rel.lstrip("./")
-            queue.append(f"{folder}/{target}" if folder else target)
+        here = path.rsplit("/", 1)[0] if "/" in path else ""
+        queue += [(here, ref) for ref in imports_in(body)]
     return seen
 
 
@@ -150,11 +194,76 @@ def modules(base: str) -> dict:
                 "detail": "index.html loads no module — the page cannot start the game"}
 
     seen = walk(base, entries)
-    missing = sorted(p for p, s in seen.items() if s != 200)
-    return {"name": "modules", "state": DOWN if missing else READY,
-            "detail": (f"{len(missing)} module(s) the page imports are not deployed: "
-                       f"{', '.join(missing)} — the menu will render and do nothing" if missing
-                       else f"{len(seen)} modules load, imports all resolve")}
+    escaped = sorted(p for p, s in seen.items() if s == OUTSIDE)
+    missing = sorted(p for p, s in seen.items() if s != 200 and s != OUTSIDE)
+    problems = []
+    if missing:
+        problems.append(f"{len(missing)} module(s) the page imports are not deployed: "
+                        f"{', '.join(missing)} — the menu will render and do nothing")
+    if escaped:
+        problems.append(f"{len(escaped)} import(s) point {OUTSIDE} ({', '.join(escaped)}) — "
+                        f"the browser cannot fetch them from this site either")
+    return {"name": "modules", "state": DOWN if problems else READY,
+            "detail": "; ".join(problems) if problems
+                      else f"{len(seen)} modules load, imports all resolve"}
+
+
+def links_in(index: str) -> list[dict[str, str]]:
+    """Every ``<link>`` on the page as a dict of its attributes."""
+    return [dict(ATTR.findall(tag)) for tag in LINK.findall(index)]
+
+
+def fetched(href: str) -> bool:
+    """Is this href a file the browser would ask *this* site for?"""
+    return bool(href) and not href.startswith(EXTERNAL)
+
+
+def styles(base: str) -> dict:
+    """Does the page's stylesheet (and anything else it <link>s) deploy? (#94)
+
+    The module walk proves the game *runs*; nothing proved it is *dressed*. With
+    no bundler, ``css/style.css`` is one more file that can fail to upload on its
+    own, and when it does the game still serves 200s, still starts, still passes
+    every other check here — as an unstyled column of controls with the layout
+    collapsed. That is not showable, so it is DOWN.
+
+    Other links are held to a lower bar: a missing icon is a blemish in a browser
+    tab, so it is DIRTY, not DOWN. Links the browser does not fetch from this site
+    — the icon is an inline ``data:`` SVG today — are counted and named as skipped
+    rather than passed over in silence.
+    """
+    status, index = _get(base, "/")
+    if status != 200:
+        return {"name": "styles", "state": DOWN, "detail": f"/ answered {status}"}
+
+    links = links_in(index)
+    sheets = [l["href"] for l in links
+              if "stylesheet" in l.get("rel", "").lower() and fetched(l.get("href", ""))]
+    others = [l["href"] for l in links
+              if "stylesheet" not in l.get("rel", "").lower() and fetched(l.get("href", ""))]
+    inline = [l.get("rel", "?") for l in links if not fetched(l.get("href", ""))]
+
+    if not sheets:
+        return {"name": "styles", "state": DOWN,
+                "detail": "the page links no stylesheet — the game would render as an "
+                          "unstyled column of controls"}
+
+    missing_sheets = sorted(h for h in sheets if _get(base, h)[0] != 200)
+    if missing_sheets:
+        return {"name": "styles", "state": DOWN,
+                "detail": f"the stylesheet is not deployed ({', '.join(missing_sheets)}) — the "
+                          f"game runs, unstyled and collapsed; do not show it"}
+
+    missing_others = sorted(h for h in others if _get(base, h)[0] != 200)
+    if missing_others:
+        return {"name": "styles", "state": DIRTY,
+                "detail": f"linked file(s) missing: {', '.join(missing_others)} — cosmetic, "
+                          f"the game plays"}
+
+    counted = f"{len(sheets)} stylesheet(s) and {len(others)} linked file(s) load"
+    return {"name": "styles", "state": READY,
+            "detail": counted + (f"; {len(inline)} inline/external link(s) not checked "
+                                 f"({', '.join(inline)})" if inline else "")}
 
 
 def credits(base: str) -> dict:
@@ -181,4 +290,4 @@ def player_state(base: str) -> dict:
 
 
 def checks(base: str) -> list[dict]:
-    return [cast(base), modules(base), credits(base), player_state(base)]
+    return [cast(base), modules(base), styles(base), credits(base), player_state(base)]
