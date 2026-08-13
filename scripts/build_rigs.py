@@ -52,6 +52,15 @@ SOLID = 200       # alpha: ignore the antialiased rim of a shape
 EYE_WHITE = 0.30
 EYE_PUPIL = 0.03
 
+# A lid patch is averaged to one colour and the blink is painted in it, so the
+# patch has to *be* one colour. LID_SPREAD is that, summed over the three
+# channels: `find_lid` refuses to propose a patch above it, and the check asks
+# the same of the stored ones. The data it is a floor under: two of the 23 sat
+# above it (Bandit 538, straddling the edge of his mask and the background;
+# Bingo 103, on her cheek outline) and the worst of the rest is 6.
+LID_SPREAD = 60
+LID_OPAQUE = 250  # alpha: a patch may not include the antialiased rim, let alone off-body
+
 NECK_RANGE = (0.30, 0.58)  # a cartoon dog's chin, as a fraction of its height
 HIP_RANGE = (0.66, 0.86)
 NECK_DEFAULT, HIP_DEFAULT = 0.45, 0.76
@@ -118,7 +127,8 @@ PARTS: dict[str, dict] = {
             {"box": [0.62, 0.0, 0.81, 0.17], "pivot": [0.71, 0.17]},
         ],
         "eyes": [[0.27, 0.195, 0.47, 0.41], [0.53, 0.20, 0.76, 0.41]],
-        "lid": [0.64, 0.43, 0.70, 0.47],
+        # was [0.64, 0.43, 0.70, 0.47], on the outline under her right eye (#140)
+        "lid": [0.231, 0.383, 0.267, 0.418],
     },
     "bandit": {
         "ears": [
@@ -126,7 +136,8 @@ PARTS: dict[str, dict] = {
             {"box": [0.49, 0.0, 0.70, 0.17], "pivot": [0.60, 0.17]},
         ],
         "eyes": [[0.33, 0.21, 0.50, 0.39], [0.505, 0.215, 0.575, 0.31]],
-        "lid": [0.10, 0.33, 0.14, 0.40],
+        # was [0.10, 0.33, 0.14, 0.40], half of it off the side of his head (#140)
+        "lid": [0.276, 0.211, 0.311, 0.246],
     },
     "chilli": {
         "tail": {"box": [0.66, 0.76, 1.0, 0.98], "pivot": [0.67, 0.80]},
@@ -456,15 +467,60 @@ def find_lid(im, neck: float, eyes: list[list[float]]) -> list[float] | None:
             box = [x / w, y / h, (x + bw) / w, (y + bh) / h]
             if x + bw > outer[0] and x < outer[1]:
                 continue                           # between or under the eyes, not beside them
-            vals = [px[i, j] for j in range(y, y + bh) for i in range(x, x + bw)]
-            if any(v[3] < 250 for v in vals):
+            spread, thin, _ = patch_stats(im, box)
+            if thin:
                 continue                           # over an edge: half of it is background
-            spread = sum(max(v[c] for v in vals) - min(v[c] for v in vals) for c in range(3))
             if best_spread is None or spread < best_spread:
                 best, best_spread = box, spread
-    if best is None or best_spread > 60:
+    if best is None or best_spread > LID_SPREAD:
         return None
     return [rnd(v) for v in best]
+
+
+def patch_stats(im, box: list) -> tuple[int, int, int]:
+    """A lid patch as three numbers: colour spread, see-through pixels, area.
+
+    The spread is summed over the channels rather than taken per channel,
+    because two flat colours can differ in one channel only — Bingo's cheek and
+    her outline are the same hue — and a per-channel maximum would let that
+    through at a third of the score.
+    """
+    w, h = im.size
+    px = im.load()
+    x0, y0 = max(0, round(box[0] * w)), max(0, round(box[1] * h))
+    x1, y1 = min(w, round(box[2] * w)), min(h, round(box[3] * h))
+    vals = [px[i, j] for j in range(y0, y1) for i in range(x0, x1)]
+    if not vals:
+        return 0, 0, 0
+    spread = sum(max(v[c] for v in vals) - min(v[c] for v in vals) for c in range(3))
+    return spread, sum(v[3] < LID_OPAQUE for v in vals), len(vals)
+
+
+def lid_problems(cid: str, r: dict, im) -> list[str]:
+    """Ask the artwork whether the stored lid patch is one colour of face.
+
+    A blink is painted in this patch's *average* colour, so a patch straddling
+    two things averages to a colour that is on the character nowhere and the dog
+    blinks in a smudge. `box_problems` cannot see it: the patch is on the image,
+    above the neck and clear of the eyes, which is all geometry knows.
+
+    `find_lid` has refused to propose such a patch since it existed — the bug is
+    that the six hand-measured ones predate it and were never asked. Bandit's was
+    half off the side of his head (#140).
+    """
+    lid = r.get("lid")
+    if not lid or len(lid) != 4 or not (0 <= lid[0] < lid[2] <= 1 and 0 <= lid[1] < lid[3] <= 1):
+        return []                         # box_problems already said so; do not say it twice
+    spread, thin, area = patch_stats(im, lid)
+    if area < 9:
+        return [f"{cid}: lid patch is {area}px on this image — too small to average"]
+    if thin:
+        return [f"{cid}: lid patch has {thin} of {area} pixels off the character "
+                f"— it has slipped over the edge of the head, so the blink averages in background"]
+    if spread > LID_SPREAD:
+        return [f"{cid}: lid patch spans {spread} of colour (over {LID_SPREAD}) — it straddles "
+                f"a marking, and the average of two colours is on this character nowhere"]
+    return []
 
 
 def is_white(p) -> bool:
@@ -860,17 +916,19 @@ def check() -> int:
         if len(r["legPivots"]) != r["legParts"]:
             problems.append(f"{c['id']}: {r['legParts']} leg parts but {len(r['legPivots'])} pivots")
         problems += box_problems(c["id"], r)
-        if not r.get("eyes"):
+        if not r.get("eyes") and not r.get("lid"):
             continue
         f = ASSETS / f"{c['id']}.png"
         if not f.exists():
             # not "clean": the boxes are there and nothing looked at them
-            problems.append(f"{c['id']}: has eye boxes but no sprite, so they were not checked")
+            problems.append(f"{c['id']}: has face boxes but no sprite, so they were not checked")
             continue
-        problems += eye_problems(c["id"], r, Image.open(f).convert("RGBA"))
-        read += len(r["eyes"])
+        im = Image.open(f).convert("RGBA")
+        problems += eye_problems(c["id"], r, im)
+        problems += lid_problems(c["id"], r, im)
+        read += len(r.get("eyes", [])) + bool(r.get("lid"))
     print(f"{len(rigs)} rigs for {len(chars)} characters, "
-          f"{read} eye box(es) read back off the artwork")
+          f"{read} face box(es) read back off the artwork")
     for p in problems:
         print(f"  PROBLEM {p}")
     return 1 if problems else 0

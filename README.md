@@ -67,9 +67,13 @@ exactly as it did before they existed. Twenty-three of the twenty-five blink and
 thirteen flop their ears; the boxes for those were proposed from the artwork by
 `--suggest` and then looked at, and where a rule found nothing the character
 carries a note in `PARTS` saying why, so a gap is a decision and not an oversight.
-"Looked at once" is not much of a guarantee for 46 eye boxes, so `--check` reads
-each one back off the artwork it was measured on: a box has to be mostly eye
-white with a pupil in it, which a box that slid onto a muzzle is not.
+"Looked at once" is not much of a guarantee for 69 face boxes, so `--check` reads
+each one back off the artwork it was measured on: an eye box has to be mostly eye
+white with a pupil in it, which a box that slid onto a muzzle is not, and a lid
+patch has to be one flat colour of face — it gets averaged to a single colour to
+paint the blink, so a patch straddling a marking blinks in a colour that is on the
+character nowhere, and one hanging off the side of a head blinks in background.
+Two of the twenty-three were wrong that way until the check was written.
 
 Sprites load lazily — the menu family at boot, a chapter's cast when its story card
 opens, the gallery's 25 as you scroll. Until an image is there (or if one 404s) the
@@ -83,8 +87,9 @@ someone reloaded the page, and a three-year-old does not reload the page.
 
 ```bash
 python3 scripts/fetch_assets.py --check   # credited, a cut-out, and the notice above unchanged
-python3 scripts/build_rigs.py --check     # neck above hip, pivots agree with parts, and every
-                                          #  eye box is still mostly eye white with a pupil in it
+python3 scripts/build_rigs.py --check     # neck above hip, pivots agree with parts, every eye box
+                                          #  is still eye white with a pupil in it, and every lid
+                                          #  patch is still one flat colour of face
 python3 scripts/build_rigs.py --sheet     # joint lines drawn over every sprite
 python3 scripts/build_rigs.py --suggest   # propose ear/eye boxes, as PARTS source to paste
 python3 scripts/shots.py                  # regenerate shots/
@@ -133,7 +138,7 @@ python -m pytest tests -q                                # boots its own server
 python -m pytest tests -q --base-url=https://<live-url>  # against the deployed site
 ```
 
-92 tests, ~30s either way. With no `--base-url` the session starts `node server.js`
+98 tests, ~30s either way. With no `--base-url` the session starts `node server.js`
 on a free port and stops it afterwards, so the suite needs nothing running and does
 not disturb a dev server on 3000. They share one browser page per viewport and run
 in file order, because the game is a sequence: a chapter has to be played before
@@ -141,7 +146,8 @@ there is any progress to persist.
 
 The pixel half of `build_rigs.py --check` is the one check here with no second
 opinion — the blink test builds its region of interest out of the rig's own eye
-box, so it agrees with a box drawn anywhere. Its thresholds are broken on purpose
+box, so it agrees with a box drawn anywhere, and it asks that the eye *changed*,
+not that it changed to a colour off this dog. Its thresholds are broken on purpose
 on a rotation (`tools/mutate.py`) to prove the suite still notices.
 
 `tools/ship.py` runs it twice, and the two runs answer different questions: the
