@@ -58,10 +58,10 @@ POSED = sorted((cid, state) for cid, by in POSES.items() for state in by)
 # Which state a character borrows from when the wiki never drew it (#215).
 # Read out of sprites.js because that table is the author of the behaviour;
 # restating it here would let the two drift and still agree with themselves.
+SPRITES_SRC = (APP / "public" / "js" / "sprites.js").read_text()
 POSE_FALLBACK = dict(re.findall(
     r'(\w+): "(\w+)"',
-    re.search(r"const POSE_FALLBACK = \{(.*?)\};",
-              (APP / "public" / "js" / "sprites.js").read_text(), re.S).group(1)))
+    re.search(r"const POSE_FALLBACK = \{(.*?)\};", SPRITES_SRC, re.S).group(1)))
 
 
 def resolved_pose(cid, state):
@@ -117,6 +117,20 @@ RIGGED_RUN = sorted(cid for cid in PLAYABLE if "run" not in POSES.get(cid, {}))
 # drawn in every state, and these tests disappear with the subject.
 BORROWED = sorted((cid, state) for cid in PLAYABLE for state in ACTION
                   if state not in POSES.get(cid, {}) and resolved_pose(cid, state))
+
+# The states `frameMotion` turns the other way, read out of its switch for the
+# same reason as POSE_FALLBACK above: a third one adopting JUMP_SWING arrives
+# with a test rather than without one.
+_MOTION_CASES = re.split(r'case "(\w+)":',
+                         re.search(r"function frameMotion\(.*?\n\}", SPRITES_SRC, re.S).group(0))
+JUMP_SWUNG = tuple(state for state, body in zip(_MOTION_CASES[1::2], _MOTION_CASES[2::2])
+                   if "swing: JUMP_SWING" in body)
+# ...and the borrowed states that land on a render cut at the hip, which are the
+# only ones a swing can move at all: Bandit and Chilli leaping in their own
+# running drawing (#219). Empty the day both are drawn a jump, and these tests
+# go with the subject.
+BORROWED_STRIDE = sorted((cid, state) for cid, state in BORROWED
+                         if state in JUMP_SWUNG and resolved_pose(cid, state) in POSE_JOINTS)
 
 
 @pytest.fixture(scope="module")
@@ -1353,6 +1367,152 @@ def test_the_legs_swing_and_only_the_legs(desktop, cid, state):
         assert d["top"] >= ceiling, (
             f"{cid}: {want} changed pixels at y={d['top']}, above the hip at "
             f"y={r['hipY']:.0f}: {d}")
+
+
+# Same loading dance as SWING_PROBE, and the same `shot`. What differs is the
+# measurement: not *which rows* moved but *which way* the leg mass went, which
+# is the only thing that separates a leap from a run in mid-air (#219).
+SWING_SIGN_PROBE = """
+async ({ id, state, path, size, t, phase }) => {
+  const s = await import('/js/sprites.js');
+  const art = await s.loadArt();
+  s.preload([id]);
+  for (let i = 0; i < 100; i++) {
+    if (s.artState().poseFrames.includes(path)) break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  const W = size, H = size + 90; // room below the feet: a swung foot reaches past them
+
+  // One draw. `cut` false takes the joint out for the duration, which draws the
+  // render whole — the legs exactly where the artist put them.
+  const shot = (drawState, ph, cut) => {
+    const held = art.poseJoints[path];
+    if (!cut) delete art.poseJoints[path];
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const ctx = c.getContext('2d');
+    s.drawCharacter(ctx, id, W / 2, size, size * 0.9, null, t, drawState, 1, null, ph);
+    if (held === undefined) delete art.poseJoints[path]; else art.poseJoints[path] = held;
+    return ctx.getImageData(0, 0, W, H).data;
+  };
+
+  const box = (d) => {
+    let top = null, bottom = null;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (d[(y * W + x) * 4 + 3] > 128) { if (top === null) top = y; bottom = y; break; }
+      }
+    }
+    return { top, bottom };
+  };
+
+  // Where the leg mass sits, left to right. A centroid rather than an edge:
+  // an edge is one pixel and moves with the rasteriser, and the swing carries
+  // the whole band.
+  const legs = (d, from) => {
+    let sum = 0, n = 0;
+    for (let y = Math.max(0, Math.round(from)); y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (d[(y * W + x) * 4 + 3] > 128) { sum += x; n++; }
+      }
+    }
+    return { x: n ? sum / n : null, n };
+  };
+
+  const joint = s.poseJoint(id, state);
+  // Both pictures are the same state at the same instant, so lift, squash and
+  // tilt are identical in them and cancel; what is left is the swing, plus the
+  // seam the cut clips off the belly, which the caller removes.
+  const measure = (drawState, ph) => {
+    const swung = shot(drawState, ph, true);
+    const whole = shot(drawState, ph, false);
+    const b = box(whole);
+    const hipY = b.top + joint.hip * (b.bottom - b.top);
+    const from = hipY + 0.5 * (b.bottom - hipY);
+    const a = legs(swung, from), o = legs(whole, from);
+    return { hipY, from, body: b.bottom - b.top, n: o.n,
+             dx: (a.x === null || o.x === null) ? null : a.x - o.x };
+  };
+  return { joint, path, air: measure(state, phase),
+           run: measure('run', phase), back: measure('run', phase + Math.PI) };
+}
+"""
+
+# How far apart the run's own two extremes have to sit before either can be a
+# reference, as a fraction of the drawn body; and how much of one extreme the
+# borrowed jump has to be worth, and how much nearer it has to sit to that one
+# than to the other. All read off this probe (t=0.31, phase=pi/2, 320px, the
+# lower half of the band): the run's extremes are 16.3px apart on a 247px Bandit
+# and 4.6px on a 248px Chilli, and each borrowed jump lands 0.03-1.1px from the
+# far one and 4.1-16.3px from the near one — at most 0.11 of the way back. Turn
+# the swing off and the legs do not move from the drawing at all, which is 0.98
+# (Bandit) to 2.8 (Chilli) of the way back, and swing them the run's way and
+# they land on the near extreme, which is all of it.
+MIN_TRAVEL = 0.008
+MIN_SHARE = 0.5
+
+
+def test_there_is_a_borrowed_jump_to_measure():
+    """The direction test below is parametrised, and an empty list of cases is a
+    green run that asked nothing. Both halves can empty honestly — `frameMotion`
+    could stop turning any state the other way, and Bandit and Chilli could each
+    be drawn a leap of their own — but neither may happen quietly: delete the
+    test and its mutations (`tests/mutations/sprites.json`) with the subject.
+    """
+    assert JUMP_SWUNG, (
+        "no state in frameMotion carries `swing: JUMP_SWING` — either the switch no "
+        "longer turns a borrowed run the other way, or the parse above stopped reading it")
+    assert BORROWED_STRIDE, (
+        f"no borrowed {'/'.join(JUMP_SWUNG)} lands on a render with a hip in "
+        "pose-joints.json, so there is nothing left for the swing to move")
+
+
+@pytest.mark.parametrize("cid,state", BORROWED_STRIDE,
+                         ids=[f"{c}-{s}" for c, s in BORROWED_STRIDE])
+def test_a_borrowed_jump_swings_the_legs_the_other_way(desktop, cid, state):
+    """#219: Bandit and Chilli leap in their running drawing.
+
+    The artwork's own jumps are stretched — the legs trail behind a body pitched
+    forward — so a borrowed run is turned the other way (`JUMP_SWING`) to read as
+    a leap instead of as a dog running through the air. Nothing asserted the
+    sign: the swing tests only cover states with artwork of their own, and a
+    borrowed state by definition has none, so `JUMP_SWING = LEG_SWING` passed.
+
+    Each state is measured against *itself* drawn whole — the same instant, the
+    same lift, squash and tilt, the joint taken out — so the difference is the
+    swing alone and nothing else has to be held equal between a jump and a run.
+    That difference is not symmetric about zero, though, and cannot be read as a
+    signed distance from the drawing: the band rotates leg mass out of the rows
+    being measured as well as sideways, so Chilli's +LEG_SWING moves her 1.2px
+    one way where -LEG_SWING moves her 3.4px the other. The question is asked as
+    a comparison instead. The run's two extremes are both measured, and the
+    borrowed jump has to land on the *far* one — the legs where this stride puts
+    them half a turn from now, not where it puts them at this instant.
+    """
+    r = desktop.evaluate(SWING_SIGN_PROBE,
+                         {"id": cid, "state": state, "path": resolved_pose(cid, state),
+                          "size": 320, "t": 0.31, "phase": math.pi / 2})
+    air, run, back = r["air"], r["run"], r["back"]
+    assert run["n"] > 300 and air["n"] > 300, f"{cid}: almost no leg was drawn — {r}"
+    assert None not in (air["dx"], run["dx"], back["dx"]), f"{cid}: nothing below the hip — {r}"
+
+    # A quarter turn past a contact is the run's fullest stretch, and half a turn
+    # on is the other one, so these are the two places the stride puts the legs
+    # at its whole size: +LEG_SWING and -LEG_SWING, with every other term of
+    # `frameMotion` identical between them.
+    travel = abs(run["dx"] - back["dx"])
+    near, far = abs(air["dx"] - run["dx"]), abs(air["dx"] - back["dx"])
+    assert travel > MIN_TRAVEL * run["body"], (
+        f"{cid}: between its two extremes the run moved its legs {travel:.1f}px of a "
+        f"{run['body']}px body — the reference this is measured against is not moving: {r}")
+    assert abs(air["dx"]) > MIN_SHARE * abs(back["dx"]), (
+        f"{cid}/{state}: the legs sit {air['dx']:.1f}px from where they were drawn, against "
+        f"{back['dx']:.1f}px at the run's own far stretch — a borrowed run render with no "
+        f"swing on it is a dog running in mid-air: {r}")
+    assert far < MIN_SHARE * near, (
+        f"{cid}/{state}: the legs sit {near:.1f}px from where this stride phase puts them "
+        f"and {far:.1f}px from where the other one does — a leap has to read as the far "
+        f"stretch, and this reads as the near one: that is the running drawing, airborne: {r}")
 
 
 def test_a_held_jump_keeps_the_leaping_drawing(desktop):

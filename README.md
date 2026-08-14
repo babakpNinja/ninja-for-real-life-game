@@ -82,6 +82,13 @@ same clock through `footfall()` — which asks whether the step just simulated
 crossed a foot contact, so it reports the same footfalls whatever the frame rate —
 and kicks up a little dust under the feet each time one lands.
 
+A character the artist never drew leaping borrows its own run render — Bandit and
+Chilli — and it is swung the *other* way (`JUMP_SWING`), because a run render
+carried the way it already runs is a dog running through the air. Nothing said
+which way round that was until #219: the e2e suite now draws the run's two
+extremes and asks that the leap land on the far one, and both the wrong sign and
+no swing at all are broken on purpose to prove it can tell.
+
 Everything else is one flat front-facing render animated as a cut-out rig.
 `public/data/rigs.json` names two lines across it — the neck and the hip — which
 cut it into head / torso / legs, and those parts are drawn back to front with each
