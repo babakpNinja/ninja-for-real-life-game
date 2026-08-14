@@ -1,0 +1,21 @@
+{
+  "note": "Where each side-on pose render is cut so its legs can swing, as fractions of the image. Written by scripts/build_pose_joints.py; read by public/js/sprites.js. A frame with no entry here is drawn whole, exactly as every pose was before this file existed.",
+  "joints": {
+    "assets/poses/bandit-run-0.png": {
+      "hip": 0.79,
+      "pivot": 0.4715
+    },
+    "assets/poses/bingo-run-0.png": {
+      "hip": 0.78,
+      "pivot": 0.3986
+    },
+    "assets/poses/bluey-run-0.png": {
+      "hip": 0.73,
+      "pivot": 0.4694
+    },
+    "assets/poses/chilli-run-0.png": {
+      "hip": 0.77,
+      "pivot": 0.5729
+    }
+  }
+}

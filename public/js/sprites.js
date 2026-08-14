@@ -2,10 +2,12 @@
  * sprites.js — draws the real character artwork, two ways.
  *
  * First choice is a pose frame: public/data/poses.json maps a character and a
- * state to the side-on renders in public/assets/poses/, and the whole frame is
- * drawn as one piece — flipped to face the way it is travelling, with a bob, a
- * squash and a lean about the feet on top (`frameMotion`). Nothing is cut up,
- * so nothing can tear. That is how a run cycle happens.
+ * state to the side-on renders in public/assets/poses/, drawn flipped to face
+ * the way it is travelling, with a bob, a squash and a lean about the feet on
+ * top (`frameMotion`). A stride render is cut once, at the hip its own entry in
+ * public/data/pose-joints.json names, and the band below it swings to the
+ * cadence — one drawing cannot run, and the wiki has no cycle whose feet are
+ * inside its own artwork (see `poseFrame`). Every other pose is drawn whole.
  *
  * Everything else falls through to the rig below, which is the same character
  * standing still, kept alive rather than made to run.
@@ -44,6 +46,7 @@ const poseArt = cache();
 const drawn = new Map(); // id -> "pose" | "rig" | "fallback", how it was last drawn
 let rigs = {};
 let poses = {}; // id -> state -> [frame, ...]
+let poseJoints = {}; // frame path -> {hip, pivot}, the ones that get cut
 let credits = null;
 
 /** Parts overlap their joint by this fraction of sprite height. */
@@ -97,15 +100,19 @@ export function artState() {
 
 export async function loadArt() {
   const grab = (p) => fetch(p).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-  const [c, r, p] = await Promise.all([
+  const [c, r, p, j] = await Promise.all([
     grab("data/asset-credits.json"),
     grab("data/rigs.json"),
     grab("data/poses.json"),
+    grab("data/pose-joints.json"),
   ]);
   credits = c;
   rigs = (r && r.rigs) || {};
   poses = (p && p.frames) || {};
-  return { credits, rigs, poses };
+  // a frame with no joint — or a page that never got this file — is drawn
+  // whole, which is exactly what every pose did before the hip existed
+  poseJoints = (j && j.joints) || {};
+  return { credits, rigs, poses, poseJoints };
 }
 
 export function creditFor(id) {
@@ -379,16 +386,31 @@ function blendAmount(blend, state) {
 }
 
 /**
- * Motion applied to a *whole* pose render — no cutting, no rotating parts.
+ * How far the legs of a stride render swing either side of the pose the artist
+ * drew, in radians. 0.22 is about 12.5 degrees.
  *
- * The rig above exists because one standing render has to do everything. Where
- * the artist drew the pose (public/data/poses.json), the drawing is already
- * right and the only job left is to keep it alive: a bob, a squash on contact,
- * a lean. Nothing here can tear a character, because nothing here takes one
- * apart.
+ * Chosen off `build_pose_joints.py --sheet`, which draws the same cut at
+ * several angles: at 20 degrees the hip material that the torso is supposed to
+ * cover swings out past the body outline on Bingo and Bandit — a notch in the
+ * silhouette — and at 7 it is a twitch. This is the largest angle where all
+ * four renders still read as one dog.
+ */
+const LEG_SWING = 0.22;
+
+/**
+ * Motion applied to a pose render: a bob, a squash on contact, a lean about the
+ * feet, and — for a stride — how far the legs are swung from where they were
+ * drawn.
+ *
+ * `swing` is zero at every contact, so a foot is planted in exactly the pose
+ * the artist drew and `footfall` puffs its dust there; the drawing is what
+ * carries the stride, and this only carries it between two of them.
  *
  * `tilt` rotates about the feet rather than the hip, which is what a whole
- * body does; the rig's `lean` rotates the torso against stationary legs.
+ * body does; the rig's `lean` rotates the torso against stationary legs. Every
+ * state names `swing` even where it is 0, so a change of state interpolates the
+ * legs back rather than snapping them (see `mix`, which takes its keys from the
+ * state being entered).
  */
 function frameMotion(state, t, stride) {
   switch (state) {
@@ -399,18 +421,19 @@ function frameMotion(state, t, stride) {
         sx: 1 + (1 - air) * 0.04,
         sy: 1 - (1 - air) * 0.05,
         tilt: 0.03 + Math.sin(stride * 2) * 0.015,
+        swing: Math.sin(stride) * LEG_SWING,
       };
     }
     case "jump":
-      return { lift: 0, sx: 0.97, sy: 1.05, tilt: -0.07 };
+      return { lift: 0, sx: 0.97, sy: 1.05, tilt: -0.07, swing: 0 };
     case "float": {
       const sway = Math.sin(t * 5);
-      return { lift: 0, sx: 1, sy: 1, tilt: -0.05 + sway * 0.06 };
+      return { lift: 0, sx: 1, sy: 1, tilt: -0.05 + sway * 0.06, swing: 0 };
     }
     case "cheer": {
       const hop = Math.abs(Math.sin(t * 6));
       return { lift: hop * 0.08, sx: 1 - hop * 0.04, sy: 1 + hop * 0.05,
-               tilt: Math.sin(t * 6) * 0.05 };
+               tilt: Math.sin(t * 6) * 0.05, swing: 0 };
     }
     default: {
       const breath = Math.sin(t * 2);
@@ -419,6 +442,7 @@ function frameMotion(state, t, stride) {
         sx: 1 - breath * 0.012,
         sy: 1 + breath * 0.012,
         tilt: Math.sin(t * 1.3) * 0.02,
+        swing: 0,
       };
     }
   }
@@ -459,22 +483,40 @@ const POSE_FALLBACK = { float: "jump" };
  * `Bluey-Leaping` (front-on, legs splayed), and alternating those twelve times
  * a second is a strobe between two drawings, not a run cycle.
  *
- * So the cycle here has to be made, not found — the render cut at the hip and
- * swung, which is the rig's trick applied to a side-on drawing rather than a
- * standing one. Until then a still that bobs and squashes to the stride reads
- * better than any of the above, and the dust at its feet does the rest.
- * `poses.json` still stores a list, so real frames stay data.
+ * So the cycle is made, not found: `poseJoint` below names a hip on the one
+ * drawing there is and `drawPose` swings the band under it, which is the rig's
+ * trick applied to a side-on drawing rather than a standing one. `poses.json`
+ * still stores a list, so real frames stay data if a usable cycle ever turns up.
  *
  * Where a state has no artwork, POSE_FALLBACK may name one that is the same
  * drawing before the rig is reached; anything not there falls to the rig.
  */
 function poseFrame(id, state) {
-  const set = poses[id] || {};
-  const frames = set[state] || set[POSE_FALLBACK[state]];
-  if (!frames || !frames.length) return null;
-  const path = frames[0];
+  const path = poseFile(id, state);
+  if (!path) return null;
   const img = load(poseArt, path, path);
   return img && img.width ? img : null;
+}
+
+/** The file `id` in `state` is drawn from, before it has loaded. */
+function poseFile(id, state) {
+  const set = poses[id] || {};
+  const frames = set[state] || set[POSE_FALLBACK[state]];
+  return frames && frames.length ? frames[0] : null;
+}
+
+/**
+ * Where that drawing is cut so its legs can swing — `{hip, pivot}` as fractions
+ * of the image — or null for a pose that is drawn whole.
+ *
+ * Measured off the artwork by scripts/build_pose_joints.py, which is also where
+ * the four hip lines are authored and what checks they still sit on a hip.
+ * Exported so a test can ask where the cut is instead of hardcoding a number
+ * that would go stale the day someone re-measures one.
+ */
+export function poseJoint(id, state) {
+  const path = poseFile(id, state);
+  return (path && poseJoints[path]) || null;
 }
 
 /* --------------------------------------------------------------- blinking -- */
@@ -648,13 +690,41 @@ function blink(ctx, img, colour, eye, amount) {
   ctx.restore();
 }
 
-/** One pose render, drawn about the origin the transform has already set. */
-function drawPose(ctx, img, size) {
+/**
+ * One pose render, drawn about the origin the transform has already set.
+ *
+ * With no joint, or with the legs where they were drawn, that is one drawImage
+ * and nothing can tear. Given a joint and a swing it is two bands: the legs,
+ * turned about the hip, and then the rest of the body drawn over the top of
+ * them. Both bands carry material across the hip line — the legs keep some of
+ * the belly above it so a swing cannot open a gap, and the body reaches below
+ * it so it covers the seam. That is the rig's arrangement (see `draw`), on
+ * purpose: one way of hiding a joint, in one place.
+ */
+function drawPose(ctx, img, size, joint, swing) {
   ctx.save();
   const s = (size * POSE_SIZE) / img.height;
   ctx.scale(s, s);
   ctx.translate(-img.width / 2, -img.height);
-  ctx.drawImage(img, 0, 0);
+  if (joint && Math.abs(swing) > 0.0005) {
+    const hipY = joint.hip * img.height;
+    const seam = SEAM * img.height;
+    ctx.save();
+    // clipped to everything below the hip *before* the swing, so the belly the
+    // band carries can fill the wedge a turn opens without any of it ending up
+    // above the hip: rotated, the far end of that strip lifts a good 40px, and
+    // wherever the body above is transparent it would show as a shard of leg
+    // floating by the hip. Wide enough not to clip the leg itself sideways.
+    ctx.beginPath();
+    ctx.rect(-img.width, hipY, img.width * 3, img.height * 2);
+    ctx.clip();
+    rotateAbout(ctx, joint.pivot * img.width, hipY, swing);
+    band(ctx, img, hipY - seam, img.height);
+    ctx.restore();
+    band(ctx, img, 0, hipY + seam);
+  } else {
+    ctx.drawImage(img, 0, 0);
+  }
   ctx.restore();
 }
 
@@ -772,7 +842,9 @@ function draw(ctx, id, x, y, size, pal, t, step, state, facing, from, fade, art 
     ctx.scale(facing, 1);
     ctx.rotate(m.tilt); // about the feet: the whole dog leans, nothing shears
     ctx.scale(m.sx, m.sy);
-    drawPose(ctx, frame, size);
+    // the joint belongs to the artwork, so it is `art`'s and not the state's:
+    // mid-crossfade the old drawing is on the new state's motion
+    drawPose(ctx, frame, size, poseJoint(id, art), m.swing || 0);
     ctx.restore();
     return true;
   }

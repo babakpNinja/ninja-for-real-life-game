@@ -55,6 +55,26 @@ EARED = sorted(cid for cid, r in RIGS.items() if r.get("ears"))
 POSES = json.loads((APP / "public" / "data" / "poses.json").read_text())["frames"]
 POSED = sorted((cid, state) for cid, by in POSES.items() for state in by)
 
+# The stride renders, which are the ones cut at the hip so their legs can swing
+# (#212). Read from the shipped joints for the same reason: a frame that stops
+# being cut loses its motion test instead of keeping a passing one.
+POSE_JOINTS = json.loads(
+    (APP / "public" / "data" / "pose-joints.json").read_text())["joints"]
+SWUNG = sorted((cid, state) for cid, state in POSED
+               if POSES[cid][state][0] in POSE_JOINTS)
+# How far above the hip a swing may still change a pixel, as a fraction of the
+# drawn body. The swung band is clipped to below the hip line, so in principle
+# the answer is none; the line is the *body's*, and a run is tilted 0.03rad
+# about the feet, so it is not horizontal on the canvas. Measured across the
+# four renders: the worst is 2.3px of a 247px body (0.009). This is 5px, and it
+# is deliberately not more — before the clip existed the same measurement was
+# 13px, so anything around 0.05 would pass the bug it was written for.
+HIP_SLACK = 0.02
+# Pixels in a row that a difference has to beat before the row counts as having
+# moved. Lowering the hip on Bluey lit up one pixel at the tip of her tail, 35px
+# above the joint — an outline rasterised a shade differently, not a limb.
+NOISE_ROW = 3
+
 # Who the rig still has to carry: a character the player can pick with no
 # running render anywhere. Read the same way, so the day one is drawn for her
 # the rig test below loses its subject and says so.
@@ -1046,6 +1066,153 @@ def test_a_pose_never_advances_past_its_first_frame(desktop):
         assert r["changed"] == 0, (
             f"at t={t} the second frame of the set was drawn: {r} — poses are stills, "
             "one render per state; see poseFrame in sprites.js")
+
+
+SWING_PROBE = """
+async ({ id, state, size, t, half, noise }) => {
+  const s = await import('/js/sprites.js');
+  const art = await s.loadArt();
+  const path = art.poses[id][state][0];
+  s.preload([id]);
+  for (let i = 0; i < 100; i++) {
+    if (s.artState().poseFrames.includes(path)) break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  const W = size, H = size + 90; // room below the feet: a swung foot reaches past them
+
+  // One draw, with the frame's joint replaced for the duration. `null` takes it
+  // out altogether, which is how the pose was drawn before #212 — same motion,
+  // same instant, legs where the artist put them.
+  const shot = (phase, joint) => {
+    const held = art.poseJoints[path];
+    if (joint === undefined) art.poseJoints[path] = held;
+    else if (joint === null) delete art.poseJoints[path];
+    else art.poseJoints[path] = joint;
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const ctx = c.getContext('2d');
+    s.drawCharacter(ctx, id, W / 2, size, size * 0.9, null, t, state, 1, null, phase);
+    if (held === undefined) delete art.poseJoints[path]; else art.poseJoints[path] = held;
+    return ctx.getImageData(0, 0, W, H).data;
+  };
+
+  // The drawing's own box. Solid pixels only: the contact shadow under the feet
+  // is painted at about 14% alpha, and counting it would put the bottom of the
+  // "body" 30px below the feet and drag the hip line down with it.
+  const box = (d) => {
+    let top = null, bottom = null;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (d[(y * W + x) * 4 + 3] > 128) { if (top === null) top = y; bottom = y; break; }
+      }
+    }
+    return { top, bottom };
+  };
+
+  // Which rows the two pictures disagree on, and by how much. A row needs more
+  // than `noise` pixels to count as a row that moved: a couple of antialiased
+  // pixels on an outline is not a body part, and taking the first of those as
+  // the top of the difference makes this measure the rasteriser.
+  const diff = (a, b, noise) => {
+    const per = [];
+    let changed = 0;
+    for (let y = 0; y < H; y++) {
+      let n = 0;
+      for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4;
+        let m = 0;
+        for (let k = 0; k < 4; k++) m = Math.max(m, Math.abs(a[i + k] - b[i + k]));
+        if (m > 12) n++;
+      }
+      per.push(n);
+      changed += n;
+    }
+    const rows = per.map((n, y) => [n, y]).filter(([n]) => n > noise).map(([, y]) => y);
+    return {
+      changed,
+      stray: per.filter((n) => n <= noise).reduce((s, n) => s + n, 0),
+      top: rows.length ? rows[0] : null,
+      bottom: rows.length ? rows[rows.length - 1] : null,
+    };
+  };
+
+  const joint = s.poseJoint(id, state);
+  const forward = shot(half);          // a quarter turn past a contact
+  const back = shot(half + Math.PI);   // ...and the matching one half a cycle later
+  const still = shot(half, null);      // the same instant with nothing cut
+  // the same instant with the joint moved. Both are still cut and still swung,
+  // so these are two pictures out of one code path; `still` is not, which is why
+  // it is only measured and never diffed — a clip rasterises an outline a shade
+  // differently from a plain drawImage, all round the dog.
+  const lowered = shot(half, { hip: joint.hip + 0.06, pivot: joint.pivot });
+  const moved = shot(half, { hip: joint.hip, pivot: joint.pivot + 0.25 });
+  const b = box(still);
+  return {
+    joint,
+    // the body the joint is a fraction of: `still` is the whole frame drawn at
+    // this instant, and the artwork is cropped to its own outline, so its box is
+    // the image rect on the canvas
+    body: b,
+    hipY: b.top + joint.hip * (b.bottom - b.top),
+    opaque: (() => { let n = 0; for (let i = 3; i < still.length; i += 4) if (still[i] > 8) n++; return n; })(),
+    swing: diff(forward, back, noise),
+    hip: diff(forward, lowered, noise),
+    pivot: diff(forward, moved, noise),
+  };
+}
+"""
+
+
+@pytest.mark.parametrize("cid,state", SWUNG, ids=[f"{c}-{s}" for c, s in SWUNG])
+def test_the_legs_swing_and_only_the_legs(desktop, cid, state):
+    """#212: the run is a cycle now, made out of the one drawing there is.
+
+    Two samples half a stride apart, at the *same* simulation time. That pair is
+    chosen: at a quarter turn past a contact the whole-body terms of
+    `frameMotion` — lift, squash and tilt — are identical either side of the
+    half cycle, so the only thing that can differ between these two pictures is
+    the legs. Anything the swing moved that is not a leg shows up as a
+    disagreement above the hip line.
+
+    A two-frame diff on its own would pass a frozen sprite, so the joint is
+    perturbed as well: the same instant drawn with the hip moved down a
+    sixteenth of the body, and again with the pivot slid a quarter of the way
+    across it. Both have to change the picture, which is what says
+    pose-joints.json is being read rather than being decoration next to a
+    hardcoded cut.
+    """
+    r = desktop.evaluate(SWING_PROBE,
+                         {"id": cid, "state": state, "size": 320, "t": 0.31,
+                          "half": math.pi / 2, "noise": NOISE_ROW})
+    body = r["body"]["bottom"] - r["body"]["top"]
+    assert r["opaque"] > 1000, f"{cid}: nothing was drawn — {r}"
+    assert body > 100, f"{cid}: the body is only {body}px tall — {r}"
+
+    swing = r["swing"]
+    assert swing["changed"] > r["opaque"] * 0.04, (
+        f"{cid}: half a stride apart moved {swing['changed']}px of a {r['opaque']}px dog "
+        f"— that is a twitch, not a cycle: {swing}")
+    # ...and it moved the legs, and nothing else. The band carries a seam of
+    # belly above the hip so a swing cannot open a gap there, and `drawPose`
+    # clips that seam away again on the way out, so a stride cannot paint above
+    # its own hip.
+    ceiling = r["hipY"] - HIP_SLACK * body
+    assert swing["top"] >= ceiling, (
+        f"{cid}: the swing changed pixels at y={swing['top']}, above the hip at "
+        f"y={r['hipY']:.0f} — something that is not a leg is being swung: {swing}")
+    assert swing["bottom"] > r["hipY"], f"{cid}: nothing below the hip moved: {swing}"
+
+    # both perturbations move the cut *down* or across, never up, so their
+    # differences are bounded by the same hip line as the swing's
+    for name, want in (("hip", "moving the hip down a sixteenth of the body"),
+                       ("pivot", "sliding the pivot a quarter of the way across it")):
+        d = r[name]
+        assert d["changed"] > r["opaque"] * 0.01, (
+            f"{cid}: {want} changed {d['changed']}px of a {r['opaque']}px dog — "
+            f"pose-joints.json is not being read: {d}")
+        assert d["top"] >= ceiling, (
+            f"{cid}: {want} changed pixels at y={d['top']}, above the hip at "
+            f"y={r['hipY']:.0f}: {d}")
 
 
 def test_a_held_jump_keeps_the_leaping_drawing(desktop):

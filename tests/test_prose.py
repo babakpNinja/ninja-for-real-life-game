@@ -23,6 +23,7 @@ APP = Path(__file__).resolve().parent.parent
 SCRIPTS = [
     ("fetch_assets.py", "the artwork is credited and the notice has not drifted"),
     ("build_rigs.py", "the rigs still cut every render where they say they do"),
+    ("build_pose_joints.py", "every stride render still has a hip on a hip"),
 ]
 
 
@@ -313,6 +314,95 @@ def test_a_box_with_no_artwork_to_read_it_on_is_a_problem(rigs, tmp_path, monkey
     out = capsys.readouterr().out
     assert "0 face box(es) read back" in out, out
     assert "has face boxes but no sprite" in out, out
+
+
+# ------------------------------------ and the pose joints can still fail (#212)
+# A stride render is cut at the hip and the band below it swings, so the hip is
+# load-bearing: put it through the belly and the dog tears in half, put it below
+# the knees and it wags a foot. The e2e suite proves the swing happens and stays
+# under the hip; only this can say the hip is on a hip, because it is the only
+# thing here that reads the artwork.
+
+@pytest.fixture(scope="module")
+def joints():
+    """build_pose_joints as a module, plus the joints it wrote — loaded by path."""
+    spec = importlib.util.spec_from_file_location(
+        "build_pose_joints", APP / "scripts" / "build_pose_joints.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod, json.loads(mod.JOINTS.read_text())["joints"]
+
+
+def with_joints(mod, monkeypatch, tmp_path, edit) -> list[str]:
+    """`--check` run against the shipped joints with one of them edited."""
+    doc = json.loads(mod.JOINTS.read_text())
+    doc["joints"] = edit(dict(doc["joints"]))
+    bad = tmp_path / "pose-joints.json"
+    bad.write_text(json.dumps(doc))
+    monkeypatch.setattr(mod, "JOINTS", bad)
+    return mod.check()
+
+
+@pytest.mark.parametrize("hip,why", [(0.30, "up in the chest"), (0.95, "down at the ankles")])
+def test_a_hip_that_is_not_on_a_hip_is_a_problem(joints, tmp_path, monkeypatch, hip, why):
+    mod, stored = joints
+    rel = "assets/poses/bluey-run-0.png"
+    problems = with_joints(mod, monkeypatch, tmp_path,
+                           lambda j: {**j, rel: {**j[rel], "hip": hip}})
+    assert problems, f"a hip {why} ({hip}) passed --check"
+
+
+def test_a_pivot_off_the_body_is_a_problem(joints, tmp_path, monkeypatch):
+    """The band turns about this point. Off the drawing, it swings the legs on
+    the end of an invisible arm."""
+    mod, _ = joints
+    rel = "assets/poses/bluey-run-0.png"
+    problems = with_joints(mod, monkeypatch, tmp_path,
+                           lambda j: {**j, rel: {**j[rel], "pivot": 0.02}})
+    assert any("pivot is off the body" in p for p in problems), problems
+
+
+def test_a_stride_render_with_no_hip_at_all_is_a_problem(joints, tmp_path, monkeypatch):
+    """It would still draw — whole, and still. A run that quietly stops cycling
+    is exactly the failure #212 was filed about, so silence is not an option."""
+    mod, _ = joints
+    rel = "assets/poses/bluey-run-0.png"
+    problems = with_joints(mod, monkeypatch, tmp_path,
+                           lambda j: {k: v for k, v in j.items() if k != rel})
+    assert any(rel in p and "legs cannot swing" in p for p in problems), problems
+
+
+def test_a_hip_on_a_render_nothing_draws_is_a_problem(joints, tmp_path, monkeypatch):
+    """The other direction: data left behind after a frame is replaced."""
+    mod, _ = joints
+    problems = with_joints(mod, monkeypatch, tmp_path,
+                           lambda j: {**j, "assets/poses/gone-run-0.png": {"hip": 0.75, "pivot": 0.5}})
+    assert any("gone-run-0.png" in p for p in problems), problems
+
+
+def test_a_bad_joint_makes_the_command_itself_exit_non_zero(joints, tmp_path, monkeypatch):
+    """The exit code is what `test_the_asset_scripts_self_check` and ship read."""
+    mod, _ = joints
+    rel = "assets/poses/bluey-run-0.png"
+    doc = json.loads(mod.JOINTS.read_text())
+    doc["joints"][rel] = {**doc["joints"][rel], "hip": 0.30}
+    bad = tmp_path / "pose-joints.json"
+    bad.write_text(json.dumps(doc))
+    monkeypatch.setattr(mod, "JOINTS", bad)
+    monkeypatch.setattr(sys, "argv", ["build_pose_joints.py", "--check"])
+    assert mod.main() == 1
+
+
+def test_every_stored_joint_passes_with_room_to_spare(joints):
+    """The bounds --check holds are only worth something if the shipped numbers
+    are not sitting on them. Measured today: 9%-18% of the drawing below the
+    hip against a 35% ceiling, and 89%-100% of the hip row in one run."""
+    mod, stored = joints
+    for rel, j in sorted(stored.items()):
+        m = mod.measure(mod.APP / "public" / rel, j["hip"])
+        assert m["below"] < mod.BELOW_MAX * 0.7, f"{rel}: {m['below']:.0%} below the hip"
+        assert m["below"] > mod.BELOW_MIN * 1.5, f"{rel}: only {m['below']:.0%} below the hip"
+        assert m["joined"] > mod.JOINED + 0.15, f"{rel}: hip row is {m['joined']:.0%} one run"
 
 
 # --------------------------------------------- the game has one name (#164)
