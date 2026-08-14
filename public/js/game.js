@@ -8,7 +8,7 @@
  */
 
 import {
-  drawTree, drawGumTree, drawHouse, drawCloud, drawBalloon,
+  drawTree, drawPalm, drawGumTree, drawHouse, drawCloud, drawBalloon,
   drawPallets, drawTrolleys, drawStepLadder,
   drawDreamPlanet, drawCloudTower,
   drawToken, drawObstacle, roundRect, star,
@@ -624,6 +624,7 @@ export class Game {
       else if (it.kind === "ladder") drawStepLadder(ctx, it.x, it.y, it.scale);
       else if (it.kind === "planet") drawDreamPlanet(ctx, it.x, it.y, it.scale);
       else if (it.kind === "tower") drawCloudTower(ctx, it.x, it.y, it.scale);
+      else if (it.kind === "palm") drawPalm(ctx, it.x, it.y, it.scale);
       else drawTree(ctx, it.x, it.y, it.scale, it.leaf, it.trunk);
     }
     ctx.restore();

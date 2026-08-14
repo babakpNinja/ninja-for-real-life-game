@@ -175,6 +175,80 @@ export function drawTree(ctx, x, groundY, scale, leaf, trunk) {
   ctx.restore();
 }
 
+/**
+ * A palm on the beach's shoreline (#229): a leaning trunk and drooping fronds.
+ *
+ * Chapter 4 spent its whole life dressed in `drawTree` with a green tint — a
+ * round oak canopy on a straight trunk, standing on a tropical shoreline, which
+ * is the creek's prop with the colour changed. Eight comments in two files had
+ * already called these palms; this is the drawing catching up with them.
+ *
+ * No canopy blob on purpose. A palm reads as a palm because of the *gaps*
+ * between its fronds — fill the middle in and it is an oak again at any size
+ * this is drawn at.
+ *
+ * The trunk leans, but its foot stays at local x=0: the placement test measures
+ * a prop down its own centre column, so a base that wandered left with the lean
+ * would be measured on the sky beside it (#223). The foot is also 2px below the
+ * ground line, as the other props are — a shape that stops exactly on its own
+ * baseline paints its last row in antialiasing too faint to count as paint.
+ */
+export function drawPalm(ctx, x, groundY, scale) {
+  ctx.save();
+  ctx.translate(x, groundY);
+  ctx.scale(scale, scale);
+
+  const crownX = -15, crownY = -98;
+  ctx.fillStyle = "#A5764F";               // the trunk: wide at the foot, bent
+  ctx.beginPath();                         // toward the crown, narrow at the top
+  ctx.moveTo(-7, 2);
+  ctx.quadraticCurveTo(-6, -52, crownX - 5, crownY + 4);
+  ctx.lineTo(crownX + 6, crownY + 4);
+  ctx.quadraticCurveTo(5, -52, 7, 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = "#8E6242";             // the ring scars, following the bend
+  ctx.lineWidth = 1.6;
+  for (let i = 0; i < 5; i++) {
+    const f = 0.18 + i * 0.17, y = 2 + (crownY - 2) * f, w = 6.6 - f * 2.2;
+    ctx.beginPath();
+    ctx.moveTo(-w + crownX * f * f, y);
+    ctx.lineTo(w + crownX * f * f, y);
+    ctx.stroke();
+  }
+
+  ctx.translate(crownX, crownY);
+  ellipse(ctx, -4, 4, 5, 5, "#7A5B3F");    // two coconuts, tucked under the crown
+  ellipse(ctx, 6, 6, 4.5, 4.5, "#8B6A4F");
+
+  /* Five fronds, each an arched blade: the width comes off the *perpendicular*
+   * to the blade's own axis, so a frond pointing straight up is as thick as one
+   * pointing sideways. Bowing the control points vertically instead — the
+   * obvious way — collapses the upright ones to a hairline, which is what the
+   * first draft of this drew.
+   *
+   * Outer two darker, inner three lighter, so the crown has a far side and a
+   * near side rather than reading as one flat star. */
+  const frond = (tipX, tipY, w, arch, fill) => {
+    const len = Math.hypot(tipX, tipY);
+    const nx = -tipY / len, ny = tipX / len;          // unit perpendicular
+    const mx = tipX * 0.5, my = tipY * 0.5 - arch;    // arched, so the tip droops
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.quadraticCurveTo(mx + nx * w, my + ny * w, tipX, tipY);
+    ctx.quadraticCurveTo(mx - nx * w, my - ny * w, 0, 4);
+    ctx.closePath();
+    ctx.fill();
+  };
+  frond(-58, 8, 10, 22, "#4E9E6C");
+  frond(60, 12, 10, 22, "#4E9E6C");
+  frond(-42, -28, 9, 15, "#67B47F");
+  frond(46, -24, 9, 15, "#67B47F");
+  frond(2, -44, 8, 6, "#7CC492");
+  ctx.restore();
+}
+
 export function drawGumTree(ctx, x, groundY, scale) {
   ctx.save();
   ctx.translate(x, groundY);

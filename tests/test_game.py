@@ -2769,6 +2769,21 @@ def test_every_prop_stands_on_the_surface_its_chapter_paints(own_page):
     assert sleepy["checked"] >= 6, (
         f"sleepytime is down to {sleepy['checked']} props — the chapter it was "
         "before #228 is 5400px of dream with an empty middle distance")
+    # Every chapter's middle distance is dressed in its own biome (#229). The
+    # beach shipped `kind: "tree"` — the creek's round oak with a greener leaf —
+    # for as long as this chapter existed, and nothing above can tell: an oak and
+    # a palm both stand perfectly well on the shoreline. This is the claim that
+    # was being made and never checked.
+    shared = {}
+    for ch in chapters:
+        for kind in {p["kind"] for p in ch["rows"]}:
+            shared.setdefault(kind, []).append(ch["id"])
+    borrowed = {k: v for k, v in shared.items() if len(v) > 1}
+    assert borrowed == {}, (
+        f"{borrowed} — a prop standing in two chapters' middle distances means one "
+        "of them is dressed in the other's biome, which is what put a round shade "
+        "tree on a tropical shoreline until #229")
+
     assert sleepy["horizon"] == r["consts"]["CLOUD_TOP"] < r["consts"]["GROUND_Y"], (
         f"the dream stands its planets on y={sleepy['horizon']}, which is not the top "
         f"of the cloud sea ({r['consts']['CLOUD_TOP']}) — a horizon on the ground line "
@@ -2796,6 +2811,176 @@ def test_every_prop_stands_on_the_surface_its_chapter_paints(own_page):
                              "base": r["consts"]["GROUND_Y"]})
     assert why and "in mid air" in why, (
         f"a foot with no surface anywhere in its column came back as {why!r}")
+
+
+# The kind assertion above is a fact about `sceneryFor`'s data, and the data is
+# only half of it: `renderBackground`'s switch decides what a kind is *drawn*
+# with, and pointing "palm" at `drawTree` would put the oak straight back on the
+# beach with every kind still unique. So this asks the picture.
+#
+# What separates a palm from every other prop in this game is the sky it has in
+# the middle of it. A canopy, a cloud tower, a stack of pallets are solid things
+# with at most a few px of shadow between their parts; a palm is blades radiating
+# out of a crown, so a row through it crosses blade, a lot of sky, blade. The
+# measurement is therefore the widest hole *inside* a prop's own silhouette, and
+# it is the drawing's "no canopy blob" written down as a number.
+#
+# One prop per kind, not per chapter: the kinds repeat, and every other kind in
+# the game is the oracle here. Measured today the palm's hole is 37px and the
+# next widest of the other eight is the dream planet's 23 (the gap between its
+# ring and its body); the round tree it replaced is 10-17 depending on scale. A
+# probe that had quietly started counting antialiasing as sky would not leave
+# that spread, which is what makes the palm's number mean anything.
+FROND_PROBE = r"""
+async ({ span, minPaint }) => {
+  const c = await import('/js/chapters.js');
+  const g = window.game;
+  const W = c.WORLD_W, H = c.WORLD_H;
+  const mk = () => { const cv = document.createElement('canvas');
+                     cv.width = W; cv.height = H; return cv.getContext('2d'); };
+  const withCtx = mk(), bareCtx = mk();
+  const same = (a, b, i) => Math.abs(a[i] - b[i]) <= 6 && Math.abs(a[i + 1] - b[i + 1]) <= 6
+                         && Math.abs(a[i + 2] - b[i + 2]) <= 6;
+  const held = g.ch;
+  try {
+    const out = [], seen = new Set();
+    for (const ch of c.CHAPTERS) {
+      for (const p of c.sceneryFor(ch)) {
+        if (seen.has(p.kind)) continue;
+        seen.add(p.kind);
+        const camX = Math.max(0, (p.x - W / 2) / 0.6);
+        const col = Math.round(p.x - camX * 0.6);
+        const x0 = Math.max(0, col - span), x1 = Math.min(W, col + span), w = x1 - x0;
+        withCtx.clearRect(0, 0, W, H); g.ch = ch; g.t = 0; g.renderBackground(withCtx, camX);
+        const heldH = ch.horizon; ch.horizon = null;  // the same view with no props in it
+        bareCtx.clearRect(0, 0, W, H); g.ch = ch; g.t = 0; g.renderBackground(bareCtx, camX);
+        ch.horizon = heldH;
+        const wit = withCtx.getImageData(x0, 0, w, H).data;
+        const bare = bareCtx.getImageData(x0, 0, w, H).data;
+        let hole = { gap: 0, y: null, painted: 0, runs: 0 }, widest = 0;
+        for (let y = 0; y < H; y++) {
+          let painted = 0, runs = 0, prev = false, started = false, gap = 0, run = 0;
+          for (let x = 0; x < w; x++) {
+            const on = !same(wit, bare, (y * w + x) * 4);
+            if (on) {                       // a hole only counts between two blades,
+              painted++;                    // so it is closed by the paint after it
+              if (!prev) runs++;
+              if (started && run > gap) gap = run;
+              started = true; run = 0;
+            } else if (started) run++;
+            prev = on;
+          }
+          if (painted > widest) widest = painted;
+          // only rows with some substance to them: two stray tips either side of the
+          // whole prop is not a hole in it
+          if (painted >= minPaint && gap > hole.gap) hole = { gap, y, painted, runs };
+        }
+        out.push({ id: ch.id, kind: p.kind, x: p.x, col, widestRow: widest,
+                   gap: hole.gap, atY: hole.y, paintedThere: hole.painted,
+                   runsThere: hole.runs });
+      }
+    }
+    return out;
+  } finally { g.ch = held; }
+}
+"""
+
+# What the beach's palm has to clear, and what every other prop has to stay under.
+# The measured numbers are 37 for the palm and 23 for the widest of the rest, so
+# neither bound is closer than 6px to the thing it is separating — and the shape
+# this is here to keep off the shoreline, the round tree, comes in at 10-17.
+PALM_HOLE = 30
+SOLID_PROP_HOLE = 25
+
+
+def test_the_beach_is_dressed_in_palms_and_nothing_else_in_the_game_is(own_page):
+    """The shoreline's props are blades with sky between them, not a canopy (#229).
+
+    Its own page: it borrows the engine to draw backgrounds off screen.
+    """
+    props = own_page.evaluate(FROND_PROBE, {"span": 90, "minPaint": 20})
+    kinds = {p["kind"]: p for p in props}
+    assert len(kinds) == len(props) and len(kinds) >= 8, (
+        f"{sorted(kinds)} — one prop per kind was measured and there are fewer here "
+        "than the game ships, so some kind went unasked")
+
+    assert "palm" in kinds, (
+        f"no chapter ships a palm; the middle distances are dressed in {sorted(kinds)}")
+    palm = kinds["palm"]
+    assert palm["id"] == "beach", f"the palm is standing in {palm['id']}, not on the beach"
+    assert palm["gap"] >= PALM_HOLE, (
+        f"the widest hole inside the beach's palm is {palm['gap']}px at y={palm['atY']} "
+        f"({palm['runsThere']} pieces there) — under {PALM_HOLE}px this is a solid "
+        "shape with a shadow in it, i.e. the round shade tree the beach shipped "
+        "until #229, not a crown of fronds")
+
+    solid = {k: v["gap"] for k, v in kinds.items() if k != "palm"}
+    assert max(solid.values()) <= SOLID_PROP_HOLE, (
+        f"{ {k: g for k, g in solid.items() if g > SOLID_PROP_HOLE} } — every other prop "
+        "in the game is a solid thing, so a hole this wide in one of them means this "
+        "probe is measuring something other than sky between blades, and the palm's "
+        f"{palm['gap']}px says nothing")
+
+    # and that they are all really in the picture: a prop that painted nothing comes
+    # back with no holes at all, which reads exactly like a solid one
+    thin = {k: v["widestRow"] for k, v in kinds.items() if v["widestRow"] < 30}
+    assert thin == {}, (
+        f"{thin} — these are barely in the picture at their widest row, so nothing "
+        "above measured them")
+
+
+# The palm's first draft got each frond's width by bowing its control points
+# vertically, which is fine for the four fronds that lie over sideways and wrong
+# for the one that points up: the offset falls along that blade's own axis and it
+# comes out as a 1px spike out of the crown. It looked like a hair on the lens.
+#
+# That defect is invisible to everything above. At the 0.8 the shoreline is drawn
+# at, the difference between a blade and a spike is 5px of paint against 1 — under
+# the 6-per-channel tolerance the picture probes compare colours with, so it is
+# noise there however it is asked. A shape is scale-free, though, so this asks the
+# same question of the same function at a size where the answer is not: 18px
+# against 2. Nothing else in the game is drawn at this scale, and nothing needs to
+# be — what is under test is the drawing, not the shoreline.
+PALM_CROWN_PROBE = r"""
+async ({ scale, below }) => {
+  const a = await import('/js/art.js');
+  const W = 1100, H = 900, foot = 860;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = "#000000"; ctx.fillRect(0, 0, W, H);
+  a.drawPalm(ctx, W / 2, foot, scale);
+  const d = ctx.getImageData(0, 0, W, H).data;
+  const widest = (y) => {                    // the longest unbroken run in this row
+    let best = 0, run = 0;
+    for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4;
+      if (d[i] > 10 || d[i + 1] > 10 || d[i + 2] > 10) { run++; if (run > best) best = run; }
+      else run = 0;
+    }
+    return best;
+  };
+  let top = null, bottom = null;
+  for (let y = 0; y < H; y++) if (widest(y) > 0) { if (top === null) top = y; bottom = y; }
+  return { top, bottom, foot, blade: top === null ? 0 : widest(top + below) };
+}
+"""
+
+
+def test_the_palms_upright_frond_is_a_blade_and_not_a_spike(own_page):
+    """Every frond has width, including the one pointing straight up (#229)."""
+    r = own_page.evaluate(PALM_CROWN_PROBE, {"scale": 5, "below": 20})
+
+    assert r["top"] is not None and r["top"] >= 1, (
+        f"the palm's topmost paint is at y={r['top']} — it is drawn off the top of "
+        "this canvas, so the crown measured below is a cropped one")
+    assert r["bottom"] >= r["foot"], (
+        f"the palm's lowest paint is at y={r['bottom']}, above its own foot at "
+        f"y={r['foot']} — it is not standing on the line it was given")
+    assert r["blade"] >= 12, (
+        f"20 rows below its tip the palm's topmost frond is {r['blade']}px across. "
+        "A frond that gets its width from the vertical instead of from the "
+        "perpendicular to its own axis collapses to a spike exactly here — this is "
+        "18px when every frond has a width and 2px when the upright one does not")
 
 
 # --- the beach: sand with the sea on one side -------------------------------

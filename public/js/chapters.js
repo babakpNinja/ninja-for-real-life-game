@@ -358,11 +358,15 @@ export function sceneryFor(ch) {
       out.push({ kind: kinds[i % kinds.length], x: 320 + i * 430, y, scale: 1.05 });
     }
   } else if (ch.id === "beach") {
-    // smaller than they were: they now stand at the shoreline, which is further
-    // away than the sand the player is on
+    // Palms, at last (#229). Everything here called them palms — this docstring,
+    // SEA_TOP's, the placement test's — while the chapter pushed `kind: "tree"`
+    // and got the creek's round oak with a greener leaf. The one chapter dressed
+    // in another chapter's biome.
+    //
+    // Smaller than the creek's trees: they stand at the shoreline, which is
+    // further away than the sand the player is on.
     for (let i = 0; i < 12; i++) {
-      out.push({ kind: "tree", x: 300 + i * 520, y, scale: 0.8,
-                 leaf: "#67B47F", trunk: "#A5764F" });
+      out.push({ kind: "palm", x: 300 + i * 520, y, scale: 0.8 });
     }
   } else if (ch.id === "sleepytime") {
     // What a dream can have standing in it (#228): the planets the story says
