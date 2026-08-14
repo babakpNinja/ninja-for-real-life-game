@@ -168,10 +168,34 @@ export function preload(ids) {
 
 /* ------------------------------------------------------------------ poses -- */
 
+/*
+ * A character with no run artwork does not run: it bounds.
+ *
+ * The rig cannot swing legs (see `poseFor`), so its old run was a 4%-of-a-body
+ * bob, and Chilli — the hero of a whole chapter — slid along the beach bobbing
+ * (#168). There is no side-on running render of her to fetch: I listed all 55
+ * files under her name and all 72 under Muffin's, and the only dynamic Chilli is
+ * a dance. A dog with its legs together is not a jogging dog, though, it is a
+ * bounding one. So the rig bounds: gather on contact, push, fly, land. The whole
+ * body arcs, squashes and pitches as one drawing, and nothing is cut apart.
+ *
+ * The cadence is unchanged. The arc's contacts are the zeroes of
+ * `|sin(t * STRIDE)|` — the same instants `footfall` reports — so a bounding
+ * character lands where its own dust comes up and stays in step with one running
+ * on real artwork beside it.
+ */
+const BOUND = {
+  lift: 0.155, // sprite heights at the top of the arc
+  squash: 0.1, // how far the body gathers at contact
+  stretch: 0.05, // and draws out at the apex
+  tilt: 0.13, // pitch into the bound, radians, never let all the way to zero
+};
+
 /**
  * The whole animation vocabulary, as numbers rather than drawing code:
  *   lift    — how far off the ground, in sprite heights
  *   sx, sy  — squash and stretch about the feet
+ *   tilt    — whole-body pitch about the feet, radians
  *   lean    — torso rotation about the hip, radians
  *   head    — head rotation about the neck, on top of the lean
  *   tail    — wag about the tail's root
@@ -182,22 +206,28 @@ export function preload(ids) {
  * is a rectangle holding both legs, the gap between them and — for Muffin —
  * her tail. Swinging that slid a grey slab out sideways at hip height, which
  * is most of what "the characters look messed up" was. A pose the artist drew
- * (poses.json) is the way to get a run cycle; the rig's job is now to keep a
- * character that has no pose art *alive* — breathing, wag, ears, blink —
- * without ever taking its legs apart.
+ * (poses.json) is the way to get a run cycle; the rig's job is to move a
+ * character that has no pose art without ever taking its legs apart.
  */
 function poseFor(state, t) {
   const step = t * STRIDE;
   switch (state) {
     case "run": {
       const swing = Math.sin(step);
-      const air = Math.abs(Math.sin(step));
+      // 0 the instant a foot is down, 1 at the top; `air * (2 - air)` is off the
+      // ground quickly and hangs at the apex, the way a body under gravity does
+      const air = Math.abs(swing);
+      const arc = air * (2 - air);
       return {
-        lift: air * 0.045,
-        sx: 1 + (1 - air) * 0.03,
-        sy: 1 - (1 - air) * 0.04,
+        lift: BOUND.lift * arc,
+        // gathered on contact, drawn out in the air — the squash is about the
+        // feet, so they stay on the ground while the body compresses
+        sx: 1 + BOUND.squash * (1 - arc) - BOUND.stretch * 0.7 * arc,
+        sy: 1 - BOUND.squash * (1 - arc) + BOUND.stretch * arc,
+        tilt: BOUND.tilt * (0.45 + 0.55 * arc),
         // small: with no leg swing under it, a big lean is just the body
-        // sliding off its own hips
+        // sliding off its own hips. The travelling pitch is `tilt`, which turns
+        // the whole drawing about the feet and cannot shear anything.
         lean: 0.02 + swing * 0.015,
         head: -0.02 + Math.sin(step * 0.5) * 0.04,
         tail: Math.sin(step * 2) * 0.34,
@@ -206,7 +236,7 @@ function poseFor(state, t) {
     }
     case "jump":
       return {
-        lift: 0, sx: 0.96, sy: 1.06, lean: 0.1, head: 0.06,
+        lift: 0, sx: 0.96, sy: 1.06, tilt: -0.04, lean: 0.1, head: 0.06,
         tail: 0.3, ear: -0.16,
       };
     case "float": {
@@ -215,6 +245,7 @@ function poseFor(state, t) {
         lift: 0,
         sx: 1,
         sy: 1,
+        tilt: 0,
         lean: -0.04 + sway * 0.05,
         head: 0.1,
         tail: sway * 0.22,
@@ -227,6 +258,7 @@ function poseFor(state, t) {
         lift: hop * 0.07,
         sx: 1 - hop * 0.03,
         sy: 1 + hop * 0.05,
+        tilt: 0,
         lean: Math.sin(t * 6) * 0.04,
         head: -0.09 + Math.sin(t * 12) * 0.04,
         tail: Math.sin(t * 12) * 0.5,
@@ -240,6 +272,7 @@ function poseFor(state, t) {
         lift: 0.004 + breath * 0.004,
         sx: 1 - breath * 0.012,
         sy: 1 + breath * 0.012,
+        tilt: 0,
         lean: Math.sin(t * 1.3) * 0.015,
         head: Math.sin(t * 1.6 + 0.6) * 0.05,
         tail: Math.sin(t * 2.2) * 0.13,
@@ -419,12 +452,24 @@ export function blinkAmount(id, t) {
  */
 const POSE_SIZE = 0.86;
 
-function shadow(ctx, x, y, size, alpha) {
+/**
+ * The contact shadow. The artwork's baked-in one is stripped from every asset so
+ * that this one can track how far off the ground the character actually is: it
+ * fades *and* draws in as the body rises, which is most of what says "in the
+ * air" for a character whose legs cannot move (the bound in `poseFor`).
+ *
+ * `lift` is the state's, in sprite heights. `airborne` is the other kind of off
+ * the ground — a jump the game itself is moving the character through, where the
+ * whole sprite has already left the floor and the shadow travels under it.
+ */
+function shadow(ctx, x, y, size, lift, airborne) {
+  const up = airborne ? 0 : Math.min(Math.max(lift, 0), 0.2);
   ctx.save();
-  ctx.globalAlpha = Math.max(0, alpha);
+  ctx.globalAlpha = Math.max(0, airborne ? 0.1 : 0.2 - up * 1.2);
   ctx.fillStyle = "#000000";
   ctx.beginPath();
-  ctx.ellipse(x, y + 1, size * 0.3, size * 0.055, 0, 0, Math.PI * 2);
+  const draw = 1 - up * 1.6;
+  ctx.ellipse(x, y + 1, size * 0.3 * draw, size * 0.055 * draw, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
@@ -660,7 +705,7 @@ function draw(ctx, id, x, y, size, pal, t, state, facing, from, fade, art = stat
     const m = from ? mix(frameMotion(from, t), frameMotion(state, t), fade)
                    : frameMotion(state, t);
     drawn.set(id, "pose");
-    shadow(ctx, x, y, size, airborne ? 0.1 : 0.2 - m.lift * 1.2);
+    shadow(ctx, x, y, size, m.lift, airborne);
     ctx.save();
     ctx.translate(x, y - m.lift * size);
     ctx.scale(facing, 1);
@@ -682,9 +727,7 @@ function draw(ctx, id, x, y, size, pal, t, state, facing, from, fade, art = stat
 
   const p = from ? mix(poseFor(from, t), poseFor(state, t), fade) : poseFor(state, t);
 
-  // contact shadow — the baked-in one is stripped from every asset so that
-  // this one can track how far off the ground the character actually is
-  shadow(ctx, x, y, size, airborne ? 0.1 : 0.2 - p.lift * 1.2);
+  shadow(ctx, x, y, size, p.lift, airborne);
 
   const k = size / img.height;
   const hipY = rig.hip * img.height;
@@ -694,6 +737,9 @@ function draw(ctx, id, x, y, size, pal, t, state, facing, from, fade, art = stat
   ctx.save();
   ctx.translate(x, y - p.lift * size);
   ctx.scale(facing, 1);
+  // the whole rig pitches about its feet, exactly as a pose frame does: every
+  // part is drawn inside this transform, so there is no seam for it to open
+  ctx.rotate(p.tilt || 0);
   ctx.scale(p.sx, p.sy); // about the feet, so they stay on the ground
   ctx.scale(k, k);
   ctx.translate(-img.width / 2, -img.height);

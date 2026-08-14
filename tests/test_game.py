@@ -18,6 +18,7 @@ place their state belongs.
 """
 
 import collections
+import contextlib
 import json
 import math
 import re
@@ -25,6 +26,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 APP = Path(__file__).resolve().parent.parent
 
@@ -700,12 +702,15 @@ def test_the_ears_flop(desktop, cid):
     rotated, so a box that takes too little leaves the ear behind and one that
     takes too much rotates a slice of skull with it. Both show up as movement.
     """
+    # 0.7 / STRIDE, not the 0.0636 it rounds to: a rounded-off zero leaves a
+    # residual angle of 4e-5 rad, which is exactly zero pixels of movement until
+    # the body is drawn under a rotation and a squash, and then it is up to ten
+    # of resampling. The zero has to be the real one for this to be a control.
+    rest_at = 0.7 / desktop.evaluate("async () => (await import('/js/sprites.js')).STRIDE")
     flop = rig_diff(desktop, cid, "run", [0.2064, 0.2064], "ears", 0.2, nudge=("ears", 0.15, 0))
-    rest = rig_diff(desktop, cid, "run", [0.0636, 0.0636], "ears", 0.2, nudge=("ears", 0.15, 0))
+    rest = rig_diff(desktop, cid, "run", [rest_at, rest_at], "ears", 0.2, nudge=("ears", 0.15, 0))
     assert flop["drawn"] == "rig", flop
-    # not zero: the cut edge lands on different subpixels when the pivot moves,
-    # which is single digits of antialiasing next to hundreds for a real swing
-    assert rest["inside"] + rest["outside"] < 10, f"rotated at rest? {rest}"
+    assert rest["inside"] + rest["outside"] == 0, f"rotated at rest? {rest}"
     assert flop["inside"] > 100, f"the pose is not swinging the ears: {flop}"
 
 
@@ -758,6 +763,103 @@ def test_a_rig_with_no_extras_still_draws_its_character(desktop):
     r = rig_diff(desktop, "bluey", "jump", [0, 0], drop_once=["tail", "ears", "eyes"])
     assert r["drawn"] == "rig", f"drew as {r['drawn']} without its extras"
     assert r["outside"] > 0, "dropping every part changed nothing — was anything drawn?"
+
+
+BOUND_PROBE = """
+async ({ id, steps }) => {
+  const s = await import('/js/sprites.js');
+  const art = await s.loadArt();
+  // the rig is the thing under test, so take the pose artwork off for the
+  // duration — same aliasing of the module's own object as RIG_DIFF
+  const heldPoses = art.poses[id];
+  delete art.poses[id];
+  s.preload([id]);
+  for (let i = 0; i < 100 && !s.artState().loaded.includes(id); i++) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+
+  // one contact to the next, sampled evenly. The cadence is the module's own —
+  // a copy of STRIDE here would keep passing after the rig stopped using it.
+  const half = Math.PI / s.STRIDE;
+  const eps = half / 400;
+  const W = 320, H = 460, size = 200, floor = 400;
+  const frames = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = (i * half) / steps;
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const ctx = c.getContext('2d');
+    s.drawCharacter(ctx, id, W / 2, floor, size, null, t, 'run', 1);
+    const d = ctx.getImageData(0, 0, W, H).data;
+    // alpha > 120 is the character: the contact shadow never gets past 0.2, so
+    // this is the dog's own silhouette and not the mark it leaves on the ground
+    let top = H, bottom = -1, left = W, right = -1;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (d[(y * W + x) * 4 + 3] <= 120) continue;
+        if (y < top) top = y;
+        if (y > bottom) bottom = y;
+        if (x < left) left = x;
+        if (x > right) right = x;
+      }
+    }
+    frames.push({ t, up: floor - bottom, tall: bottom - top, wide: right - left,
+                  contact: s.footfall(t - eps, t + eps) });
+  }
+  if (heldPoses) art.poses[id] = heldPoses;
+  return { frames, size, drawn: s.artState().drawn[id] };
+}
+"""
+
+
+def test_a_character_with_no_run_artwork_bounds_instead_of_sliding(desktop):
+    """#168: Chilli is the hero of chapter 4 and there is no running render of
+    her to fetch — I listed all 55 files under her name on the wiki, and all 72
+    under Muffin's; the only dynamic Chilli is a dance. So she ran on the rig,
+    which cannot swing legs, and a whole level was a dog sliding along the beach
+    bobbing by 4% of her own body.
+
+    A dog whose legs cannot move is not jogging, it is bounding, and that is
+    what is asserted here — off the ground, gathered when she lands, drawn out
+    at the top, and one smooth arc rather than a jitter. Measured off the
+    silhouette she actually paints, sampled from one footfall to the next.
+
+    Every hero, with its pose art taken off, because the rig is what is being
+    tested; the one that reaches this in the real game is named below.
+    """
+    heroes = sorted({hero for hero, _ in desktop.evaluate("window.__cast")})
+    assert "chilli" in heroes and len(heroes) >= 4, heroes
+    assert "run" not in POSES.get("chilli", {}), \
+        "chilli has run artwork now — she draws it, and this test guards the rig"
+
+    for cid in heroes:
+        r = desktop.evaluate(BOUND_PROBE, {"id": cid, "steps": 8})
+        f, size = r["frames"], r["size"]
+        assert r["drawn"] == "rig", f"{cid} drew as {r['drawn']}, not the rig"
+
+        # the ends of the sample are the contacts the dust is spawned on, and
+        # they are where the feet are down: an arc out of step with `footfall`
+        # puffs dust under a dog that is already in the air
+        assert f[0]["contact"] and f[-1]["contact"], \
+            f"{cid}: sampled a stride that does not start and end on a footfall: {f}"
+        assert not any(x["contact"] for x in f[1:-1]), \
+            f"{cid}: more contacts than the arc has bottoms: {f}"
+        for end in (f[0], f[-1]):
+            assert end["up"] <= 2, f"{cid}: feet {end['up']}px off the ground at a footfall"
+
+        up = [x["up"] for x in f]
+        apex = f[up.index(max(up))]
+        assert max(up) >= 0.1 * size, \
+            f"{cid}: bounds {max(up)}px on a {size}px body — that is a bob, not a bound"
+        # one hop: up all the way to the top, then down all the way back
+        top = up.index(max(up))
+        assert up[:top + 1] == sorted(up[:top + 1]) and up[top:] == sorted(up[top:], reverse=True), \
+            f"{cid}: the arc is not one rise and one fall: {up}"
+
+        # gathered on the ground, drawn out in the air — the squash and stretch
+        # that says the body is pushing off rather than being carried
+        assert apex["tall"] > f[0]["tall"] * 1.05, \
+            f"{cid}: same shape landing ({f[0]['tall']}px) as at the top ({apex['tall']}px)"
 
 
 # --- pose frames: the artist's own drawing of the action --------------------
@@ -1098,6 +1200,12 @@ PARTICLE_SOURCES = {
 # Measured over the whole life of the burst, not at the frame it is born on: a
 # sparkle spawns inside the character that set it off and is hidden for the
 # first frames, which reads as "changed no pixels at all" if you look once.
+#
+# The whole life means all of it — the longest here is the sparkle's 0.6s, which
+# is 36 frames, and the loop stops early anyway when the last particle dies. The
+# window used to be 8 frames, which is the burst still inside the character that
+# made it: it read a secret's sparkle at a third of its real worth, and a run
+# that lifts the body over the burst was enough to fail it.
 SEEN_PROBE = """
 ({ chapter, frames }) => {
     const g = window.game;
@@ -1145,7 +1253,7 @@ SEEN_PROBE = """
 """
 
 
-def particles_seen(page, chapter, source, frames=8):
+def particles_seen(page, chapter, source, frames=40):
     """How many pixels one source's burst is worth on one chapter, at its best
     frame: `seen` pixels changed by more than a nudge, `top` the strongest
     channel difference anywhere in the picture."""
@@ -1178,10 +1286,11 @@ def test_every_particle_source_can_actually_be_seen(own_page, source):
         "probe, not an invisible burst")
     assert seen, f"{source} never fired on any chapter: {skipped}"
     for chapter, r in sorted(seen.items()):
-        # Measured over all five chapters, a particle is worth 49 pixels (the
-        # smallest: dust on Chapter 1's pale path) to 178 (a landing puff on
-        # Chapter 5). 40 sits under every one of them, and is the same bound the
-        # single-chapter dust test this grew out of used.
+        # Measured over all five chapters and the full life of each burst, a
+        # particle is worth 89 pixels (the smallest: dust on Chapter 1's pale
+        # path) to 212 (a takeoff puff on Chapter 5). 40 sits well under every
+        # one of them, and is the same bound the single-chapter dust test this
+        # grew out of used.
         assert r["seen"] >= 40 * r["had"], (
             f"{source}: {r['had']} particles changed only {r['seen']} pixels on chapter "
             f"{chapter} over {r['alive']} frames — drawn, and not visible against that "
@@ -1685,11 +1794,18 @@ def test_a_tap_jumps_on_touch(phone):
     The state around it is reported because "y did not change" has more than one
     cause and only one of them is a broken jump: a page the browser has decided
     is hidden pauses the game, and then nothing moves at all.
+
+    Waited for rather than slept through, for the same reason. A jump is a
+    number of *frames*, and this page has been in the background since the
+    desktop tests took the foreground — its rAF is throttled, so 220ms of wall
+    clock was 12 frames on a quiet run and 2 on a busy one. The wait ends the
+    moment he is off the ground, so the common case is still ~200ms.
     """
     vp = phone.viewport_size
     before = phone.evaluate("window.game.player.y")
     phone.touchscreen.tap(vp["width"] / 2, vp["height"] * 0.7)
-    phone.wait_for_timeout(220)
+    with contextlib.suppress(PlaywrightTimeout):
+        phone.wait_for_function("(y0) => window.game.player.y < y0", arg=before, timeout=3000)
     after = phone.evaluate(
         "({ y: window.game.player.y, mode: window.game.mode, "
         " paused: window.game.paused, hidden: document.hidden, "
