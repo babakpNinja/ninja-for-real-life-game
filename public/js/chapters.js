@@ -21,6 +21,18 @@ export const WORLD_W = 960;
 export const SEA_TOP = GROUND_Y - 120;
 
 /**
+ * The top of the cloud sea the dream chapter floats over — its far horizon.
+ *
+ * Exported for the same reason as SEA_TOP: the band `renderBackground` fills and
+ * the line sleepytime's planets rest on are one number, and a second copy of it
+ * is how the beach's palms ended up under the water (#210).
+ *
+ * Sits below the star field and well above the ground line, so it reads as
+ * something a long way down rather than as a floor the player could land on.
+ */
+export const CLOUD_TOP = GROUND_Y - 88;
+
+/**
  * The narrowest gap the beach parts its sand by — a rock pool, not a channel.
  *
  * Exported so the test that says "ch4 reads as a beach" can measure against the
@@ -261,10 +273,12 @@ export const CHAPTERS = [
     hero: "bingo",
     cameo: "nana_chris",
     theme: "sleepytime",
-    // A dream sky. The far layer is clouds, so there is no surface at any y —
-    // hence no standing scenery, rather than gum trees whose trunks ran down
-    // past the floating platforms and ended in mid-air.
-    horizon: null,
+    // The cloud sea, far below the dream (#228). This chapter had no surface at
+    // any y and so no middle distance at all — the same hole hammerbarn had
+    // before #213, and closed the same way round: paint the floor first, then
+    // stand things on it. Not GROUND_Y: a horizon on the ground line is what put
+    // #210's tree trunks down through the floating platforms and into mid-air.
+    horizon: CLOUD_TOP,
     tokenKind: "star",
     tokenName: "dream stars",
     length: 5400,
@@ -317,7 +331,7 @@ export const CHAPTERS = [
  * platforms as you move, and asking "what is under it" gives a different answer
  * every frame. Distant scenery has to stand on something continuous, which is
  * what the far layer draws: hills in the first two chapters, the warehouse row
- * in the third, the sea's far edge in the fourth, and nothing at all in a dream.
+ * in the third, the sea's far edge in the fourth, and the cloud sea in the fifth.
  *
  * `x` is a coordinate in that layer, not in the world.
  */
@@ -349,6 +363,16 @@ export function sceneryFor(ch) {
     for (let i = 0; i < 12; i++) {
       out.push({ kind: "tree", x: 300 + i * 520, y, scale: 0.8,
                  leaf: "#67B47F", trunk: "#A5764F" });
+    }
+  } else if (ch.id === "sleepytime") {
+    // What a dream can have standing in it (#228): the planets the story says
+    // she floats past, resting in the cloud sea, and towers of cloud between
+    // them. Soft and round on purpose — nothing here should have an edge the
+    // gum trees would have, or the middle distance stops being a dream.
+    const kinds = ["planet", "tower", "tower", "planet", "tower"];
+    for (let i = 0; i < 9; i++) {
+      out.push({ kind: kinds[i % kinds.length], x: 300 + i * 400, y,
+                 scale: 0.9 + (i % 3) * 0.15 });
     }
   }
   return out;

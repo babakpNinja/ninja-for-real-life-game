@@ -2609,7 +2609,8 @@ def test_the_respawn_probe_answers_the_same_on_a_page_still_loading(own_page):
 #            that is not in the picture cannot pass by having nothing to measure
 #
 # The props are taken out by the chapter's own rule — `horizon: null` ships none
-# — so the bare picture is one the game can really draw. Each prop is measured
+# — so the bare picture is one the game could really draw, even though since
+# #228 no chapter ships that way. Each prop is measured
 # under the camera that brings it on screen, at a fixed t so the sea's sparkle
 # and the clouds sit still, and `col` is where the 0.6 layer puts it on screen.
 #
@@ -2671,13 +2672,18 @@ async ({ clearRows }) => {
     }
     // The two defects of #210, asked of the same pictures: a foot on the ground
     // line of a beach whose shore is 120px higher, and one on the ground line of
-    // a chapter that paints no ground. Nothing is drawn for these — the question
-    // is only what the picture holds at that y, which is the whole question.
+    // a chapter whose own surface is 88px above it. Plus a foot up in the dream
+    // sky, which is what the second one *was* before #228 painted the cloud sea
+    // under it. Nothing is drawn for these — the question is only what the
+    // picture holds at that y, which is the whole question.
     const of = (id) => c.CHAPTERS.find((x) => x.id === id);
-    return { chapters, defects: {
-      submerged: look(of('beach'), c.GROUND_Y, 300, 640),
-      midair: look(of('sleepytime'), c.GROUND_Y, 300, 640),
-    } };
+    return { chapters,
+      consts: { GROUND_Y: c.GROUND_Y, CLOUD_TOP: c.CLOUD_TOP },
+      defects: {
+        submerged: look(of('beach'), c.GROUND_Y, 300, 640),
+        dreamGround: look(of('sleepytime'), c.GROUND_Y, 300, 640),
+        dreamSky: look(of('sleepytime'), c.CLOUD_TOP - 200, 300, 640),
+      } };
   } finally {
     g.ch = held;
   }
@@ -2745,31 +2751,51 @@ def test_every_prop_stands_on_the_surface_its_chapter_paints(own_page):
         f"only {total} props over {dressed} — there is not enough scenery here for "
         "this to have tested anything")
     bare = sorted(c["id"] for c in chapters if not c["checked"])
-    assert bare == ["sleepytime"], (
-        f"{bare} ship no scenery at all — sleepytime's dream sky has no surface to "
-        "stand anything on, but a chapter that has quietly lost its trees is a "
-        "regression, not a decision")
-    # hammerbarn was in that list until #213: it declared a horizon (the shop
-    # floor) and put nothing on it, so the aisle had a far layer of shelving,
-    # a player, and no middle distance at all. Its props are the reason the
-    # background now paints the floor its horizon names — the picture had no
-    # surface at that y, only the shelving standing in front of one.
+    assert bare == [], (
+        f"{bare} ship no scenery at all — every chapter has a middle distance since "
+        "#228, and one that has quietly lost its trees is a regression, not a "
+        "decision")
+    # hammerbarn was in that list until #213 and sleepytime until #228, both for
+    # the same reason: a far layer, a player, and nothing in between. Hammerbarn
+    # declared a horizon and stood nothing on it; sleepytime declared none at all,
+    # because the dream sky painted no surface anywhere for anything to stand on.
+    # Both were closed by painting the floor first — the shop floor, and the cloud
+    # sea — and these two counts are what stops either sliding back.
     shop = next(c for c in chapters if c["id"] == "hammerbarn")
     assert shop["checked"] >= 6, (
         f"hammerbarn is down to {shop['checked']} props — the chapter it was "
         "before #213 is one with nothing between the shelving and the player")
     sleepy = next(c for c in chapters if c["id"] == "sleepytime")
-    assert sleepy["horizon"] is None, (
-        "sleepytime is a dream sky with no ground in it — declaring a horizon there "
-        f"(y={sleepy['horizon']}) is what put trunks through the platforms")
+    assert sleepy["checked"] >= 6, (
+        f"sleepytime is down to {sleepy['checked']} props — the chapter it was "
+        "before #228 is 5400px of dream with an empty middle distance")
+    assert sleepy["horizon"] == r["consts"]["CLOUD_TOP"] < r["consts"]["GROUND_Y"], (
+        f"the dream stands its planets on y={sleepy['horizon']}, which is not the top "
+        f"of the cloud sea ({r['consts']['CLOUD_TOP']}) — a horizon on the ground line "
+        "is what ran #210's trunks down through the floating platforms")
 
-    # the same rule, run against the two defects it was written for: both were in
-    # the shipped picture, and both have to come back as complaints
-    for name, want in [("submerged", "in the surface"), ("midair", "in mid air")]:
+    # the same rule, run against the placements it was written for: all three were
+    # in a shipped picture at some point, and all three have to come back as
+    # complaints. `dreamGround` is #210's own placement and reads differently since
+    # #228 — a foot on the ground line of the dream is now 88px *inside* the cloud
+    # sea rather than hanging over nothing, which is a complaint either way.
+    for name, want in [("submerged", "in the surface"),
+                       ("dreamGround", "in the surface"),
+                       ("dreamSky", "off the surface")]:
         why = scenery_complaint(r["defects"][name])
         assert why and want in why, (
-            f"a foot placed the way #210's {name} prop was placed came back as "
+            f"a foot placed the way the {name} prop was placed came back as "
             f"{why!r} — this check no longer catches the thing it is here for")
+
+    # And the branch none of those three can reach any more: nothing whatever in
+    # the column. No shipped chapter can produce it since #228, because all five
+    # now paint a surface in every column — that is what the issue was. It is
+    # still the branch that caught sleepytime's trunks in #210, so it is asked
+    # here directly rather than left to a picture that cannot ask it.
+    why = scenery_complaint({"clear": True, "edge": None, "delta": None,
+                             "base": r["consts"]["GROUND_Y"]})
+    assert why and "in mid air" in why, (
+        f"a foot with no surface anywhere in its column came back as {why!r}")
 
 
 # --- the beach: sand with the sea on one side -------------------------------

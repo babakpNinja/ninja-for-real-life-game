@@ -10,12 +10,13 @@
 import {
   drawTree, drawGumTree, drawHouse, drawCloud, drawBalloon,
   drawPallets, drawTrolleys, drawStepLadder,
+  drawDreamPlanet, drawCloudTower,
   drawToken, drawObstacle, roundRect, star,
 } from "./art.js";
 import { drawCharacter, footfall, stridePhase, BLEND } from "./sprites.js";
 import { sound } from "./audio.js";
-import { CHAPTERS, buildLevel, sceneryFor, starsFor, GROUND_Y, SEA_TOP, WORLD_W, WORLD_H }
-  from "./chapters.js";
+import { CHAPTERS, buildLevel, sceneryFor, starsFor, GROUND_Y, SEA_TOP, CLOUD_TOP,
+  WORLD_W, WORLD_H } from "./chapters.js";
 
 const GRAVITY = 2300;
 const JUMP_V = -790;
@@ -503,10 +504,12 @@ export class Game {
     ctx.fillRect(0, 0, WORLD_W, WORLD_H);
 
     if (ch.id === "sleepytime") {
-      // stars + a big friendly moon
+      // stars + a big friendly moon. The field stops short of the cloud sea
+      // (#228) — a star below its top edge is a star underwater, and it is also
+      // a speck of not-sky in the column of whatever is standing there.
       for (let i = 0; i < 60; i++) {
         const sx = (i * 137.5) % WORLD_W;
-        const sy = (i * 61.7) % (GROUND_Y - 60);
+        const sy = (i * 61.7) % (CLOUD_TOP - 40);
         const tw = 0.5 + 0.5 * Math.sin(this.t * 2 + i);
         ctx.globalAlpha = 0.35 + tw * 0.5;
         ctx.fillStyle = "#FFF7D6";
@@ -561,10 +564,41 @@ export class Game {
         for (let r = 0; r < 3; r++) ctx.fillRect(x + 16, GROUND_Y - 210 + r * 66, 268, 12);
       }
     } else if (ch.id === "sleepytime") {
-      for (let i = 0; i < 12; i++) {
+      // The cloud sea this chapter's horizon names (#228). It had clouds and
+      // nothing else, which meant no surface at any y, which meant the one
+      // chapter in the game with an empty middle distance — hammerbarn's hole
+      // before #213, and the same fix: the background has to paint the floor
+      // before anything can be stood on it.
+      //
+      // Flat-topped, and the puffs along it are clipped to below the line. A
+      // cloud top that bulged over would be sky turning solid a few px above a
+      // planet's foot, i.e. a planet sunk in the cloud rather than resting on
+      // it — the clip is what keeps that from depending on where it lands.
+      ctx.fillStyle = "#4A4788";
+      ctx.fillRect(-600, CLOUD_TOP + 14, 7200, WORLD_H - CLOUD_TOP - 14);
+      const haze = ctx.createLinearGradient(0, CLOUD_TOP, 0, CLOUD_TOP + 14);
+      haze.addColorStop(0, "rgba(74,71,136,0)");   // the sea, fading up into sky
+      haze.addColorStop(1, "rgba(74,71,136,1)");
+      ctx.fillStyle = haze;
+      ctx.fillRect(-600, CLOUD_TOP, 7200, 14);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(-600, CLOUD_TOP, 7200, WORLD_H - CLOUD_TOP);
+      ctx.clip();
+      for (let i = 0; i < 22; i++) {
+        // moonlight along the tops, and a darker roll under it
+        drawCloud(ctx, i * 330 - 200, CLOUD_TOP + 6, 1.9, 0.15);
         ctx.globalAlpha = 0.5;
-        drawCloud(ctx, i * 520 + 100, 200 + (i % 3) * 60, 1.6, 0.5);
+        ctx.fillStyle = "#3C3A72";
+        ctx.beginPath();
+        ctx.ellipse(i * 330 - 20, CLOUD_TOP + 92, 210, 46, 0, 0, Math.PI * 2);
+        ctx.fill();
         ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+      // and the clouds still drifting up in the dream itself, above the sea
+      for (let i = 0; i < 12; i++) {
+        drawCloud(ctx, i * 520 + 100, 150 + (i % 3) * 52, 1.6, 0.5);
       }
     } else {
       for (let i = 0; i < 16; i++) {
@@ -588,6 +622,8 @@ export class Game {
       else if (it.kind === "pallets") drawPallets(ctx, it.x, it.y, it.scale);
       else if (it.kind === "trolleys") drawTrolleys(ctx, it.x, it.y, it.scale);
       else if (it.kind === "ladder") drawStepLadder(ctx, it.x, it.y, it.scale);
+      else if (it.kind === "planet") drawDreamPlanet(ctx, it.x, it.y, it.scale);
+      else if (it.kind === "tower") drawCloudTower(ctx, it.x, it.y, it.scale);
       else drawTree(ctx, it.x, it.y, it.scale, it.leaf, it.trunk);
     }
     ctx.restore();

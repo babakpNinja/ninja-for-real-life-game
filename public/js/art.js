@@ -316,6 +316,68 @@ export function drawStepLadder(ctx, x, groundY, scale) {
   ctx.restore();
 }
 
+/**
+ * A ringed planet resting in the cloud sea (#228), where `baseY` is the surface.
+ *
+ * The body sits 4px into the cloud rather than tangent to it: a sphere that only
+ * touches its own foot paints its last row in antialiasing too faint to be a
+ * pixel, and "is this prop standing on the surface" is measured off the lowest
+ * row it really changes. Four px of it under the cloud is also what a thing
+ * settled into cloud looks like.
+ *
+ * The ring is kept above that line for the same reason in reverse — a ring
+ * hanging below the body would put the planet's lowest paint somewhere the
+ * planet is not standing.
+ */
+export function drawDreamPlanet(ctx, x, baseY, scale) {
+  const r = 40 * scale;
+  ctx.save();
+  ctx.translate(x, baseY - r + 4);
+  ctx.globalAlpha = 0.85;
+  ellipse(ctx, 0, 0, r, r, "#C79AD8");
+  ellipse(ctx, -r * 0.28, -r * 0.3, r * 0.52, r * 0.44, "#DDB6E9");  // the lit side
+  ctx.save();                              // two soft bands, clipped to the body
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r, r, 0, 0, Math.PI * 2);
+  ctx.clip();
+  ellipse(ctx, 0, r * 0.34, r * 1.2, r * 0.13, "#A87CBE");
+  ellipse(ctx, 0, -r * 0.62, r * 1.2, r * 0.1, "#A87CBE");
+  ctx.restore();
+  ctx.strokeStyle = "#EBD3F2";             // the ring, tilted and behind at the far edge
+  ctx.lineWidth = 5 * scale;
+  ctx.globalAlpha = 0.6;
+  ctx.beginPath();
+  ctx.ellipse(0, -r * 0.18, r * 1.6, r * 0.42, -0.22, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * A tower of cloud standing in the cloud sea (#228): three puffs, widest down.
+ *
+ * Lilac where the sky's clouds are white, so the layer reads as a distance
+ * rather than as more sky — the same job the hills of chapters 1-2 do, done by
+ * the only kind of thing a dream has lying about.
+ */
+export function drawCloudTower(ctx, x, baseY, scale) {
+  ctx.save();
+  ctx.translate(x, baseY + 2);             // sat into the cloud, as the planets are
+  ctx.scale(scale, scale);
+  // Dim and lilac at the foot, moonlit at the top. The sky's own clouds are
+  // white at 0.5: a tower painted that colour reads as one of them that happens
+  // to be low down, and the middle distance stops being a distance.
+  ctx.globalAlpha = 0.8;
+  ellipse(ctx, 0, -28, 52, 30, "#9F97D2");   // bottoms just under the surface at
+  ellipse(ctx, -34, -20, 30, 20, "#9F97D2"); // every scale this is drawn at, so
+  ellipse(ctx, 36, -22, 32, 21, "#9F97D2");  // the lowest paint is its own foot
+  ctx.globalAlpha = 0.75;
+  ellipse(ctx, 6, -74, 38, 26, "#B4ACE2");
+  ellipse(ctx, -20, -66, 24, 17, "#B4ACE2");
+  ctx.globalAlpha = 0.7;
+  ellipse(ctx, -2, -112, 26, 19, "#CFC8F2");
+  ctx.restore();
+}
+
 export function drawCloud(ctx, x, y, scale, alpha = 0.9) {
   ctx.save();
   ctx.globalAlpha = alpha;
