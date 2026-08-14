@@ -17,6 +17,7 @@ each test needs is what the ones above it left behind. Keep new tests in the
 place their state belongs.
 """
 
+import collections
 import json
 import math
 import re
@@ -1007,47 +1008,202 @@ def test_running_kicks_up_dust_under_the_feet(own_page):
         "already reported")
 
 
-def test_the_dust_can_actually_be_seen(own_page):
-    """A particle in the array is not a particle on the screen. The first draft
-    of this was white at a third of a second's alpha, over a path that is nearly
-    white — three of them existed at the feet and the picture was identical.
+# A particle in the array is not a particle on the screen. The running dust was
+# once white at 0.55 alpha over a path that is nearly white: three of them
+# existed at the feet and the picture was byte-identical (#169). That was fixed
+# with a test for that one source on that one chapter, and every other burst was
+# still only ever checked by `particles.length` — which counts objects, not
+# pixels, and says nothing about the five chapters' different palettes (#173).
+#
+# So: one entry per call site that makes particles. `make` fires exactly that
+# burst and returns "" (or the reason it cannot fire here — some chapters have
+# no balloon), and the probe below measures what the burst is worth in pixels.
+# The siblings are stubbed out first, so what is measured can only be this
+# source; the probe stubs all three afterwards, so a later frame's burst cannot
+# be counted as this one's.
+#
+# The one reason a burst can be missing that is not a fault: not every chapter
+# has a balloon. Spelled once, here, and substituted into the JS so the reason
+# the probe returns and the reason the test forgives cannot drift apart.
+NO_BALLOON = "this chapter has no balloon"
+ABSENT = {NO_BALLOON}
 
-    So: draw the frame, throw the particles away, draw it again, and count what
-    changed. Both renders happen inside one synchronous block, so nothing moves
-    between them and the difference is the dust and only the dust.
-    """
-    r = own_page.evaluate(
-        """() => {
-            const g = window.game;
-            document.getElementById('overlay').classList.add('hidden');
-            g.start(0);
-            for (let n = 0; n < 600 && !g.particles.length; n++) {
-                g.player.onGround = true; g.player.vy = 0;
-                g.step(1 / 120);
-            }
-            const c = g.ctx.canvas, w = c.width, h = c.height;
+PARTICLE_SOURCES = {
+    "the takeoff puff": {"factory": "puff", "make": """
+        g.scuff = () => {}; g.sparkle = () => {};
+        g.player.onGround = true; g.jumpBuffer = 0.2;
+        g.particles = [];
+        g.step(1 / 120);
+        if (!g.particles.length) return "the jump made no puff";
+        return "";
+    """},
+    "the landing puff": {"factory": "puff", "make": """
+        g.scuff = () => {}; g.sparkle = () => {};
+        g.player.onGround = true; g.jumpBuffer = 0.2;
+        g.step(1 / 120);                       // up, and throw that puff away
+        g.particles = [];
+        for (let n = 0; n < 400 && !g.particles.length; n++) g.step(1 / 120);
+        if (!g.particles.length) return "never landed again";
+        return "";
+    """},
+    "the footfall dust": {"factory": "scuff", "make": """
+        g.puff = () => {}; g.sparkle = () => {};
+        g.particles = [];
+        for (let n = 0; n < 600 && !g.particles.length; n++) {
+            g.player.onGround = true; g.player.vy = 0;   // pinned: only footfalls
+            g.step(1 / 120);
+        }
+        if (!g.particles.length) return "no footfall in five seconds of running";
+        return "";
+    """},
+    "a collected token's sparkle": {"factory": "sparkle", "make": """
+        g.puff = () => {}; g.scuff = () => {};
+        const tk = g.level.tokens.find((t) => !t.taken);
+        if (!tk) return "no token left to collect";
+        // moved to where one is about to be picked up — beside the player and a
+        // little above it, which is where they float — rather than onto it: at
+        // the player's own position the character is drawn over the burst
+        tk.x = g.player.x + 40; tk.y = g.player.y - 90;
+        g.particles = [];
+        g.step(1 / 120);
+        if (!g.particles.length) return "the token was not collected";
+        return "";
+    """},
+    "the secret's sparkle": {"factory": "sparkle", "make": """
+        g.puff = () => {}; g.scuff = () => {};
+        const sec = g.level.secret;
+        if (sec.taken) return "the secret is already found";
+        sec.x = g.player.x + 40; sec.y = g.player.y - 90;
+        g.particles = [];
+        g.step(1 / 120);
+        if (!g.particles.length) return "the secret was not found";
+        return "";
+    """},
+    "the bopped balloon's sparkle": {"factory": "sparkle", "make": """
+        g.puff = () => {}; g.scuff = () => {};
+        if (!g.balloon) return NO_BALLOON;
+        g.balloon.x = g.player.x + 40; g.balloon.y = g.player.y - 120;
+        g.balloon.vy = 0;
+        g.particles = [];
+        g.step(1 / 120);
+        if (!g.particles.length) return "the balloon was not bopped";
+        return "";
+    """},
+}
+
+# Draw the frame, take the burst away, draw it again, count what changed. Both
+# renders happen inside one synchronous block, so nothing moves between them and
+# the difference is the particles and only the particles.
+#
+# Measured over the whole life of the burst, not at the frame it is born on: a
+# sparkle spawns inside the character that set it off and is hidden for the
+# first frames, which reads as "changed no pixels at all" if you look once.
+SEEN_PROBE = """
+({ chapter, frames }) => {
+    const g = window.game;
+    document.getElementById('overlay').classList.add('hidden');
+    g.start(chapter);
+    const make = () => { /*MAKE*/ };
+    let out;
+    try {
+        const why = make();
+        if (why) return { skipped: why };
+        const had = g.particles.length;
+        g.puff = () => {}; g.scuff = () => {}; g.sparkle = () => {};
+        const c = g.ctx.canvas, w = c.width, h = c.height;
+        let seen = 0, top = 0, alive = 0;
+        for (let n = 0; n < frames && g.particles.length; n++) {
+            alive++;
             g.render();
-            const dusty = g.ctx.getImageData(0, 0, w, h).data;
-            const had = g.particles.length;
+            const shown = g.ctx.getImageData(0, 0, w, h).data;
+            const kept = g.particles;
             g.particles = [];
             g.render();
-            const clean = g.ctx.getImageData(0, 0, w, h).data;
-            let seen = 0;
-            for (let i = 0; i < dusty.length; i += 4) {
-                const d = Math.max(Math.abs(dusty[i] - clean[i]),
-                                   Math.abs(dusty[i + 1] - clean[i + 1]),
-                                   Math.abs(dusty[i + 2] - clean[i + 2]));
-                if (d > 12) seen++;
+            const bare = g.ctx.getImageData(0, 0, w, h).data;
+            g.particles = kept;
+            let count = 0, peak = 0;
+            for (let i = 0; i < shown.length; i += 4) {
+                const d = Math.max(Math.abs(shown[i] - bare[i]),
+                                   Math.abs(shown[i + 1] - bare[i + 1]),
+                                   Math.abs(shown[i + 2] - bare[i + 2]));
+                if (d > 12) count++;
+                if (d > peak) peak = d;
             }
-            return { seen, had };
-        }"""
-    )
-    assert r["had"] > 0, f"no dust was made to look at: {r}"
-    # three puffs of a few pixels' radius; well under a hundred is dust that is
-    # technically drawn and cannot be seen
-    assert r["seen"] > 120, (
-        f"{r['had']} dust particles changed only {r['seen']} pixels — too faint "
-        "against the path to be worth drawing")
+            if (count > seen) seen = count;
+            if (peak > top) top = peak;
+            g.step(1 / 60);
+        }
+        out = { had, seen, top, alive };
+    } finally {
+        // The stubs above are the *instance's* own properties, shadowing the
+        // prototype's. Left there they outlive `start()`, and the next chapter
+        // measured on this page quietly makes no particles at all.
+        delete g.puff; delete g.scuff; delete g.sparkle;
+    }
+    return out;
+}
+"""
+
+
+def particles_seen(page, chapter, source, frames=8):
+    """How many pixels one source's burst is worth on one chapter, at its best
+    frame: `seen` pixels changed by more than a nudge, `top` the strongest
+    channel difference anywhere in the picture."""
+    js = (SEEN_PROBE.replace("/*MAKE*/", PARTICLE_SOURCES[source]["make"])
+                    .replace("NO_BALLOON", json.dumps(NO_BALLOON)))
+    return page.evaluate(js, {"chapter": chapter, "frames": frames})
+
+
+@pytest.mark.parametrize("source", list(PARTICLE_SOURCES))
+def test_every_particle_source_can_actually_be_seen(own_page, source):
+    """Its own page: this drives the physics by hand and leaves the engine
+    mid-chapter, which the shared desktop page's later tests would inherit.
+
+    Every chapter, because they do not share a palette — dust that shows up on
+    Chapter 1's path can be invisible on Chapter 4's.
+    """
+    seen, skipped = {}, {}
+    for chapter in range(5):
+        r = particles_seen(own_page, chapter, source)
+        if r.get("skipped"):
+            skipped[chapter] = r["skipped"]
+        else:
+            seen[chapter] = r
+    # "could not fire it here" is not "there is nothing to see here": the only
+    # skip this accepts is a chapter that does not have the thing at all. Left
+    # open, a probe that silently stopped working reads as five green chapters.
+    unexplained = {c: why for c, why in skipped.items() if why not in ABSENT}
+    assert not unexplained, (
+        f"the probe could not make {source} happen: {unexplained} — that is a broken "
+        "probe, not an invisible burst")
+    assert seen, f"{source} never fired on any chapter: {skipped}"
+    for chapter, r in sorted(seen.items()):
+        # Measured over all five chapters, a particle is worth 49 pixels (the
+        # smallest: dust on Chapter 1's pale path) to 178 (a landing puff on
+        # Chapter 5). 40 sits under every one of them, and is the same bound the
+        # single-chapter dust test this grew out of used.
+        assert r["seen"] >= 40 * r["had"], (
+            f"{source}: {r['had']} particles changed only {r['seen']} pixels on chapter "
+            f"{chapter} over {r['alive']} frames — drawn, and not visible against that "
+            f"background. Skipped elsewhere: {skipped}")
+        # and its strongest pixel by 51/255 at worst (a landing puff on Chapter 3)
+        assert r["top"] >= 35, (
+            f"{source}: the strongest pixel it changed on chapter {chapter} moved by "
+            f"{r['top']}/255 — too faint to read as anything")
+
+
+def test_every_particle_call_site_is_covered_by_a_visibility_case():
+    """The point of the table above is that a new burst cannot be added without
+    someone asking whether it can be seen. That only holds if the table is
+    checked against the code: this counts the calls to each factory in the
+    engine and fails when one of them has no case here."""
+    src = (APP / "public" / "js" / "game.js").read_text()
+    sites = collections.Counter(re.findall(r"this\.(puff|scuff|sparkle)\(", src))
+    cases = collections.Counter(s["factory"] for s in PARTICLE_SOURCES.values())
+    assert sites == cases, (
+        f"game.js calls {dict(sites)} but PARTICLE_SOURCES covers {dict(cases)} — every "
+        "call site that makes particles needs a case saying what it looks like, or a "
+        "stated reason it is exempt")
 
 
 # Draw one character over a state change and report how much the picture moved
