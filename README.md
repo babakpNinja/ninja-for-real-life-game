@@ -119,9 +119,11 @@ someone reloaded the page, and a three-year-old does not reload the page.
 
 ```bash
 python3 scripts/fetch_assets.py --check   # credited, a cut-out, and the notice above unchanged
-python3 scripts/build_rigs.py --check     # neck above hip, pivots agree with parts, every eye box
-                                          #  is still eye white with a pupil in it, and every lid
-                                          #  patch is still one flat colour of face
+python3 scripts/build_rigs.py --check     # every joint still cuts the render it was measured on:
+                                          #  a derived rig re-derived and compared, a hand-measured
+                                          #  one held to the drawing it names, every hip at or above
+                                          #  the top of the leg split, every eye box still eye white
+                                          #  with a pupil in it, every lid patch one flat face colour
 python3 scripts/build_rigs.py --sheet     # joint lines drawn over every sprite
 python3 scripts/build_rigs.py --suggest   # propose ear/eye boxes, as PARTS source to paste
 python3 scripts/shots.py                  # regenerate shots/
@@ -181,6 +183,15 @@ opinion — the blink test builds its region of interest out of the rig's own ey
 box, so it agrees with a box drawn anywhere, and it asks that the eye *changed*,
 not that it changed to a colour off this dog. Its thresholds are broken on purpose
 on a rotation (`tools/mutate.py`) to prove the suite still notices.
+
+The nine hand-measured rigs each name the render they were measured on, because
+they are the ones nothing can re-derive: `derive()`'s neck is wrong for them by
+up to 0.163, which is why they are hand-measured in the first place. Swap a base
+render and `--check` says whose numbers are now about a drawing that is gone, and
+prints the stamp to paste once they have been measured again (#226). That half has
+no second opinion either — the e2e suite animates whatever the rig says, so a band
+cut through a dog's chest still swings smoothly — so each of its eight branches is
+broken on purpose too (`tests/mutations/rig_joints.json`).
 
 `tools/ship.py` runs it twice, and the two runs answer different questions: the
 local one gates the push (is the working tree playable?), the `--base-url` one

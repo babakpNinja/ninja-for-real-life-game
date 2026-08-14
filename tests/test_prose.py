@@ -316,6 +316,217 @@ def test_a_box_with_no_artwork_to_read_it_on_is_a_problem(rigs, tmp_path, monkey
     assert "has face boxes but no sprite" in out, out
 
 
+# ------------------------------------------ and the joints can still fail (#226)
+# `--check` used to ask of neck and hip only that they were in order and inside
+# the unit interval, which is true of almost any pair of numbers. #220 replaced
+# Muffin's base render — different pose, different aspect ratio — and her stored
+# 0.50/0.78, measured on the old drawing, rode through a build and a ship in
+# silence. A joint at the wrong height does not throw: it shears the character
+# at the waist.
+#
+# The read-back splits by where a number came from. A derived rig is `derive()`'s
+# answer to its own render, so it is asked again. A hand-measured one cannot be:
+# `test_the_hand_measured_joints_could_not_have_been_derived` below is the
+# measurement that says so, and the stamp is what stands in for it.
+
+# The render Muffin's 0.50/0.78 were measured on, replaced by #220:
+#   git show 940a6e8~1:apps/bluey-game/public/assets/characters/muffin.png | sha256sum
+OLD_MUFFIN = "f888506a8aba"
+
+
+def rewritten(mod, monkeypatch, tmp_path, cid: str, **changes) -> None:
+    """Point `check()` at rigs.json with one character's entry edited.
+
+    Through monkeypatch, because the module is loaded once for the file: a
+    `RIGS` left pointing at a tmp_path that pytest has since deleted would fail
+    the next test in the file rather than this one.
+    """
+    doc = json.loads(mod.RIGS.read_text())
+    doc["rigs"][cid].update(changes)
+    bad = tmp_path / "rigs.json"
+    bad.write_text(json.dumps(doc))
+    monkeypatch.setattr(mod, "RIGS", bad)
+
+
+def test_the_pre_220_muffin_joints_are_rejected_by_the_current_render(
+        rigs, tmp_path, monkeypatch, capsys):
+    """The acceptance case, with the real pair of drawings.
+
+    Muffin's joints as they were before #220, against Muffin as she is now. The
+    numbers themselves are unremarkable — 0.05 < 0.50 < 0.78 < 1.0, her head is
+    45% of the ink above 0.50, her legs 19% of it below 0.78, and both sit inside
+    every bound the corpus can support — so what has to notice is that they were
+    measured on a different picture.
+    """
+    mod, _ = rigs
+    assert OLD_MUFFIN != mod.sprite_stamp(mod.ASSETS / "muffin.png"), \
+        "the two renders would have to differ for this test to be about anything"
+    rewritten(mod, monkeypatch, tmp_path, "muffin", neck=0.50, hip=0.78, measuredOff=OLD_MUFFIN)
+
+    assert mod.check() == 1
+    out = capsys.readouterr().out
+    problems = [l for l in out.splitlines() if "PROBLEM" in l]
+    assert len(problems) == 1, out                      # nobody else goes red
+    assert "muffin" in problems[0] and "neck=0.5 hip=0.78" in problems[0], problems[0]
+    assert "measured off a different muffin.png" in problems[0], problems[0]
+    assert OLD_MUFFIN in problems[0] and "1bd2113e716b" in problems[0], problems[0]
+
+
+def test_a_hand_measured_rig_that_names_no_artwork_is_a_problem(
+        rigs, tmp_path, monkeypatch, capsys):
+    """Absent must not read as checked-and-clean.
+
+    Every rig in this repo was in this state until #226: nine hand-measured
+    numbers with nothing recording which drawing anybody measured them on. The
+    honest answer is that they have never been checked, not that they are fine.
+    """
+    mod, _ = rigs
+    rewritten(mod, monkeypatch, tmp_path, "bluey", measuredOff=None)
+
+    assert mod.check() == 1
+    problem, = [l for l in capsys.readouterr().out.splitlines() if "PROBLEM" in l]
+    assert "bluey" in problem and "name no artwork" in problem, problem
+    assert 'measuredOff="b646f3838be9"' in problem, problem   # the value to paste
+
+
+def test_a_derived_joint_is_re_derived_from_the_render(rigs, tmp_path, monkeypatch, capsys):
+    """The other half: 16 of the 25 have no stamp because they need none.
+
+    Their numbers are what `derive()` says about the render, so a render swapped
+    in without a rebuild is the whole distance between the two. Socks' hip moved
+    by 0.05 here — a fifth of the way up her belly.
+    """
+    mod, rr = rigs
+    assert rr["socks"]["derived"], "this test is about a derived rig"
+    rewritten(mod, monkeypatch, tmp_path, "socks", hip=round(rr["socks"]["hip"] - 0.05, 4))
+
+    assert mod.check() == 1
+    problems = [l for l in capsys.readouterr().out.splitlines() if "PROBLEM" in l]
+    assert any("socks" in p and "rigs.json is older than socks.png" in p
+               for p in problems), problems
+
+
+def test_a_leg_pivot_is_read_back_off_the_row_it_came_from(rigs, tmp_path, monkeypatch, capsys):
+    """The count was checked before; the positions were not.
+
+    Two pivots on a two-legged dog is true of a rig whose legs are both in the
+    wrong place, and the band below the hip turns about them.
+    """
+    mod, rr = rigs
+    moved_legs = [rr["bluey"]["legPivots"][0] - 0.08, rr["bluey"]["legPivots"][1]]
+    rewritten(mod, monkeypatch, tmp_path, "bluey", legPivots=moved_legs)
+
+    assert mod.check() == 1
+    problems = [l for l in capsys.readouterr().out.splitlines() if "PROBLEM" in l]
+    assert any("bluey" in p and "leg pivot 0" in p and "off the leg" in p
+               for p in problems), problems
+
+
+def test_a_hip_below_the_leg_split_holds_no_leg(rigs, tmp_path, monkeypatch, capsys):
+    """The one silhouette landmark that survives the corpus.
+
+    It is asked of everybody, hand-measured or not: whatever the neck is doing,
+    a hip below the crotch cuts the character mid-thigh and swings half a leg.
+    """
+    mod, rr = rigs
+    rewritten(mod, monkeypatch, tmp_path, "muffin", hip=0.90)   # her split tops out at 0.814
+
+    assert mod.check() == 1
+    problems = [l for l in capsys.readouterr().out.splitlines() if "PROBLEM" in l]
+    assert any("muffin" in p and "below the top of the leg split" in p
+               for p in problems), problems
+
+
+def test_a_silhouette_that_never_splits_says_so_rather_than_placing_a_hip(rigs):
+    """A third answer, not "the split is at the feet".
+
+    Every character in the repo today does split, so this branch is reached with
+    a drawing rather than found in the corpus: a solid rectangle, the shape of a
+    toy with a single base. `derive()` clamps its way to a hip regardless — the
+    check must not read that clamp back as a landmark it verified.
+    """
+    mod, rr = rigs
+    from PIL import Image
+    im = Image.new("RGBA", (100, 200), (0, 0, 0, 255))
+    rig = {**rr["bluey"], "derived": True, "legPivots": [0.5], "hip": 0.8, "neck": 0.4}
+
+    problems = mod.joint_problems("slab", rig, mod.ASSETS / "bluey.png", im)
+    assert any("never splits into two legs" in p for p in problems), problems
+
+
+def test_the_hand_measured_joints_could_not_have_been_derived(rigs):
+    """Why the nine carry a stamp instead of a read-back.
+
+    This is the measurement the design rests on: `derive()`'s neck is not
+    approximately these numbers, it is wrong by up to 0.163 — a cut through
+    Bluey's forehead. A tolerance loose enough to accept that is loose enough to
+    accept Muffin's stale 0.50, so there is nothing to read back and the
+    question becomes which drawing was measured. If this ever fails, the
+    silhouette rule has become good enough for these characters and the stamps
+    can be replaced by the same comparison the other 16 get.
+    """
+    mod, rr = rigs
+    from PIL import Image
+    close = []
+    for cid in mod.OVERRIDES:
+        d = mod.derive(Image.open(mod.ASSETS / f"{cid}.png").convert("RGBA"))
+        gap = max(abs(rr[cid][j] - d[j]) for j in ("neck", "hip"))
+        if gap <= mod.JOINT_TOL:
+            close.append(f"{cid}: derived within {gap:.4f} of the hand-measured joints")
+    assert not close, "these no longer need hand measuring:\n" + "\n".join(close)
+
+
+def test_every_stored_joint_reads_back_with_room_to_spare(rigs):
+    """The tolerances are slack, not a line fitted to the data.
+
+    Today every derived joint and every one of the 47 leg pivots reads back to
+    0.0000 against a 0.01 tolerance, so anything showing up here is a tolerance
+    that has been dragged out to meet a number that moved.
+    """
+    mod, rr = rigs
+    from PIL import Image
+    tight, checked = [], 0
+    for cid, r in sorted(rr.items()):
+        im = Image.open(mod.ASSETS / f"{cid}.png").convert("RGBA")
+        d = mod.derive(im)
+        for i, (a, b) in enumerate(zip(r["legPivots"], d["legPivots"])):
+            checked += 1
+            if abs(a - b) > mod.LEG_TOL / 2:
+                tight.append(f"{cid}: leg pivot {i} reads back {abs(a - b):.4f} away")
+        if r.get("derived"):
+            for j in ("neck", "hip"):
+                if abs(r[j] - d[j]) > mod.JOINT_TOL / 2:
+                    tight.append(f"{cid}: {j} reads back {abs(r[j] - d[j]):.4f} away")
+    assert checked >= 25, f"only {checked} pivots read back"
+    assert not tight, "joints near the tolerance rather than clear of it:\n" + "\n".join(tight)
+
+
+def test_every_stamp_is_the_render_that_is_on_disk(rigs):
+    """The nine stamps are hand-pasted, so this is the one that catches a typo.
+
+    `--check` says the same thing, but it says it about rigs.json; this says it
+    about `OVERRIDES`, which is where a re-measurement is actually written.
+    """
+    mod, _ = rigs
+    wrong = [f"{cid}: OVERRIDES says {o['measuredOff']}, "
+             f"{cid}.png is {mod.sprite_stamp(mod.ASSETS / f'{cid}.png')}"
+             for cid, o in mod.OVERRIDES.items()
+             if o.get("measuredOff") != mod.sprite_stamp(mod.ASSETS / f"{cid}.png")]
+    assert not wrong, "\n".join(wrong)
+    assert len(mod.OVERRIDES) == 9 and all("measuredOff" in o for o in mod.OVERRIDES.values())
+
+
+def test_a_rig_with_no_sprite_says_its_joints_were_not_read_back(rigs, tmp_path, monkeypatch,
+                                                                 capsys):
+    """A half-failed fetch must not make `--check` quieter than it was."""
+    mod, _ = rigs
+    monkeypatch.setattr(mod, "ASSETS", tmp_path)          # every sprite now missing
+    assert mod.check() == 1
+    out = capsys.readouterr().out
+    assert "0 set(s) of joints" in out, out
+    assert "no sprite, so its joints were not read back" in out, out
+
+
 # ------------------------------------ and the pose joints can still fail (#212)
 # A stride render is cut at the hip and the band below it swings, so the hip is
 # load-bearing: put it through the belly and the dog tears in half, put it below

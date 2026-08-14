@@ -13,12 +13,13 @@ resolution independent, then read by public/js/sprites.js.
 
   python3 scripts/build_rigs.py            # write public/data/rigs.json
   python3 scripts/build_rigs.py --sheet    # + an annotated contact sheet
-  python3 scripts/build_rigs.py --check    # rigs.json covers every asset
+  python3 scripts/build_rigs.py --check    # every rig still cuts its own render
   python3 scripts/build_rigs.py --grid bluey,bingo   # measuring grids for the boxes
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import sys
@@ -66,24 +67,43 @@ HIP_RANGE = (0.66, 0.86)
 NECK_DEFAULT, HIP_DEFAULT = 0.45, 0.76
 LEG_SAMPLE = 0.94  # the row to measure leg positions on: below the belly, above the feet
 
+# How far a stored number may sit from the one this file reads off the render
+# before --check calls it a different drawing. Every derived rig in the repo
+# reads back to 0.0000 today and every leg pivot to 0.0000, so this is slack
+# against a re-encode, not a fitted line: the smallest relocation it has to
+# catch is Muffin's hip moving 0.02 when #220 replaced her base render.
+JOINT_TOL = 0.01
+LEG_TOL = 0.01
+
 # Hand-authored joints, measured off shots/_debug/rig-grid.png. Only the characters
 # that get large motion need this: the four playable heroes and the five
 # cameos, which cheer. Everyone else appears in the gallery at idle, where the
 # rotations are a couple of degrees and a joint line a few percent off is not
 # visible. Deriving a chin line from a silhouette is unreliable (ears and
 # raised arms dominate the row widths), so those nine are measured, not guessed.
+#
+# `measuredOff` is the render they were measured on — the first 12 hex of its
+# sha256, which `--check` prints when it does not match. A derived rig is
+# re-derived from the artwork on every check and cannot drift away from it; a
+# hand-measured one has nothing to compare against, which is the whole reason
+# it is hand-measured, so the question `--check` asks instead is whether the
+# drawing is still the one somebody looked at. #220 replaced Muffin's base
+# render and her 0.50/0.78, measured on the old drawing, stayed silently wrong
+# through a build and a ship (#226). Re-measure off `--grid <id>`, then paste
+# the stamp the failure hands you; changing one without the other is the state
+# this field exists to make loud.
 OVERRIDES: dict[str, dict] = {
-    "bluey": {"neck": 0.55, "hip": 0.76},
-    "bingo": {"neck": 0.57, "hip": 0.78},
-    "bandit": {"neck": 0.52, "hip": 0.78},
-    "chilli": {"neck": 0.53, "hip": 0.77},
-    "muffin": {"neck": 0.55, "hip": 0.80},
-    "lucky": {"neck": 0.42, "hip": 0.75},
-    "nana_chris": {"neck": 0.44, "hip": 0.79},
+    "bluey": {"neck": 0.55, "hip": 0.76, "measuredOff": "b646f3838be9"},
+    "bingo": {"neck": 0.57, "hip": 0.78, "measuredOff": "ba5bb1fde5cf"},
+    "bandit": {"neck": 0.52, "hip": 0.78, "measuredOff": "2dd885e38962"},
+    "chilli": {"neck": 0.53, "hip": 0.77, "measuredOff": "bcec1bcb4698"},
+    "muffin": {"neck": 0.55, "hip": 0.80, "measuredOff": "1bd2113e716b"},
+    "lucky": {"neck": 0.42, "hip": 0.75, "measuredOff": "100181349dd2"},
+    "nana_chris": {"neck": 0.44, "hip": 0.79, "measuredOff": "a3c07577084b"},
     # Chattermax is a toy owl: no neck, and two little feet right at the bottom.
-    "chattermax": {"neck": 0.34, "hip": 0.90},
+    "chattermax": {"neck": 0.34, "hip": 0.90, "measuredOff": "7bafde32e4ae"},
     # Snickers is a dachshund — long body, and his legs never separate.
-    "snickers": {"neck": 0.36, "hip": 0.80},
+    "snickers": {"neck": 0.36, "hip": 0.80, "measuredOff": "eb00b94a0d2f"},
 }
 
 
@@ -591,6 +611,28 @@ def clamp(v: float, lo: float, hi: float, default: float) -> tuple[float, bool]:
     return v, False
 
 
+def leg_split(rr, top: int, bottom: int) -> int | None:
+    """Walking up from the feet, the top row of the gap between the legs.
+
+    `None` when the silhouette never splits at all — a toy with a single base,
+    a dachshund drawn side-on. That is a third answer, not "the split is at the
+    feet": nothing below such a hip is a leg, and `--check` says so rather than
+    holding the number to a landmark that is not there.
+
+    Raw, deliberately: `derive()` clamps this into the range a standing cartoon
+    dog can occupy, and a clamped hip read back as a landmark would fail
+    Chattermax, whose real split is at 0.926 and whose clamped one is 0.86.
+    """
+    hip = None
+    for y in range(bottom, top, -1):
+        if len(rr[y]) < 2:
+            if hip is not None:
+                break
+            continue
+        hip = y
+    return hip
+
+
 def derive(im) -> dict:
     """Joints and leg pivots from the silhouette.
 
@@ -608,13 +650,7 @@ def derive(im) -> dict:
     top, bottom = filled[0], filled[-1]
 
     # --- hip: walking up from the feet, how far does the leg gap go? ---
-    hip = None
-    for y in range(bottom, top, -1):
-        if len(rr[y]) < 2:
-            if hip is not None:
-                break
-            continue
-        hip = y
+    hip = leg_split(rr, top, bottom)
     hip_f, hip_clamped = clamp(None if hip is None else hip / h, *HIP_RANGE, HIP_DEFAULT)
 
     # --- neck: narrowest row between the head's widest row and the torso's ---
@@ -788,6 +824,87 @@ def grid(ids: list[str], zoom: tuple[float, float] | None = None) -> int:
     return 0
 
 
+def sprite_stamp(path: Path) -> str:
+    """Which drawing this is: the first 12 hex of the file's sha256.
+
+    Short enough to sit on the same source line as the numbers it belongs to,
+    and it only ever has to tell one render of one character from another.
+    """
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+
+
+def joint_problems(cid: str, r: dict, sprite: Path, im) -> list[str]:
+    """The joints, read back off the render they claim to cut.
+
+    Two questions, because the numbers have two sources.
+
+    A **derived** rig is `derive()`'s answer to this very image, so ask it again
+    and compare: all 16 read back to 0.0000 today, and a render replaced without
+    a rebuild is the whole distance between the two.
+
+    A **hand-measured** one cannot be re-derived — the nine in `OVERRIDES` exist
+    precisely because the silhouette rule is wrong for them, by up to 0.163 for
+    Bluey — so the question becomes whether the artwork is still the one it was
+    measured on. Measured over all 25: no silhouette landmark separates Muffin's
+    stale 0.50 neck from her true 0.55 (her outline is a constant 212px from
+    y=0.40 to 0.68, so there is no pinch to bound a chin with), and the widest
+    torso row is a raised arm for 8 of the 25. The stamp is what is left, and it
+    is the thing that actually catches #220's failure.
+
+    The leg pivots and the hip's one real landmark are asked of everybody.
+    """
+    problems = []
+    d = derive(im)
+    if not d:
+        return [f"{cid}: the sprite is empty, so its joints were not read back"]
+
+    stored, found = r["legPivots"], d["legPivots"]
+    if len(stored) != len(found):
+        problems.append(
+            f"{cid}: {len(stored)} leg pivot(s) stored, but row {LEG_SAMPLE} of this "
+            f"render splits into {len(found)}")
+    else:
+        for i, (a, b) in enumerate(zip(stored, found)):
+            if abs(a - b) > LEG_TOL:
+                problems.append(
+                    f"{cid}: leg pivot {i} is {a} but that leg sits at {b} on this "
+                    f"render — the band would turn about a point off the leg")
+
+    w, h = im.size
+    rr = rows(im)
+    filled = [y for y in range(h) if rr[y]]
+    split = leg_split(rr, filled[0], filled[-1]) if filled else None
+    if split is None:
+        problems.append(
+            f"{cid}: the silhouette never splits into two legs, so nothing here can say "
+            f"whether hip {r['hip']} is on a hip")
+    elif r["hip"] > split / h + JOINT_TOL:
+        problems.append(
+            f"{cid}: hip {r['hip']} is below the top of the leg split ({split / h:.4f}), "
+            f"so the band that swings holds no whole leg")
+
+    if r.get("derived"):
+        for joint in ("neck", "hip"):
+            if abs(r[joint] - d[joint]) > JOINT_TOL:
+                problems.append(
+                    f"{cid}: {joint} {r[joint]} was derived, but this render derives "
+                    f"{d[joint]} — rigs.json is older than {sprite.name}")
+        return problems
+
+    stamp, actual = r.get("measuredOff"), sprite_stamp(sprite)
+    if not stamp:
+        problems.append(
+            f"{cid}: neck={r['neck']} hip={r['hip']} are hand-measured and name no "
+            f"artwork, so nothing has ever checked they belong to this render — measure "
+            f'them off `--grid {cid}` and record measuredOff="{actual}"')
+    elif stamp != actual:
+        problems.append(
+            f"{cid}: neck={r['neck']} hip={r['hip']} were measured off a different "
+            f"{sprite.name} ({stamp}); this render is {actual} — re-measure the joints "
+            f'off `--grid {cid}` and record measuredOff="{actual}"')
+    return problems
+
+
 def box_problems(cid: str, r: dict) -> list[str]:
     """Validate the optional tail/ear/eye boxes of one rig.
 
@@ -909,7 +1026,7 @@ def check() -> int:
     rigs = json.loads(RIGS.read_text())["rigs"]
     chars = json.loads(CHARS.read_text())["characters"]
     problems = []
-    read = 0
+    read = joints = hand = 0
     for c in chars:
         r = rigs.get(c["id"])
         if not r:
@@ -920,19 +1037,26 @@ def check() -> int:
         if len(r["legPivots"]) != r["legParts"]:
             problems.append(f"{c['id']}: {r['legParts']} leg parts but {len(r['legPivots'])} pivots")
         problems += box_problems(c["id"], r)
-        if not r.get("eyes") and not r.get("lid"):
-            continue
         f = ASSETS / f"{c['id']}.png"
         if not f.exists():
-            # not "clean": the boxes are there and nothing looked at them
-            problems.append(f"{c['id']}: has face boxes but no sprite, so they were not checked")
+            # not "clean": the numbers are there and nothing looked at them
+            problems.append(f"{c['id']}: no sprite, so its joints were not read back")
+            if r.get("eyes") or r.get("lid"):
+                problems.append(f"{c['id']}: has face boxes but no sprite, so they were not checked")
             continue
         im = Image.open(f).convert("RGBA")
+        problems += joint_problems(c["id"], r, f, im)
+        joints += 1
+        hand += not r.get("derived")
+        if not r.get("eyes") and not r.get("lid"):
+            continue
         problems += eye_problems(c["id"], r, im)
         problems += lid_problems(c["id"], r, im)
         read += len(r.get("eyes", [])) + bool(r.get("lid"))
     print(f"{len(rigs)} rigs for {len(chars)} characters, "
-          f"{read} face box(es) read back off the artwork")
+          f"{read} face box(es) read back off the artwork, "
+          f"{joints} set(s) of joints too — {joints - hand} re-derived from the render, "
+          f"{hand} hand-measured and held to the render they were measured on")
     for p in problems:
         print(f"  PROBLEM {p}")
     return 1 if problems else 0

@@ -12,6 +12,7 @@
       "feet": 0.998,
       "derived": false,
       "clamped": [],
+      "measuredOff": "b646f3838be9",
       "tail": {
         "box": [
           0.74,
@@ -82,6 +83,7 @@
       "feet": 0.998,
       "derived": false,
       "clamped": [],
+      "measuredOff": "ba5bb1fde5cf",
       "ears": [
         {
           "box": [
@@ -140,6 +142,7 @@
       "feet": 0.998,
       "derived": false,
       "clamped": [],
+      "measuredOff": "2dd885e38962",
       "ears": [
         {
           "box": [
@@ -198,6 +201,7 @@
       "feet": 0.998,
       "derived": false,
       "clamped": [],
+      "measuredOff": "bcec1bcb4698",
       "tail": {
         "box": [
           0.66,
@@ -268,6 +272,7 @@
       "feet": 0.9976,
       "derived": false,
       "clamped": [],
+      "measuredOff": "1bd2113e716b",
       "ears": [
         {
           "box": [
@@ -502,6 +507,7 @@
       "feet": 0.998,
       "derived": false,
       "clamped": [],
+      "measuredOff": "a3c07577084b",
       "ears": [
         {
           "box": [
@@ -618,6 +624,7 @@
       "feet": 0.9785,
       "derived": false,
       "clamped": [],
+      "measuredOff": "100181349dd2",
       "tail": {
         "box": [
           0.02,
@@ -788,7 +795,8 @@
       "legParts": 2,
       "feet": 0.9977,
       "derived": false,
-      "clamped": []
+      "clamped": [],
+      "measuredOff": "eb00b94a0d2f"
     },
     "chloe": {
       "hip": 0.86,
@@ -1152,7 +1160,8 @@
       "legParts": 2,
       "feet": 0.998,
       "derived": false,
-      "clamped": []
+      "clamped": [],
+      "measuredOff": "7bafde32e4ae"
     }
   }
 }
