@@ -643,6 +643,11 @@ def test_one_dropped_request_is_not_the_final_answer(own_page):
     page.unroute("**/assets/characters/*")
 
 
+# Waits for its own artwork rather than for the page (`art_settled`, below): it
+# calls `preload` for a character the gallery may never have drawn, so the fetch
+# it has to wait for does not exist until it starts. Then it decodes the render
+# itself before the first shot, and the pose art is deleted for the duration, so
+# neither drawing can change between the two frames it compares (#224).
 RIG_DIFF = """
 async ({ id, state, times, drop, dropOnce, nudge, region, pad }) => {
   const s = await import('/js/sprites.js');
@@ -1199,6 +1204,10 @@ def test_a_borrowed_state_draws_the_frame_the_chain_lands_on(desktop, cid, state
         f"drawing through {landed}: {r}")
 
 
+# Same as RIG_DIFF on the loading question (#224): it preloads the character
+# itself and then waits for the one pose file it is about to draw, by path, so
+# `art_settled` in the test would be waiting for the wrong moment — before the
+# request it cares about has been made.
 SWING_PROBE = """
 async ({ id, state, size, t, half, noise }) => {
   const s = await import('/js/sprites.js');
@@ -1720,6 +1729,50 @@ ART_SETTLED = ("() => window.__art().pending.length === 0 "
                "&& window.__art().posePending.length === 0")
 
 
+def art_settled(page, timeout=20000):
+    """Block until this page has stopped fetching artwork.
+
+    Every probe below that reads pixels back and compares them needs this, and
+    the rule has one author on purpose (#224): a probe that measures a page
+    mid-load is measuring how much of the page had arrived, and the failure is
+    invisible against a local server — everything is decoded off the disk before
+    the first test runs — so it surfaces as a ship failing on the deployed site.
+
+    Where the wait goes is the part worth stating. It belongs immediately before
+    the measurement, not on the fixture: a page that has settled once starts
+    fetching again the moment something is drawn that was never drawn before, and
+    a test that reloads (the slow-link ones) walks straight back out of any
+    guarantee the fixture gave it. So:
+
+    * a probe that only *draws* what boot already asked for waits here first;
+    * a probe that asks for artwork *itself* — RIG_DIFF and SWING_PROBE both call
+      `preload` for a character the gallery may never have shown — cannot use
+      this, because the fetch it must wait for has not started when the test
+      calls it. Those two wait inside the probe, for the file they asked for.
+    """
+    page.wait_for_function(ART_SETTLED, timeout=timeout)
+
+
+def drawn_from(page, cid, *states):
+    """Fail unless the drawings these states are measured through are on the page.
+
+    `art_settled` only says nothing is still on its way, and a page whose sprites
+    all 404'd is as settled as one that loaded. A crossfade probe would then be
+    fading the procedural fallback dog into itself and passing — green, over
+    nothing. This is the assert the `poseFrames.some(...)` waits it replaced were
+    really making; a wait says it by timing out, which reports as the wrong thing.
+    """
+    art = page.evaluate("window.__art()")
+    assert cid not in art["failed"], (
+        f"{cid}'s own render never loaded ({art['failed']}), so what follows is "
+        "measuring the fallback dog rather than the artwork")
+    want = {f for f in (resolved_pose(cid, s) for s in states) if f}
+    missing = sorted(want - set(art["poseFrames"]))
+    assert not missing, (
+        f"{cid} is drawn in {list(states)} from {sorted(want)}, and {missing} never "
+        "arrived — the states this fades between are not the ones on the screen")
+
+
 def particles_seen(page, chapter, source, frames=40, seed=SEED):
     """How many pixels one source's burst is worth on one chapter, at its best
     frame: `seen` pixels changed by more than a nudge, `top` the strongest
@@ -1741,7 +1794,7 @@ def particles_seen(page, chapter, source, frames=40, seed=SEED):
     js = (SEEN_PROBE.replace("/*MAKE*/", PARTICLE_SOURCES[source]["make"])
                     .replace("NO_BALLOON", json.dumps(NO_BALLOON)))
     page.evaluate(js, {"chapter": chapter, "frames": frames, "seed": seed, "warm": True})
-    page.wait_for_function(ART_SETTLED, timeout=20000)
+    art_settled(page)
     return page.evaluate(js, {"chapter": chapter, "frames": frames, "seed": seed})
 
 
@@ -2018,9 +2071,8 @@ def test_a_state_change_is_spread_over_several_frames(desktop, cid, to, how, sha
     Frames differ anyway (a run bobs), so the yardstick is the change *over* the
     largest ordinary frame, and both are measured here rather than written down.
     """
-    desktop.wait_for_function(
-        "(c) => window.__art().poseFrames.some((f) => f.includes(c + '-run'))",
-        arg=cid, timeout=15000)
+    art_settled(desktop)
+    drawn_from(desktop, cid, "run", to)
     dt, steps, at = 1 / 60, 40, 20 / 60
     runs = {}
     for hard in (False, True):
@@ -2127,9 +2179,8 @@ def test_a_character_does_not_go_see_through_while_it_changes(desktop, cid):
     *changed* from one frame to the next: a ghost that fades in and out smoothly
     is smooth.
     """
-    desktop.wait_for_function(
-        "(c) => window.__art().poseFrames.some((f) => f.includes(c + '-run'))",
-        arg=cid, timeout=15000)
+    art_settled(desktop)
+    drawn_from(desktop, cid, "run", "jump")
     r = desktop.evaluate(GHOST_PROBE, {"id": cid, "fade": 0.5,
                                        "from_": "run", "to": "jump"})
     assert r["body"] > 200, (
@@ -2386,6 +2437,22 @@ async ({ dt, chapter, before, after, tail, hunt, hurl }) => {
 """
 
 
+def respawn(page, **kw):
+    """Play a chapter into the water twice, eased and cut, and report both.
+
+    Wrapped rather than called directly for the same reason `particles_seen` is:
+    the probe plays the run through twice and asks whether the two drew the same
+    picture — `apart[cut - 1] == 0`, an exact equality — and a sprite that
+    decodes between the two plays makes the second one a different picture from
+    frame zero. That window is nine seconds wide on a slow link and none at all
+    off a local disk, which is the #222 shape exactly: green here, a failed ship
+    there. Everything the probe draws was asked for at boot, so the settle wait
+    is the whole fix (#224).
+    """
+    art_settled(page)
+    return page.evaluate(RESPAWN_PROBE, {"dt": 1 / 60, "tail": 150, "hunt": 60 * 30, **kw})
+
+
 def test_the_camera_catches_up_after_a_respawn_instead_of_cutting(own_page):
     """A splash teleports the player onto the ledge past the water. The camera
     follows the player exactly, so the whole background — sky, far layer, mid
@@ -2398,9 +2465,7 @@ def test_the_camera_catches_up_after_a_respawn_instead_of_cutting(own_page):
     both sides of it are measured here rather than written down.
     """
     dt = 1 / 60
-    r = own_page.evaluate(RESPAWN_PROBE, {"dt": dt, "chapter": 0, "before": 24,
-                                          "after": 40, "tail": 150, "hunt": 60 * 30,
-                                          "hurl": 0})
+    r = respawn(own_page, chapter=0, before=24, after=40, hurl=0)
     cut = r["fellOn"]
     assert cut > 0, "the player never fell in the water, so nothing here ran"
     assert r["sameGaps"] and len(r["gaps"]) == 1, (
@@ -2469,9 +2534,7 @@ def test_a_camera_catching_up_never_leaves_the_player_off_the_screen(own_page):
     because that is the direction that can strand him off the left edge.
     """
     hurl = 700
-    r = own_page.evaluate(RESPAWN_PROBE, {"dt": 1 / 60, "chapter": 0, "before": 4,
-                                          "after": 8, "tail": 150, "hunt": 60 * 30,
-                                          "hurl": hurl})
+    r = respawn(own_page, chapter=0, before=4, after=8, hurl=hurl)
     assert max(r["gaps"]) > r["slack"], (
         f"the forced fall was only {max(r['gaps'])}px, inside the {r['slack']}px cap "
         "— this run never reached the thing it is testing")
@@ -2482,6 +2545,49 @@ def test_a_camera_catching_up_never_leaves_the_player_off_the_screen(own_page):
     assert min(r["onScreen"]) < 300 - r["slack"] / 2, (
         f"the camera only ever fell {300 - min(r['onScreen'])}px behind a "
         f"{max(r['gaps'])}px teleport — it is cutting, not easing")
+
+
+def test_the_respawn_probe_answers_the_same_on_a_page_still_loading(own_page):
+    """The second of the two probes that can be asked before its artwork is there.
+
+    #222 found the first one by shipping it. This is the same question asked of
+    the respawn probe instead, and the survey behind #224 says it is the one that
+    needed it most: measured on a page nine seconds into a slow load, none of its
+    pose frames had arrived and every frame-to-frame number came back a few
+    percent off. The exact-equality assert in the test above — the two plays drew
+    the same picture before the splash — is what a sprite landing between them
+    breaks, and it can only land between them on a link with distance in it.
+
+    What is asserted is `respawn`'s promise rather than the flake: asked on a
+    page still fetching, it answers what the settled page answers. Take the
+    settle wait out of `respawn` and the two differ, which is the mutation
+    recorded against this test.
+    """
+    cdp = own_page.context.new_cdp_session(own_page)
+    cdp.send("Network.enable")
+    cdp.send("Network.emulateNetworkConditions", SLOW_LINK)
+    cdp.send("Network.setCacheDisabled", {"cacheDisabled": True})
+    own_page.reload(wait_until="domcontentloaded")
+    own_page.wait_for_function("window.__ready === true", timeout=60000)
+
+    art = own_page.evaluate("window.__art()")
+    assert art["pending"] or art["posePending"], (
+        "the page had already finished fetching its artwork by the time the engine "
+        f"was ready ({len(art['loaded'])} sprites, {len(art['poseFrames'])} pose "
+        "frames), so this test measured a settled page twice and proves nothing")
+
+    mid = respawn(own_page, chapter=0, before=24, after=40, hurl=0)
+
+    art_settled(own_page, timeout=60000)
+    settled = own_page.evaluate(RESPAWN_PROBE, {
+        "dt": 1 / 60, "chapter": 0, "before": 24, "after": 40,
+        "tail": 150, "hunt": 60 * 30, "hurl": 0})
+    for key in ("moved", "snapped", "apart", "gaps", "cams", "onScreen"):
+        assert mid[key] == settled[key], (
+            f"asked on a page still fetching its sprites the probe reported {key} as "
+            f"{mid[key][:6]}, and the same page once everything had arrived reported "
+            f"{settled[key][:6]} — what it measures is partly how much of the page "
+            "was there when it was asked (#224)")
 
 
 # --- the scenery: where the mid layer's props stand -------------------------
@@ -2506,6 +2612,10 @@ def test_a_camera_catching_up_never_leaves_the_player_off_the_screen(own_page):
 # — so the bare picture is one the game can really draw. Each prop is measured
 # under the camera that brings it on screen, at a fixed t so the sea's sparkle
 # and the clouds sit still, and `col` is where the 0.6 layer puts it on screen.
+#
+# The one probe here that needs no settle wait at all (#224): `renderBackground`
+# paints sky, hills and props out of the canvas API and draws no image, so
+# nothing it measures can arrive part way through.
 SCENERY_PROBE = r"""
 async ({ clearRows }) => {
   const c = await import('/js/chapters.js');
