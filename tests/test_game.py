@@ -1971,6 +1971,175 @@ def test_a_camera_catching_up_never_leaves_the_player_off_the_screen(own_page):
         f"{max(r['gaps'])}px teleport — it is cutting, not easing")
 
 
+# --- the scenery: where the mid layer's props stand -------------------------
+
+# A prop in the mid parallax layer has no fixed world x — the layer scrolls at
+# 0.6, so which platform happens to be under a tree depends on where the camera
+# is standing, and "the ground beneath it" is not a thing that exists. What does
+# exist is the chapter's horizon: the line its far picture puts a surface on.
+# This measures every prop against that surface *in the pixels*, rather than
+# against the number in the file, over all five chapters.
+#
+# Per prop, in the chapter's own background with the props taken out of it:
+#   clear    the rows just above the foot are sky, so it stands *on* the surface
+#            rather than in it — the beach palm used to be 120px under the sea
+#   edge     the nearest row where sky turns into something solid, i.e. the
+#            surface: a foot far from every edge is standing in mid air, which
+#            is what sleepytime's trees did in a dream sky with no ground at all
+#   painted  the lowest row the prop really paints in that column, so a prop
+#            that is not in the picture cannot pass by having nothing to measure
+#
+# The props are taken out by the chapter's own rule — `horizon: null` ships none
+# — so the bare picture is one the game can really draw. Each prop is measured
+# under the camera that brings it on screen, at a fixed t so the sea's sparkle
+# and the clouds sit still, and `col` is where the 0.6 layer puts it on screen.
+SCENERY_PROBE = r"""
+async ({ clearRows }) => {
+  const c = await import('/js/chapters.js');
+  const g = window.game;
+  const W = c.WORLD_W, H = c.WORLD_H;
+  const mk = () => { const cv = document.createElement('canvas');
+                     cv.width = W; cv.height = H; return cv.getContext('2d'); };
+  const withCtx = mk(), bareCtx = mk(), skyCtx = mk();
+  const strip = (ctx, col) => ctx.getImageData(col, 0, 1, H).data;
+  const same = (a, b, i) => Math.abs(a[i] - b[i]) <= 6 && Math.abs(a[i + 1] - b[i + 1]) <= 6
+                         && Math.abs(a[i + 2] - b[i + 2]) <= 6;
+  // the picture as it would be with nothing standing in it, painted by the
+  // chapter's own two sky colours the same way renderBackground lays them down
+  const bareAt = (ch, camX, col) => {
+    const gr = skyCtx.createLinearGradient(0, 0, 0, c.GROUND_Y);
+    gr.addColorStop(0, ch.sky[0]); gr.addColorStop(1, ch.sky[1]);
+    skyCtx.fillStyle = gr; skyCtx.fillRect(0, 0, W, H);
+    const held = ch.horizon; ch.horizon = null;
+    bareCtx.clearRect(0, 0, W, H); g.ch = ch; g.t = 0; g.renderBackground(bareCtx, camX);
+    ch.horizon = held;
+    const bare = strip(bareCtx, col), sky = strip(skyCtx, col), isSky = [];
+    for (let y = 0; y < H; y++) isSky.push(same(bare, sky, y * 4));
+    return { bare, isSky };
+  };
+  const look = (ch, base, camX, col) => {
+    const { isSky } = bareAt(ch, camX, col);
+    let clear = true, edge = null;
+    for (let y = Math.max(0, base - clearRows); y < base; y++) if (!isSky[y]) clear = false;
+    for (let y = 1; y < H; y++) {
+      if (isSky[y] === isSky[y - 1]) continue;
+      if (edge === null || Math.abs(y - base) < Math.abs(edge - base)) edge = y;
+    }
+    return { base, clear, edge, delta: edge === null ? null : edge - base };
+  };
+  const held = g.ch;
+  try {
+    const chapters = [];
+    for (const ch of c.CHAPTERS) {
+      const props = c.sceneryFor(ch), rows = [];
+      for (const p of props) {
+        const camX = Math.max(0, (p.x - W / 2) / 0.6);
+        const col = Math.round(p.x - camX * 0.6);
+        withCtx.clearRect(0, 0, W, H); g.ch = ch; g.t = 0;
+        g.renderBackground(withCtx, camX);
+        const wit = strip(withCtx, col), { bare } = bareAt(ch, camX, col);
+        let painted = null;
+        for (let y = 0; y < H; y++) if (!same(wit, bare, y * 4)) painted = y;
+        rows.push(Object.assign({ x: p.x, kind: p.kind, base: p.y, col, painted },
+                                look(ch, p.y, camX, col)));
+      }
+      chapters.push({ id: ch.id, horizon: ch.horizon, props: props.length,
+                      checked: rows.length, rows });
+    }
+    // The two defects of #210, asked of the same pictures: a foot on the ground
+    // line of a beach whose shore is 120px higher, and one on the ground line of
+    // a chapter that paints no ground. Nothing is drawn for these — the question
+    // is only what the picture holds at that y, which is the whole question.
+    const of = (id) => c.CHAPTERS.find((x) => x.id === id);
+    return { chapters, defects: {
+      submerged: look(of('beach'), c.GROUND_Y, 300, 640),
+      midair: look(of('sleepytime'), c.GROUND_Y, 300, 640),
+    } };
+  } finally {
+    g.ch = held;
+  }
+}
+"""
+
+# How far a foot may sit from the surface it stands on. The measured slack is
+# 10px — the backyard and creek hills bottom out at GROUND_Y-10 while their
+# trees stand on GROUND_Y — and the beach's palms are exact.
+SURFACE_TOL = 12
+# and how much clear sky a foot needs above it. The same hills leave 10, so
+# there is no room here for more; what this has to catch is a foot under 120px
+# of sea, which it clears by twenty times over.
+CLEAR_ROWS = 6
+
+
+def scenery_complaint(row):
+    """Why this foot is not standing on a surface, or None if it is.
+
+    One function for the real props and for the two defects of #210 below: a
+    rule that has quietly stopped meaning anything lets the defects through
+    here first, where it is a failure, rather than in the picture.
+    """
+    if not row["clear"]:
+        return (f"it is in the surface rather than on it — the {CLEAR_ROWS} rows above "
+                f"y={row['base']} are not sky")
+    if row["edge"] is None:
+        return f"it is in mid air — nothing in its column at y={row['base']} is anything but sky"
+    if abs(row["delta"]) > SURFACE_TOL:
+        return (f"it is {abs(row['delta'])}px off the surface: its foot is at y={row['base']} "
+                f"and the nearest edge in its column is y={row['edge']}")
+    return None
+
+
+def test_every_prop_stands_on_the_surface_its_chapter_paints(own_page):
+    """Chapter 4 had a palm tree planted 120px under the sea and chapter 5 had
+    tree trunks hanging in a dream sky, because both stood on a ground line the
+    picture behind them does not have (#210). Every prop of every chapter is
+    measured here against the surface its own background paints.
+
+    Its own page: it borrows the engine to draw backgrounds off screen.
+    """
+    r = own_page.evaluate(SCENERY_PROBE, {"clearRows": CLEAR_ROWS})
+    chapters = r["chapters"]
+    assert len(chapters) == 5, f"only {len(chapters)} chapters were measured"
+
+    for ch in chapters:
+        assert ch["checked"] == ch["props"], (
+            f"{ch['id']}: {ch['checked']} of {ch['props']} props were measured")
+        for p in ch["rows"]:
+            why = scenery_complaint(p)
+            assert why is None, f"{ch['id']}: the {p['kind']} at x={p['x']} — {why}"
+            assert p["painted"] is not None, (
+                f"{ch['id']}: the {p['kind']} at x={p['x']} paints nothing in its own "
+                f"column {p['col']} — this prop was not measured, it was missed")
+            assert -2 <= p["painted"] - p["base"] <= 10, (
+                f"{ch['id']}: the {p['kind']} at x={p['x']} stands on y={p['base']} but "
+                f"paints down to y={p['painted']} — the art is not on its own foot")
+
+    # what all that measured: a sceneryFor that returned nothing would pass every
+    # line above without ever looking at a prop
+    total = sum(c["checked"] for c in chapters)
+    dressed = [c["id"] for c in chapters if c["checked"]]
+    assert total >= 30 and len(dressed) >= 3, (
+        f"only {total} props over {dressed} — there is not enough scenery here for "
+        "this to have tested anything")
+    bare = sorted(c["id"] for c in chapters if not c["checked"])
+    assert bare == ["hammerbarn", "sleepytime"], (
+        f"{bare} ship no scenery at all — hammerbarn's horizon is a shop floor and "
+        "sleepytime's sky has no surface, but a chapter that has quietly lost its "
+        "trees is a regression, not a decision")
+    sleepy = next(c for c in chapters if c["id"] == "sleepytime")
+    assert sleepy["horizon"] is None, (
+        "sleepytime is a dream sky with no ground in it — declaring a horizon there "
+        f"(y={sleepy['horizon']}) is what put trunks through the platforms")
+
+    # the same rule, run against the two defects it was written for: both were in
+    # the shipped picture, and both have to come back as complaints
+    for name, want in [("submerged", "in the surface"), ("midair", "in mid air")]:
+        why = scenery_complaint(r["defects"][name])
+        assert why and want in why, (
+            f"a foot placed the way #210's {name} prop was placed came back as "
+            f"{why!r} — this check no longer catches the thing it is here for")
+
+
 def test_no_console_errors_on_desktop(desktop):
     """Last, so it covers everything the tests above did."""
     assert not desktop.errors, str(desktop.errors[:3])

@@ -13,7 +13,8 @@ import {
 } from "./art.js";
 import { drawCharacter, footfall, stridePhase, BLEND } from "./sprites.js";
 import { sound } from "./audio.js";
-import { CHAPTERS, buildLevel, starsFor, GROUND_Y, WORLD_W, WORLD_H } from "./chapters.js";
+import { CHAPTERS, buildLevel, sceneryFor, starsFor, GROUND_Y, SEA_TOP, WORLD_W, WORLD_H }
+  from "./chapters.js";
 
 const GRAVITY = 2300;
 const JUMP_V = -790;
@@ -535,11 +536,11 @@ export class Game {
     ctx.translate(-camX * 0.3, 0);
     if (ch.id === "beach") {
       ctx.fillStyle = ch.water;
-      ctx.fillRect(-500, GROUND_Y - 120, 6000, 130);
+      ctx.fillRect(-500, SEA_TOP, 6000, GROUND_Y + 10 - SEA_TOP);
       ctx.fillStyle = "rgba(255,255,255,0.5)";
       for (let i = 0; i < 40; i++) {
         const x = i * 180 + Math.sin(this.t + i) * 20;
-        ctx.fillRect(x, GROUND_Y - 100 + (i % 3) * 22, 60, 4);
+        ctx.fillRect(x, SEA_TOP + 20 + (i % 3) * 22, 60, 4);
       }
     } else if (ch.id === "hammerbarn") {
       for (let i = 0; i < 14; i++) {
@@ -567,22 +568,15 @@ export class Game {
     }
     ctx.restore();
 
-    // mid parallax: trees, and the Heeler house in chapter one
+    // mid parallax: the standing scenery, on the horizon the chapter declares.
+    // Which items and where is `sceneryFor`, not this loop — everything here
+    // stands on one line, and that line is the chapter's business.
     ctx.save();
     ctx.translate(-camX * 0.6, 0);
-    if (ch.id === "backyard") {
-      drawHouse(ctx, 260, GROUND_Y, 1.1);
-      for (let i = 0; i < 12; i++) drawGumTree(ctx, 900 + i * 520, GROUND_Y, 1 + (i % 2) * 0.3);
-    } else if (ch.id === "creek") {
-      for (let i = 0; i < 16; i++) drawTree(ctx, 200 + i * 340, GROUND_Y, 0.9 + (i % 3) * 0.2, "#6FAF63", "#8B6A4F");
-    } else if (ch.id === "beach") {
-      for (let i = 0; i < 12; i++) drawTree(ctx, 300 + i * 520, GROUND_Y, 1.1, "#67B47F", "#A5764F");
-    } else if (ch.id === "sleepytime") {
-      for (let i = 0; i < 10; i++) {
-        ctx.globalAlpha = 0.55;
-        drawGumTree(ctx, 300 + i * 560, GROUND_Y, 1.2);
-        ctx.globalAlpha = 1;
-      }
+    for (const it of sceneryFor(ch)) {
+      if (it.kind === "house") drawHouse(ctx, it.x, it.y, it.scale);
+      else if (it.kind === "gum") drawGumTree(ctx, it.x, it.y, it.scale);
+      else drawTree(ctx, it.x, it.y, it.scale, it.leaf, it.trunk);
     }
     ctx.restore();
   }

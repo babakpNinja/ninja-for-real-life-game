@@ -11,6 +11,15 @@ export const GROUND_Y = 452;      // logical world units; canvas is 960x540
 export const WORLD_H = 540;
 export const WORLD_W = 960;
 
+/**
+ * The top of the sea on the chapters that have one — the far shoreline.
+ *
+ * Exported because two things have to agree about it: the band `renderBackground`
+ * fills, and where the beach's palms stand (`horizon` below). They were the same
+ * number written twice, and the palms were standing 120px under the water.
+ */
+export const SEA_TOP = GROUND_Y - 120;
+
 /** Tiny deterministic RNG (mulberry32). */
 export function makeRng(seed) {
   let a = seed >>> 0;
@@ -49,6 +58,7 @@ export const CHAPTERS = [
     hero: "bluey",
     cameo: "bandit",
     theme: "backyard",
+    horizon: GROUND_Y,      // the hills in the far layer meet the ground line
     tokenKind: "balloon",
     tokenName: "balloons",
     length: 5200,
@@ -89,6 +99,7 @@ export const CHAPTERS = [
     hero: "bingo",
     cameo: "chilli",
     theme: "creek",
+    horizon: GROUND_Y,      // same hills
     tokenKind: "sticker",
     tokenName: "stickers",
     length: 5600,
@@ -136,6 +147,7 @@ export const CHAPTERS = [
     hero: "bandit",
     cameo: "muffin",
     theme: "hammerbarn",
+    horizon: GROUND_Y,      // the warehouse row stands on the shop floor
     tokenKind: "light",
     tokenName: "fairy lights",
     length: 6000,
@@ -178,6 +190,10 @@ export const CHAPTERS = [
     hero: "chilli",
     cameo: "lucky",
     theme: "beach",
+    // The far layer here is sea, not land: the only surface behind the play
+    // area is the shoreline at the top of it. Standing a palm on GROUND_Y put
+    // it 120px under water, trunk and all.
+    horizon: SEA_TOP,
     tokenKind: "shell",
     tokenName: "shells",
     length: 6200,
@@ -219,6 +235,10 @@ export const CHAPTERS = [
     hero: "bingo",
     cameo: "nana_chris",
     theme: "sleepytime",
+    // A dream sky. The far layer is clouds, so there is no surface at any y —
+    // hence no standing scenery, rather than gum trees whose trunks ran down
+    // past the floating platforms and ended in mid-air.
+    horizon: null,
     tokenKind: "star",
     tokenName: "dream stars",
     length: 5400,
@@ -257,6 +277,47 @@ export const CHAPTERS = [
     },
   },
 ];
+
+/**
+ * The standing scenery of the mid parallax layer: trees, and the house.
+ *
+ * Every item stands on `ch.horizon`, and a chapter whose background has no
+ * surface (`horizon: null`) has none. That is the whole rule, and it is here
+ * rather than in the renderer so a test can read the list without drawing it.
+ *
+ * Why a horizon and not the ground the player runs on: this layer scrolls at
+ * 0.6 of the camera, so an item has no fixed world x — it slides across the
+ * platforms as you move, and asking "what is under it" gives a different answer
+ * every frame. Distant scenery has to stand on something continuous, which is
+ * what the far layer draws: hills in the first two chapters, the warehouse row
+ * in the third, the sea's far edge in the fourth, and nothing at all in a dream.
+ *
+ * `x` is a coordinate in that layer, not in the world.
+ */
+export function sceneryFor(ch) {
+  const y = ch.horizon;
+  if (y === null || y === undefined) return [];
+  const out = [];
+  if (ch.id === "backyard") {
+    out.push({ kind: "house", x: 260, y, scale: 1.1 });
+    for (let i = 0; i < 12; i++) {
+      out.push({ kind: "gum", x: 900 + i * 520, y, scale: 1 + (i % 2) * 0.3 });
+    }
+  } else if (ch.id === "creek") {
+    for (let i = 0; i < 16; i++) {
+      out.push({ kind: "tree", x: 200 + i * 340, y, scale: 0.9 + (i % 3) * 0.2,
+                 leaf: "#6FAF63", trunk: "#8B6A4F" });
+    }
+  } else if (ch.id === "beach") {
+    // smaller than they were: they now stand at the shoreline, which is further
+    // away than the sand the player is on
+    for (let i = 0; i < 12; i++) {
+      out.push({ kind: "tree", x: 300 + i * 520, y, scale: 0.8,
+                 leaf: "#67B47F", trunk: "#A5764F" });
+    }
+  }
+  return out;
+}
 
 /** Build a chapter's level data (deterministic per chapter index). */
 export function buildLevel(index) {
