@@ -1050,6 +1050,373 @@ def test_the_dust_can_actually_be_seen(own_page):
         "against the path to be worth drawing")
 
 
+# Draw one character over a state change and report how much the picture moved
+# from each frame to the next, as the summed channel difference over the whole
+# canvas — with `hard: true` for the same run with the blend switched off, which
+# is the defect this is here to catch, measured on the same machine in the same
+# browser rather than guessed at as a constant.
+#
+# The background is filled, not cleared: on a transparent canvas the alpha
+# channel of a fading drawing swamps the measurement, and the game has no
+# transparent background — a crossfade there really is over the sky.
+BLEND_PROBE = """
+async ({ id, dt, steps, changeAt, from_, to, hard }) => {
+  const s = await import('/js/sprites.js');
+  const cv = document.createElement('canvas');
+  cv.width = 320; cv.height = 280;
+  const c = cv.getContext('2d');
+  const pal = { body: '#4a90d9', belly: '#dfe9f3', ear: '#2f6ba8' };
+  let state = from_, was = from_, changedAt = -10, changedOn = -1;
+  const shots = [];
+  for (let i = 0; i < steps; i++) {
+    const t = i * dt;
+    const want = t >= changeAt ? to : from_;
+    // the game's own rule, from game.js: remember what we were and when
+    if (want !== state) { was = state; changedAt = t; state = want; changedOn = i; }
+    c.fillStyle = '#8ec7e8';
+    c.fillRect(0, 0, cv.width, cv.height);
+    s.drawCharacter(c, id, 160, 230, 92, pal, t, state, 1,
+                    hard ? null : { from: was, k: (t - changedAt) / s.BLEND });
+    shots.push(c.getImageData(0, 0, cv.width, cv.height).data);
+  }
+  const diffs = [];
+  for (let i = 1; i < shots.length; i++) {
+    const a = shots[i - 1], b = shots[i];
+    let n = 0;
+    for (let p = 0; p < a.length; p += 4) {
+      n += Math.abs(a[p] - b[p]) + Math.abs(a[p + 1] - b[p + 1]) +
+           Math.abs(a[p + 2] - b[p + 2]);
+    }
+    diffs.push(Math.round(n / 1000));
+  }
+  return { diffs, changedOn, blend: s.BLEND, drawn: window.__art().drawn[id] };
+}
+"""
+
+
+@pytest.mark.parametrize("cid,how", [("bluey", "pose"), ("bandit", "rig")],
+                         ids=["one drawing to another", "a drawing to the rig"])
+def test_a_state_change_is_spread_over_several_frames(desktop, cid, how):
+    """Landing used to be one frame: the drawing of a jump on one, the drawing of
+    a run on the next, and for everyone but Bluey — who is the only one with a
+    jump of her own — a swap from a pose render to the cut-out rig as well.
+
+    This is a bound on the picture rather than on `BLEND`: the same run is
+    measured twice, once blended and once with the blend switched off, and the
+    worst single frame of the blended one has to be a small share of the snap's.
+    Frames differ anyway (a run bobs), so the yardstick is the change *over* the
+    largest ordinary frame, and both are measured here rather than written down.
+    """
+    desktop.wait_for_function(
+        "(c) => window.__art().poseFrames.some((f) => f.includes(c + '-run'))",
+        arg=cid, timeout=15000)
+    dt, steps, at = 1 / 60, 40, 20 / 60
+    runs = {}
+    for hard in (False, True):
+        runs[hard] = desktop.evaluate(BLEND_PROBE, {
+            "id": cid, "dt": dt, "steps": steps, "changeAt": at,
+            "from_": "run", "to": "jump", "hard": hard})
+    blend, snap = runs[False], runs[True]
+    assert blend["drawn"] == how, f"{cid} was not drawn as a {how}: {blend['drawn']}"
+
+    # frame n of `diffs` is the change between shot n and shot n+1, so the
+    # change carried by the frame the state flipped on is diffs[changedOn - 1]
+    cut = blend["changedOn"]
+    assert cut > 0, f"the state never changed: {blend}"
+    steady = max(blend["diffs"][: cut - 1])   # ordinary running, before any of it
+    moved = blend["diffs"][cut - 1:]
+    snapped = snap["diffs"][cut - 1:]
+
+    # vacuity: the two states have to *look* different, or there is nothing here
+    # to spread out and any blend would pass
+    assert max(snapped) > 2.5 * steady, (
+        f"snapping from run to jump changed {max(snapped)} against {steady} for an "
+        f"ordinary frame — too little for this test to be measuring anything")
+    spike = max(moved) - steady
+    worst = max(snapped) - steady
+    assert spike < 0.35 * worst, (
+        f"the worst frame of the blend moved {spike} over an ordinary frame, "
+        f"{spike / worst:.0%} of the {worst} a snap moves — the change is still "
+        "landing on one frame")
+
+    # ...and it is spread, rather than merely smaller. Over the window the blend
+    # is supposed to occupy, count the frames that changed at all — a jump is a
+    # still, so a snap has exactly one and then nothing.
+    window = round(blend["blend"] / dt) + 2
+    floor = 0.05 * worst
+    spent = sum(1 for d in moved[:window] if d > floor)
+    assert sum(1 for d in snapped[:window] if d > floor) <= 2, (
+        f"the unblended run changed on {sum(1 for d in snapped[:window] if d > floor)} "
+        "frames, so counting frames cannot tell the two apart here")
+    assert spent >= 5, (
+        f"only {spent} frames moved after the state flipped; a blend of "
+        f"{blend['blend']}s at {1 / dt:.0f}fps should take several")
+
+
+# Draw the same moment of a crossfade over two very different backgrounds. A
+# pixel that comes out the same colour on both is opaque; one that does not is
+# letting the background through. Doing it this way needs no knowledge of what
+# the character is supposed to look like, which is the point — the artwork is
+# free to change.
+GHOST_PROBE = """
+async ({ id, fade, from_, to }) => {
+  const s = await import('/js/sprites.js');
+  const W = 320, H = 280;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const c = cv.getContext('2d');
+  const pal = { body: '#4a90d9', belly: '#dfe9f3', ear: '#2f6ba8' };
+  const shot = (bg, k) => {
+    c.fillStyle = bg; c.fillRect(0, 0, W, H);
+    s.drawCharacter(c, id, 160, 230, 92, pal, 0.4, to, 1, { from: from_, k });
+    return c.getImageData(0, 0, W, H).data;
+  };
+  const A = '#8ec7e8', B = '#101010';        // sky, and nearly black
+  const oldA = shot(A, 0), oldB = shot(B, 0);   // k=0 and k=1 are the two states
+  const newA = shot(A, 1), newB = shot(B, 1);   // themselves, drawn whole
+  const midA = shot(A, fade), midB = shot(B, fade);
+  const solid = (p, q, i) => Math.abs(p[i] - q[i]) <= 2 &&
+                             Math.abs(p[i + 1] - q[i + 1]) <= 2 &&
+                             Math.abs(p[i + 2] - q[i + 2]) <= 2;
+  const both = new Uint8Array(W * H);
+  for (let n = 0; n < W * H; n++) {
+    both[n] = solid(oldA, oldB, n * 4) && solid(newA, newB, n * 4) ? 1 : 0;
+  }
+  // Only pixels well inside both drawings are asked about: the two states are
+  // in different positions (the motion is mixed too), so the edges legitimately
+  // move, and where only one of them covers the pixel it is *meant* to be part
+  // way through appearing.
+  const R = 6;
+  const near = [[R,0],[-R,0],[0,R],[0,-R],[4,4],[-4,4],[4,-4],[-4,-4]];
+  let body = 0, ghost = 0;
+  for (let y = R; y < H - R; y++) for (let x = R; x < W - R; x++) {
+    const n = y * W + x;
+    if (!both[n] || !near.every(([dx, dy]) => both[(y + dy) * W + x + dx])) continue;
+    body++;
+    if (!solid(midA, midB, n * 4)) ghost++;
+  }
+  return { body, ghost };
+}
+"""
+
+
+@pytest.mark.parametrize("cid", ["bluey", "bandit"],
+                         ids=["one drawing to another", "a drawing to the rig"])
+def test_a_character_does_not_go_see_through_while_it_changes(desktop, cid):
+    """The obvious crossfade — the old drawing at `1 - k`, the new one over it at
+    `k` — leaves a `k(1 - k)` share of the background showing through wherever
+    both cover the same pixel: a quarter of the sky, straight through the middle
+    of the dog, half way through every landing. It looks like a bug and it is
+    invisible to the test above, which only ever asks how much the picture
+    *changed* from one frame to the next: a ghost that fades in and out smoothly
+    is smooth.
+    """
+    desktop.wait_for_function(
+        "(c) => window.__art().poseFrames.some((f) => f.includes(c + '-run'))",
+        arg=cid, timeout=15000)
+    r = desktop.evaluate(GHOST_PROBE, {"id": cid, "fade": 0.5,
+                                       "from_": "run", "to": "jump"})
+    assert r["body"] > 200, (
+        f"only {r['body']} pixels are inside both drawings of {cid}, which is too "
+        "little of a character to say anything about")
+    assert r["ghost"] == 0, (
+        f"{r['ghost']} of {r['body']} pixels inside {cid} changed with the "
+        "background half way through the change — the character is translucent")
+
+
+# Drown the player and watch the whole screen, frame by frame: the camera
+# follows the player exactly, so the teleport back to `lastSafe` moves the sky
+# and both parallax layers at once.
+#
+# Nobody decides here how far the player is thrown back — the probe lets the
+# chapter drown him on its own and then goes looking at the frames either side of
+# it, so the distance under test is one the game really produces (~130px in every
+# chapter) rather than one chosen to suit the answer. The fall is found first
+# without drawing, since the frame it happens on is what says which frames are
+# worth the cost of reading back.
+#
+# The same fall is then played twice — once eased, once with the slack thrown
+# away every step, which is the cut this is here to catch — with every random
+# source of movement taken away, so the two runs are the same picture apart from
+# where the camera is standing. That is what makes the third measurement
+# possible: how far apart the two runs' pictures are on a frame is the camera's
+# lag, and it has to be paid off over several frames rather than in one. The
+# picture is sampled through a small canvas rather than read at full size:
+# 160x100 is a low-pass filter, and reading back at device resolution is slow.
+RESPAWN_PROBE = """
+async ({ dt, chapter, before, after, tail, hunt, hurl }) => {
+  const small = document.createElement('canvas');
+  small.width = 160; small.height = 100;
+  const sc = small.getContext('2d');
+  const g = window.game;
+  document.getElementById('overlay').classList.add('hidden');
+
+  const begin = () => {
+    g.start(chapter);
+    g.level.tokens = [];
+    g.level.secret.taken = true;
+    g.balloon = null;
+    g.toast = () => {};          // the banner is screen-space, and not the subject
+    g.scuff = () => {};          // dust is random: it would differ between the runs
+    g.puff = () => {};
+  };
+  // The teleport, told apart from the other thing that moves x backwards: a
+  // stumble into an obstacle knocks the player back a few pixels, and the run
+  // asserts below that what it found is the size of a real fall, not a bump.
+  const fall = (i) => {
+    const wasX = g.player.x;
+    g.step(dt);
+    return g.player.x < wasX - 50 ? i : -1;
+  };
+
+  begin();                       // no drawing: just find the frame he goes in on
+  let at = -1;
+  for (let i = 0; i < hunt && at < 0; i++) at = fall(i);
+  if (at < 0) return { fellOn: -1 };
+  const from = at - before, to = at + after;
+
+  // Frames are drawn and read back only around the splash; the camera is
+  // recorded for a good while longer, since the slack has to be seen running out
+  // and that costs nothing to watch.
+  const play = (hard) => {
+    begin();
+    const shots = [], cams = [], onScreen = [], gaps = [];
+    for (let i = 0; i < to + tail; i++) {
+      // one dunk only: this chapter walks the player straight back into the same
+      // pit, and the camera has to be watched until it has spent all its slack
+      if (i > at) { g.player.onGround = true; g.player.vy = 0; }
+      // a fall further back than any chapter really produces, for the cap
+      if (hurl && i === at) g.lastSafe = { x: g.player.x - hurl, y: g.lastSafe.y };
+      const target = g.camTarget();
+      if (fall(i) >= 0) gaps.push(Math.round(target - g.camTarget()));
+      if (hard) g.camSlack = 0;
+      if (i < from) continue;
+      cams.push(Math.round(g.camAt()));
+      onScreen.push(Math.round(g.player.x - g.camAt()));
+      if (i >= to) continue;
+      g.render();
+      sc.drawImage(g.canvas, 0, 0, small.width, small.height);
+      shots.push(sc.getImageData(0, 0, small.width, small.height).data);
+    }
+    return { shots, cams, onScreen, gaps };
+  };
+
+  const ink = (a, b) => {
+    let n = 0;
+    for (let p = 0; p < a.length; p += 4) {
+      n += Math.abs(a[p] - b[p]) + Math.abs(a[p + 1] - b[p + 1]) +
+           Math.abs(a[p + 2] - b[p + 2]);
+    }
+    return Math.round(n / 100);
+  };
+  const frameToFrame = (r) => r.shots.slice(1).map((s, i) => ink(r.shots[i], s));
+
+  const eased = play(false), snap = play(true);
+  const m = await import('/js/game.js');
+  return {
+    moved: frameToFrame(eased), snapped: frameToFrame(snap),
+    apart: eased.shots.map((s, i) => ink(s, snap.shots[i])),
+    fellOn: before, gaps: eased.gaps, sameGaps: `${eased.gaps}` === `${snap.gaps}`,
+    cams: eased.cams, hardCams: snap.cams, onScreen: eased.onScreen,
+    blend: m.CAM_BLEND, slack: m.CAM_SLACK,
+  };
+}
+"""
+
+
+def test_the_camera_catches_up_after_a_respawn_instead_of_cutting(own_page):
+    """A splash teleports the player back to the last safe ledge. The camera
+    follows the player exactly, so the whole background — sky, far layer, mid
+    layer and the world itself — used to move a hundred-odd pixels between two
+    frames: a cut, in the one moment of the game that is meant to be a friendly
+    lift back up.
+
+    Its own page: this drives the physics by hand and leaves the engine mid-
+    chapter. Like the state-change test above this is a bound on the picture, and
+    both sides of it are measured here rather than written down.
+    """
+    dt = 1 / 60
+    r = own_page.evaluate(RESPAWN_PROBE, {"dt": dt, "chapter": 0, "before": 24,
+                                          "after": 40, "tail": 150, "hunt": 60 * 30,
+                                          "hurl": 0})
+    cut = r["fellOn"]
+    assert cut > 0, "the player never fell in the water, so nothing here ran"
+    assert r["sameGaps"] and len(r["gaps"]) == 1, (
+        f"the two runs did not play the same single fall: {r['gaps']}")
+    assert r["apart"][cut - 1] == 0, (
+        "the two runs had already drawn different pictures before the splash, so "
+        "nothing below is about the camera")
+    assert max(r["gaps"]) < r["slack"], (
+        f"the chapter threw the player {max(r['gaps'])}px back, past the "
+        f"{r['slack']}px cap on the slack — the cap, not the ease, is what this run "
+        "would be measuring")
+
+    # the frames the player spent falling move the picture as much as anything
+    # here, so "ordinary" is taken from the running before he ever left the ledge
+    steady = max(r["moved"][:cut // 2])
+    moved, snapped = r["moved"][cut - 1:], r["snapped"][cut - 1:]
+
+    # vacuity: the teleport has to move the picture, or there is nothing to ease
+    assert max(snapped) > 2.5 * steady, (
+        f"the cut moved {max(snapped)} against {steady} for an ordinary frame — too "
+        "little for this test to be measuring anything")
+    spike = max(moved) - steady
+    worst = max(snapped) - steady
+    assert spike < 0.35 * worst, (
+        f"the worst frame after the splash moved {spike} over an ordinary frame, "
+        f"{spike / worst:.0%} of the {worst} the cut moves — the camera is still "
+        "jumping on one frame")
+
+    # ...and spread rather than merely smaller. The camera moves on every frame
+    # anyway, so a frame carrying catch-up is one where the eased picture is
+    # still somewhere the cut run had already left: measured between the two runs
+    # rather than against a level of movement thought up here.
+    window = round(r["blend"] / dt) + 2
+    lag = r["apart"][cut:]
+    spent = sum(1 for d in lag[:window] if d > 0.05 * max(lag))
+    assert spent >= 5, (
+        f"the two runs were apart on only {spent} frames ({lag[:8]}); an ease of "
+        f"{r['blend']}s at {1 / dt:.0f}fps should pay the teleport out over several")
+
+    # the camera ends up where it always would have: slack is a detour, not an offset
+    assert r["cams"][-1] == r["hardCams"][-1], (
+        f"the eased camera settled at {r['cams'][-1]} and the hard one at "
+        f"{r['hardCams'][-1]} — the slack never ran out")
+    assert lag[-1] < 0.25 * max(lag), (
+        f"the two pictures were still {lag[-1]} apart at the end of the window "
+        f"against {max(lag)} at the splash — the camera is holding its lag, not "
+        "spending it")
+    # and while it is catching up the player it is lagging behind stays visible
+    assert min(r["onScreen"]) > 40, (
+        f"the player was drawn at x={min(r['onScreen'])} while the camera caught "
+        f"up — CAM_SLACK ({r['slack']}) has to keep them on screen")
+
+
+def test_a_camera_catching_up_never_leaves_the_player_off_the_screen(own_page):
+    """The player does not move on screen while the camera is lagging behind — he
+    *is* the lag — so a long enough teleport would slide him off the left edge
+    and hold him there for a third of a second, which is worse than the cut.
+
+    No chapter throws him back more than about 130px today, which is well inside
+    the cap, so this drives a teleport far past anything the game produces: the
+    protection is otherwise the one piece of this that never runs.
+    """
+    hurl = 700
+    r = own_page.evaluate(RESPAWN_PROBE, {"dt": 1 / 60, "chapter": 0, "before": 4,
+                                          "after": 8, "tail": 150, "hunt": 60 * 30,
+                                          "hurl": hurl})
+    assert max(r["gaps"]) > r["slack"], (
+        f"the forced fall was only {max(r['gaps'])}px, inside the {r['slack']}px cap "
+        "— this run never reached the thing it is testing")
+    assert min(r["onScreen"]) > 40, (
+        f"the player was drawn at x={min(r['onScreen'])} while the camera caught up "
+        f"from a {max(r['gaps'])}px teleport")
+    # vacuity the other way: the cap must not have swallowed the ease entirely
+    assert min(r["onScreen"]) < 300 - r["slack"] / 2, (
+        f"the camera only ever fell {300 - min(r['onScreen'])}px behind a "
+        f"{max(r['gaps'])}px teleport — it is cutting, not easing")
+
+
 def test_no_console_errors_on_desktop(desktop):
     """Last, so it covers everything the tests above did."""
     assert not desktop.errors, str(desktop.errors[:3])

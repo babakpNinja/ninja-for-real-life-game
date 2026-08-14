@@ -11,7 +11,7 @@ import {
   drawTree, drawGumTree, drawHouse, drawCloud, drawBalloon,
   drawToken, drawObstacle, roundRect, star,
 } from "./art.js";
-import { drawCharacter, footfall } from "./sprites.js";
+import { drawCharacter, footfall, BLEND } from "./sprites.js";
 import { sound } from "./audio.js";
 import { CHAPTERS, buildLevel, starsFor, GROUND_Y, WORLD_W, WORLD_H } from "./chapters.js";
 
@@ -23,6 +23,15 @@ const BUFFER = 0.18;          // tap slightly early and it still counts
 const PLAYER_W = 46;
 const PLAYER_H = 74;
 const CAM_X = 300;
+// A respawn teleports the player back to `lastSafe`, and the camera follows the
+// player exactly — so the whole background used to pan a few hundred pixels on
+// one frame, which reads as a cut rather than a lift back up. The camera keeps
+// its exact follow and carries the teleport as *slack*: the gap the jump left
+// it with, decayed toward zero. Slack is zero in ordinary play, so nothing
+// about the ordinary camera moves. Capped so the player it is lagging behind
+// cannot be left off the side of the screen while it catches up.
+export const CAM_BLEND = 0.3;   // seconds; exponential, so frame-rate independent
+export const CAM_SLACK = 200;   // px, against CAM_X = 300
 
 export class Game {
   constructor(canvas, characters) {
@@ -44,6 +53,7 @@ export class Game {
     this.keys = { left: false, right: false };
     this.toasts = [];
     this.particles = [];
+    this.camSlack = 0;
     this.onEvent = () => {};
     this.resize();
     window.addEventListener("resize", () => this.resize());
@@ -88,8 +98,12 @@ export class Game {
     this.particles = [];
     this.player = {
       x: 120, y: GROUND_Y, vy: 0, onGround: true, coyote: 0, state: "run", facing: 1, slow: 0,
+      // the state being left, and when the change happened: the drawing crosses
+      // from one to the other over BLEND rather than on a single frame
+      was: "run", changedAt: this.t,
     };
     this.lastSafe = { x: 120, y: GROUND_Y };
+    this.camSlack = 0;
     this.balloon = ch.hasBalloon
       ? { x: 300, y: GROUND_Y - 300, vy: 0, vx: 0, hue: 0 }
       : null;
@@ -149,6 +163,11 @@ export class Game {
     this.t += dt;
     if (this.jumpBuffer > 0) this.jumpBuffer -= dt;
     if (p.slow > 0) p.slow -= dt;
+    // the camera catching up after a teleport; nothing to do the rest of the time
+    if (this.camSlack) {
+      this.camSlack *= Math.exp(-dt / CAM_BLEND);
+      if (Math.abs(this.camSlack) < 0.5) this.camSlack = 0;
+    }
 
     // horizontal
     let speed = ch.speed * (p.slow > 0 ? 0.45 : 1);
@@ -197,9 +216,16 @@ export class Game {
     }
     if (p.coyote > 0) p.coyote -= dt;
 
-    p.state = p.onGround
+    const state = p.onGround
       ? (speed === 0 ? "idle" : "run")
       : (this.holding && p.vy > 0 ? "float" : "jump");
+    if (state !== p.state) {
+      // where the crossfade starts from: the state actually on screen, which
+      // during a quick jump-float-jump is a state part-way out of its own blend
+      p.was = p.state;
+      p.changedAt = this.t;
+      p.state = state;
+    }
 
     // Dust where the feet land. The run pose is a single drawing — the legs
     // never move within it — so the footfalls are what stops it reading as a
@@ -211,10 +237,15 @@ export class Game {
     if (p.y > WORLD_H + 40) {
       sound.splash();
       this.toast("Splash! 💦");
+      const before = this.camAt();
       p.x = this.lastSafe.x;
       p.y = this.lastSafe.y - 10;
       p.vy = -260;
       p.slow = 0.35;
+      // hold the camera where it was and let it travel back over CAM_BLEND,
+      // instead of the world jumping under a player who has not moved on screen
+      const gap = before - this.camTarget();     // the pure target: the old slack
+      this.camSlack = Math.max(-CAM_SLACK, Math.min(CAM_SLACK, gap));  // is carried in `before`
     }
 
     // soft obstacles: a stumble, never a loss
@@ -368,6 +399,18 @@ export class Game {
 
   /* -------------------------------------------------------------- render -- */
 
+  /** Where the camera would sit with no teleport to recover from. */
+  camTarget() {
+    return Math.max(0, this.player.x - CAM_X);
+  }
+
+  /** Where it is drawn from: the target, plus whatever slack is left to spend.
+   *  Everything that reads the camera — the sky, both parallax layers and the
+   *  world itself — takes this one number, so they cannot come apart. */
+  camAt() {
+    return Math.max(0, this.camTarget() + this.camSlack);
+  }
+
   render() {
     const ctx = this.ctx;
     const w = this.canvas.width, h = this.canvas.height;
@@ -389,7 +432,7 @@ export class Game {
       return;
     }
 
-    const camX = Math.max(0, this.player.x - CAM_X);
+    const camX = this.camAt();
     this.renderBackground(ctx, camX);
 
     ctx.save();
@@ -591,7 +634,8 @@ export class Game {
     ctx.globalAlpha = 1;
 
     const p = this.player;
-    drawCharacter(ctx, ch.hero, p.x, p.y, 92, this.palette(ch.hero), this.t, p.state, p.facing);
+    drawCharacter(ctx, ch.hero, p.x, p.y, 92, this.palette(ch.hero), this.t, p.state, p.facing,
+                  { from: p.was, k: (this.t - p.changedAt) / BLEND });
   }
 
   renderGoal(ctx, left, right) {

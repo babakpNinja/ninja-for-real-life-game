@@ -274,6 +274,46 @@ export function footfall(prev, now) {
 }
 
 /**
+ * How long a character takes to change state, in seconds.
+ *
+ * `state` flips on a single frame — the instant a foot touches down the lean of
+ * a jump is replaced by the lean of a run — and the drawing used to follow it in
+ * one step. Over this long the old state is faded into the new one instead.
+ *
+ * Short on purpose: long enough that no frame carries the whole change, short
+ * enough that a landing still lands. It is a *duration*, not the exponential
+ * smoothing you would reach for first, because the smoothed value would have to
+ * live somewhere — and the same character is drawn more than once per frame in
+ * different states (the menu family, the gallery, the cameo), so one stored
+ * value per id would be dragged between them. A duration is a pure function of
+ * the caller's own clock, so every one of those draws is independent.
+ */
+export const BLEND = 0.13;
+
+/**
+ * `a` and `b` are the number bags `poseFor`/`frameMotion` return; this is the
+ * one part-way between them. Keys are taken from `b`, the state being moved to,
+ * so a missing key on the old side reads as "already there" rather than NaN.
+ */
+function mix(a, b, k) {
+  const out = {};
+  for (const key of Object.keys(b)) {
+    const from = typeof a[key] === "number" ? a[key] : b[key];
+    out[key] = from + (b[key] - from) * k;
+  }
+  return out;
+}
+
+/**
+ * The crossfade a caller asked for, as a number 0..1, or 1 for "no crossfade":
+ * no blend given, the state has not actually changed, or the change is done.
+ */
+function blendAmount(blend, state) {
+  if (!blend || blend.from === undefined || blend.from === state) return 1;
+  return Math.max(0, Math.min(1, blend.k));
+}
+
+/**
  * Motion applied to a *whole* pose render — no cutting, no rotating parts.
  *
  * The rig above exists because one standing render has to do everything. Where
@@ -506,19 +546,119 @@ function blink(ctx, img, colour, eye, amount) {
   ctx.restore();
 }
 
+/** One pose render, drawn about the origin the transform has already set. */
+function drawPose(ctx, img, size) {
+  ctx.save();
+  const s = (size * POSE_SIZE) / img.height;
+  ctx.scale(s, s);
+  ctx.translate(-img.width / 2, -img.height);
+  ctx.drawImage(img, 0, 0);
+  ctx.restore();
+}
+
+// Somewhere to mix two drawings of a character before either is shown. See
+// `crossfade`.
+let scratch = null;
+
+/**
+ * Draw `before` and `after` mixed `fade` of the way from one to the other.
+ *
+ * Both go on a scratch canvas, and the mix is `after` drawn over `before` with
+ * `lighter`, which adds premultiplied — so the result is exactly
+ * `before * (1 - fade) + after * fade`, in colour and in coverage. The obvious
+ * version, drawing one at `1 - fade` and the other over it at `fade` straight
+ * onto the scene, is not that: where the two drawings overlap it leaves a
+ * `fade * (1 - fade)` share of the *background* showing through, up to a quarter
+ * of it half way, so the character goes see-through in the middle of every
+ * change. It also loses the rig, which is a dozen cut-outs overlapping at the
+ * joints on purpose: at anything under full alpha each seam it hides comes back
+ * as a dark band across the neck and the hip.
+ *
+ * The scratch is device pixels, taken off the transform already on `ctx`, and it
+ * is copied back one pixel for one with no transform at either end — a copy at a
+ * fractional offset, or scaled by the ceiling of its own size, resamples the
+ * whole character, which reads as a soft pop on the frames either side of the
+ * change.
+ */
+function crossfade(ctx, x, y, size, fade, before, after) {
+  const w = size * 2.6;
+  const h = size * 2.2;
+  const feetY = h - size * 0.4; // room below the feet for the contact shadow
+  const m = ctx.getTransform();
+  const scale = Math.hypot(m.a, m.b) || 1;
+  const X = Math.round(m.a * (x - w / 2) + m.c * (y - feetY) + m.e);
+  const Y = Math.round(m.b * (x - w / 2) + m.d * (y - feetY) + m.f);
+  const need = [Math.ceil(w * scale) + 2, Math.ceil(h * scale) + 2];
+  scratch = scratch || document.createElement("canvas");
+  if (scratch.width < need[0] || scratch.height < need[1]) {
+    [scratch.width, scratch.height] = need; // only ever grows; sizing clears it
+  }
+  const c = scratch.getContext("2d");
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.globalCompositeOperation = "source-over";
+  c.clearRect(0, 0, scratch.width, scratch.height);
+  c.setTransform(m.a, m.b, m.c, m.d, m.e - X, m.f - Y);
+  c.globalAlpha = 1 - fade;
+  before(c);
+  c.globalCompositeOperation = "lighter";
+  c.globalAlpha = fade;
+  const out = after(c);
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(scratch, X, Y);
+  ctx.restore();
+  return out;
+}
+
 /**
  * Draw character `id` standing with its feet at (x, y), `size` px tall.
  * Signature matches art.js's drawDog so the two are interchangeable, with the
  * character id added: drawCharacter(ctx, id, x, y, size, pal, t, state, facing).
+ *
+ * `blend` is optional and says the character has only just changed state:
+ * `{from: <the state before>, k: 0..1}`, k being how far through `BLEND` the
+ * change is. Given one, the motion is part-way between the two states; and where
+ * the two states are drawn from different artwork — or by different means at all,
+ * which is the common case, since only Bluey has a drawing of a jump and the rest
+ * of the cast falls back to the rig for it — the old drawing is faded out under
+ * the new one. Callers with no state machine (the menus, the gallery, the cameo)
+ * leave it out and get exactly what they got before.
  */
-export function drawCharacter(ctx, id, x, y, size, pal, t, state = "run", facing = 1) {
+export function drawCharacter(ctx, id, x, y, size, pal, t, state = "run", facing = 1,
+                              blend = null) {
+  const fade = blendAmount(blend, state);
+  const from = fade < 1 ? blend.from : null;
+  // Same artwork either side (or none either side) means one drawing covers the
+  // change: it is already moving on motion part-way between the two states.
+  // Nothing to mix at the very ends of the fade either — and skipping them keeps
+  // the two commonest frames of a change off the scratch canvas entirely.
+  if (from && fade > 0.002 && fade < 0.998
+      && poseFrame(id, from) !== poseFrame(id, state)) {
+    return crossfade(ctx, x, y, size, fade,
+                     (c) => draw(c, id, x, y, size, pal, t, state, facing, from, fade, from),
+                     (c) => draw(c, id, x, y, size, pal, t, state, facing, from, fade));
+  }
+  return draw(ctx, id, x, y, size, pal, t, state, facing, from, fade,
+              fade <= 0.002 ? from : state);
+}
+
+/**
+ * One drawing of the character: `art` says which state's artwork to use, while
+ * `state`, `from` and `fade` say how it moves. They come apart during a
+ * crossfade, where the state being left is drawn on the motion of the state
+ * being entered, so the two drawings sit in the same place and the fade reads as
+ * one character changing rather than two overlaid.
+ */
+function draw(ctx, id, x, y, size, pal, t, state, facing, from, fade, art = state) {
   const airborne = state === "jump" || state === "float";
 
   // the artist's own drawing of this pose, if there is one — preferred over
   // anything the rig can assemble out of a standing render
-  const frame = poseFrame(id, state);
+  const frame = poseFrame(id, art);
   if (frame) {
-    const m = frameMotion(state, t);
+    const m = from ? mix(frameMotion(from, t), frameMotion(state, t), fade)
+                   : frameMotion(state, t);
     drawn.set(id, "pose");
     shadow(ctx, x, y, size, airborne ? 0.1 : 0.2 - m.lift * 1.2);
     ctx.save();
@@ -526,10 +666,7 @@ export function drawCharacter(ctx, id, x, y, size, pal, t, state = "run", facing
     ctx.scale(facing, 1);
     ctx.rotate(m.tilt); // about the feet: the whole dog leans, nothing shears
     ctx.scale(m.sx, m.sy);
-    const s = (size * POSE_SIZE) / frame.height;
-    ctx.scale(s, s);
-    ctx.translate(-frame.width / 2, -frame.height);
-    ctx.drawImage(frame, 0, 0);
+    drawPose(ctx, frame, size);
     ctx.restore();
     return true;
   }
@@ -543,7 +680,7 @@ export function drawCharacter(ctx, id, x, y, size, pal, t, state = "run", facing
   }
   drawn.set(id, "rig");
 
-  const p = poseFor(state, t);
+  const p = from ? mix(poseFor(from, t), poseFor(state, t), fade) : poseFor(state, t);
 
   // contact shadow — the baked-in one is stripped from every asset so that
   // this one can track how far off the ground the character actually is
