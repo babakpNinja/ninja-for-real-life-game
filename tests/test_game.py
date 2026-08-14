@@ -2841,8 +2841,9 @@ def test_the_respawn_probe_answers_the_same_on_a_page_still_loading(own_page):
 #   edge     the nearest row where sky turns into something solid, i.e. the
 #            surface: a foot far from every edge is standing in mid air, which
 #            is what sleepytime's trees did in a dream sky with no ground at all
-#   painted  the lowest row the prop really paints in that column, so a prop
-#            that is not in the picture cannot pass by having nothing to measure
+#   painted  the lowest row the prop really paints anywhere in its footprint, so
+#            a prop that is not in the picture cannot pass by having nothing to
+#            measure — see `LOWEST_PAINT_JS` for why that is a band and not a column
 #
 # The props are taken out by the chapter's own rule — `horizon: null` ships none
 # — so the bare picture is one the game could really draw, even though since
@@ -2853,8 +2854,41 @@ def test_the_respawn_probe_answers_the_same_on_a_page_still_loading(own_page):
 # The one probe here that needs no settle wait at all (#224): `renderBackground`
 # paints sky, hills and props out of the canvas API and draws no image, so
 # nothing it measures can arrive part way through.
+
+# The reduction the scenery probes share: the lowest row, anywhere in a band of
+# columns, where the picture with the props in it differs from the same picture
+# without them. That band is the prop's *footprint*, and it is a band because a
+# single column is a claim that the prop's lowest paint is under its middle
+# (#223). An A-frame has nothing drawn under its middle: adding the hammerbarn
+# stepladder, the centre column reported it painting down to 22px above the
+# floor, because the lowest thing there was the top step. I fixed the art —
+# a real stepladder has a spreader bar down on the floor — but the wrong answer
+# came from the probe, and the next prop hollow at its middle gets it again.
+#
+# Widening can only move `painted` *down* the picture (a row is painted if any
+# column in the band paints it), so the band cannot invent a grounded prop out
+# of a floating one — unless it reaches a neighbour, which is what the spacing
+# guard in the test below is for.
+LOWEST_PAINT_JS = r"""
+  const same = (a, b, i) => Math.abs(a[i] - b[i]) <= 6 && Math.abs(a[i + 1] - b[i + 1]) <= 6
+                         && Math.abs(a[i + 2] - b[i + 2]) <= 6;
+  const footprint = (ctx, col, half, W, H) => {
+    const x0 = Math.max(0, col - half), x1 = Math.min(W - 1, col + half);
+    return { x0, w: x1 - x0 + 1, px: ctx.getImageData(x0, 0, x1 - x0 + 1, H).data };
+  };
+  const lowestPaint = (wit, bare, H) => {
+    let painted = null;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < wit.w; x++) {
+        if (!same(wit.px, bare.px, (y * wit.w + x) * 4)) { painted = y; break; }
+      }
+    }
+    return painted;
+  };
+"""
+
 SCENERY_PROBE = r"""
-async ({ clearRows }) => {
+async ({ clearRows, halfBand }) => {
   const c = await import('/js/chapters.js');
   const g = window.game;
   const W = c.WORLD_W, H = c.WORLD_H;
@@ -2862,8 +2896,7 @@ async ({ clearRows }) => {
                      cv.width = W; cv.height = H; return cv.getContext('2d'); };
   const withCtx = mk(), bareCtx = mk(), skyCtx = mk();
   const strip = (ctx, col) => ctx.getImageData(col, 0, 1, H).data;
-  const same = (a, b, i) => Math.abs(a[i] - b[i]) <= 6 && Math.abs(a[i + 1] - b[i + 1]) <= 6
-                         && Math.abs(a[i + 2] - b[i + 2]) <= 6;
+""" + LOWEST_PAINT_JS + r"""
   // the picture as it would be with nothing standing in it, painted by the
   // chapter's own two sky colours the same way renderBackground lays them down
   const bareAt = (ch, camX, col) => {
@@ -2897,14 +2930,21 @@ async ({ clearRows }) => {
         const col = Math.round(p.x - camX * 0.6);
         withCtx.clearRect(0, 0, W, H); g.ch = ch; g.t = 0;
         g.renderBackground(withCtx, camX);
-        const wit = strip(withCtx, col), { bare } = bareAt(ch, camX, col);
-        let painted = null;
-        for (let y = 0; y < H; y++) if (!same(wit, bare, y * 4)) painted = y;
-        rows.push(Object.assign({ x: p.x, kind: p.kind, base: p.y, col, painted },
+        bareAt(ch, camX, col);            // repaints bareCtx: this picture, props out
+        const wit = footprint(withCtx, col, halfBand, W, H);
+        const painted = lowestPaint(wit, footprint(bareCtx, col, halfBand, W, H), H);
+        rows.push(Object.assign({ x: p.x, kind: p.kind, base: p.y, col, painted,
+                                  cols: wit.w },
                                 look(ch, p.y, camX, col)));
       }
+      // the closest two props of this chapter, which is what the band may not
+      // reach: `col` is the same screen column for every prop (the camera is
+      // chosen to centre it), so a neighbour sits exactly its world gap away
+      const xs = props.map((p) => p.x).sort((a, b) => a - b);
+      const gap = xs.length < 2 ? null
+                : Math.min(...xs.slice(1).map((v, i) => v - xs[i]));
       chapters.push({ id: ch.id, horizon: ch.horizon, props: props.length,
-                      checked: rows.length, rows });
+                      checked: rows.length, gap, rows });
     }
     // The two defects of #210, asked of the same pictures: a foot on the ground
     // line of a beach whose shore is 120px higher, and one on the ground line of
@@ -2914,7 +2954,7 @@ async ({ clearRows }) => {
     // picture holds at that y, which is the whole question.
     const of = (id) => c.CHAPTERS.find((x) => x.id === id);
     return { chapters,
-      consts: { GROUND_Y: c.GROUND_Y, CLOUD_TOP: c.CLOUD_TOP },
+      consts: { GROUND_Y: c.GROUND_Y, CLOUD_TOP: c.CLOUD_TOP, halfBand },
       defects: {
         submerged: look(of('beach'), c.GROUND_Y, 300, 640),
         dreamGround: look(of('sleepytime'), c.GROUND_Y, 300, 640),
@@ -2934,6 +2974,26 @@ SURFACE_TOL = 12
 # there is no room here for more; what this has to catch is a foot under 120px
 # of sea, which it clears by twenty times over.
 CLEAR_ROWS = 6
+# How far either side of a prop's centre counts as the prop, measured off the
+# nine kinds the game draws rather than guessed: the widest foot is the house's,
+# which paints the floor from -76 to +75 of its middle, and the narrowest are the
+# trunks — a gum touches down over -6..+5. 80 reaches the ground under all of
+# them. The ceiling is the other side: the closest two props in the game are the
+# creek's trees, 340px apart, and a band that reached a neighbour would let one
+# prop's foot vouch for another's. The test asserts that gap rather than trusting
+# this comment, because the spacing lives in `sceneryFor` and can change.
+HALF_BAND = 80
+# How far the bottom of a prop's footprint may sit from the foot it stands on:
+# 2 rows of antialiasing above it, and 10 below for a foot settled into its
+# surface. Named rather than written into the assertion because the proof that
+# the band is doing anything (`test_a_prop_hollow_at_its_middle_...`) has to
+# reject and accept by the suite's own rule, not by a copy of the numbers.
+FOOT_ABOVE, FOOT_BELOW = 2, 10
+
+
+def foot_is_planted(delta):
+    """Is a prop whose footprint bottoms out `delta` rows below its foot on it?"""
+    return -FOOT_ABOVE <= delta <= FOOT_BELOW
 
 
 def scenery_complaint(row):
@@ -2962,9 +3022,22 @@ def test_every_prop_stands_on_the_surface_its_chapter_paints(own_page):
 
     Its own page: it borrows the engine to draw backgrounds off screen.
     """
-    r = own_page.evaluate(SCENERY_PROBE, {"clearRows": CLEAR_ROWS})
+    r = own_page.evaluate(SCENERY_PROBE, {"clearRows": CLEAR_ROWS, "halfBand": HALF_BAND})
     chapters = r["chapters"]
     assert len(chapters) == 5, f"only {len(chapters)} chapters were measured"
+
+    # The band is a prop's footprint only while it stops short of the next prop.
+    # Nothing above would notice if it did not: a neighbour's foot is on the
+    # ground too, so an overlapping band would report every floating prop as
+    # standing. Asked of `sceneryFor`'s own spacing, so packing a chapter tighter
+    # fails here rather than quietly widening what counts as one prop.
+    for ch in chapters:
+        if ch["gap"] is None:
+            continue
+        assert 2 * HALF_BAND < ch["gap"], (
+            f"{ch['id']}: its closest two props are {ch['gap']}px apart and the "
+            f"footprint band is {2 * HALF_BAND + 1} columns wide — the band reaches "
+            "the next prop, so one prop's foot can stand in for its neighbour's")
 
     for ch in chapters:
         assert ch["checked"] == ch["props"], (
@@ -2973,12 +3046,19 @@ def test_every_prop_stands_on_the_surface_its_chapter_paints(own_page):
             why = scenery_complaint(p)
             assert why is None, f"{ch['id']}: the {p['kind']} at x={p['x']} — {why}"
             assert p["painted"] is not None, (
-                f"{ch['id']}: the {p['kind']} at x={p['x']} paints nothing in its own "
-                f"column {p['col']} — this prop was not measured, it was missed")
-            assert -2 <= p["painted"] - p["base"] <= 10, (
+                f"{ch['id']}: the {p['kind']} at x={p['x']} paints nothing anywhere in "
+                f"the {p['cols']} columns around x={p['col']} — this prop was not "
+                "measured, it was missed")
+            assert foot_is_planted(p["painted"] - p["base"]), (
                 f"{ch['id']}: the {p['kind']} at x={p['x']} stands on y={p['base']} but "
-                f"paints down to y={p['painted']} — the art is not on its own foot")
+                f"its footprint paints down to y={p['painted']} — the art is not on "
+                "its own foot")
 
+    # The band is wide enough to be the prop and narrow enough to be only it, but
+    # nothing above can tell — every prop the game draws today touches down under
+    # its own middle, so a one-column probe and this one agree on all of them.
+    # That is why the band's proof is a separate test, on a shape that does not.
+    #
     # what all that measured: a sceneryFor that returned nothing would pass every
     # line above without ever looking at a prop
     total = sum(c["checked"] for c in chapters)
@@ -3047,6 +3127,74 @@ def test_every_prop_stands_on_the_surface_its_chapter_paints(own_page):
                              "base": r["consts"]["GROUND_Y"]})
     assert why and "in mid air" in why, (
         f"a foot with no surface anywhere in its column came back as {why!r}")
+
+
+# The footprint band's proof, and the only place in this file it can be had.
+#
+# Every prop the game ships touches down under its own middle, so narrowing the
+# band back to one column changes not one number in the test above — the widening
+# would be free to rot from the day it was written. The shape it is for is the
+# A-frame, and the A-frame is not in the art any more: #213 fixed the wrong
+# answer in the drawing, by giving the stepladder the spreader bar a real one has.
+#
+# So this takes the real `drawStepLadder` and paints its middle back out at floor
+# level, which is what that ladder was, and asks the suite's own reduction for the
+# prop's lowest paint twice — over one column, and over the band. The hole is the
+# only difference between the two ladders, and the whole one is measured as well
+# so that a reduction which simply disagreed with itself could not pass this.
+HOLLOW_FOOT_PROBE = r"""
+async ({ halfBand, holeHalf, holeTop, holeBottom }) => {
+  const art = await import('/js/art.js');
+  const W = 400, H = 400, base = 300, cx = 200, scale = 1.05, SKY = '#BFE3F2';
+  const mk = () => { const cv = document.createElement('canvas');
+                     cv.width = W; cv.height = H;
+                     const ctx = cv.getContext('2d');
+                     ctx.fillStyle = SKY; ctx.fillRect(0, 0, W, H); return ctx; };
+""" + LOWEST_PAINT_JS + r"""
+  const nowt = mk();                       // the picture with no ladder in it
+  const whole = mk(); art.drawStepLadder(whole, cx, base, scale);
+  const hollow = mk(); art.drawStepLadder(hollow, cx, base, scale);
+  hollow.fillStyle = SKY;                  // the spreader bar taken back out
+  hollow.fillRect(cx - holeHalf, base - holeTop, holeHalf * 2, holeTop + holeBottom);
+  const low = (ctx, half) => {
+    const y = lowestPaint(footprint(ctx, cx, half, W, H),
+                          footprint(nowt, cx, half, W, H), H);
+    return y === null ? null : y - base;
+  };
+  return { whole: { column: low(whole, 0), band: low(whole, halfBand) },
+           hollow: { column: low(hollow, 0), band: low(hollow, halfBand) } };
+}
+"""
+
+
+def test_a_prop_hollow_at_its_middle_is_measured_across_its_footprint(own_page):
+    """A stepladder standing on the floor is standing on it, whichever column you
+    ask — unless you ask the one column an A has nothing in (#223).
+
+    Its own page: it borrows `art.js` to draw off screen.
+    """
+    r = own_page.evaluate(HOLLOW_FOOT_PROBE,
+                          {"halfBand": HALF_BAND, "holeHalf": 13,
+                           "holeTop": 22, "holeBottom": 18})
+    whole, hollow = r["whole"], r["hollow"]
+
+    assert whole["column"] is not None and whole["column"] == whole["band"], (
+        f"the ladder as it ships measures {whole['column']} through its middle and "
+        f"{whole['band']} across its footprint — those have to agree before a "
+        "disagreement below can be blamed on the hole rather than on the two reads")
+    assert foot_is_planted(whole["band"]), (
+        f"the ladder as it ships bottoms out {whole['band']} rows from its foot, "
+        "which this suite would already be failing — nothing below means anything")
+
+    assert foot_is_planted(hollow["band"]), (
+        f"with its spreader bar gone the ladder's footprint bottoms out "
+        f"{hollow['band']} rows from its foot — the band did not find the legs, so "
+        "widening it has not fixed anything")
+    assert not foot_is_planted(hollow["column"]), (
+        f"the same ladder measured through its middle bottoms out "
+        f"{hollow['column']} rows from its foot and this suite calls that planted — "
+        "the hole is not deep enough to reproduce #213, so nothing here is proving "
+        "the band is what saved it")
 
 
 # The kind assertion above is a fact about `sceneryFor`'s data, and the data is
