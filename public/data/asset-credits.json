@@ -302,6 +302,24 @@
       "cutout": 0.451,
       "shadow_px": 3156
     },
+    "bingo:jump:0": {
+      "file": "assets/poses/bingo-jump-0.png",
+      "source": "https://bluey.fandom.com/wiki/File%3AJump_bluey_bingo.png",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/1/17/Jump_bluey_bingo.png",
+      "retrieved": "2026-08-14",
+      "w": 410,
+      "h": 512,
+      "bytes": 149281,
+      "cutout": 0.505,
+      "shadow_px": 725,
+      "crop": [
+        0.0,
+        0.0,
+        0.4759,
+        1.0
+      ],
+      "stray_px": 1899
+    },
     "bingo:run:0": {
       "file": "assets/poses/bingo-run-0.png",
       "source": "https://bluey.fandom.com/wiki/File%3ABingo-Running.png",
@@ -356,6 +374,17 @@
       "bytes": 75365,
       "cutout": 0.519,
       "shadow_px": 12389
+    },
+    "chilli:run:0": {
+      "file": "assets/poses/chilli-run-0.png",
+      "source": "https://bluey.fandom.com/wiki/File%3AChilli-Island_Rhythms.png",
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/a/a8/Chilli-Island_Rhythms.png",
+      "retrieved": "2026-08-14",
+      "w": 384,
+      "h": 512,
+      "bytes": 89556,
+      "cutout": 0.505,
+      "shadow_px": 5764
     }
   }
 }

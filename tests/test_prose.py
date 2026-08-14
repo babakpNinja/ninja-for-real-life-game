@@ -395,6 +395,129 @@ def test_a_copy_that_disagrees_with_GAME_NAME_is_a_problem(fetch_assets, tmp_pat
     assert mod.GAME_NAME in problem and "Anna Bingo" in problem, problem
 
 
+# ---------------------------- a playable character with no artwork for a state
+# (#206) Muffin is on the character select screen, and the only drawing of her
+# is the standing render, so every state the game can put her in was drawn by
+# the rig — the sliced look the whole pose change was meant to end. Nothing
+# noticed, because the pose tests are parametrised over what poses.json *has*:
+# a character with nothing in it is a character with nothing to check.
+#
+# `coverage_problems` asks the other question — for every playable character and
+# every state `poseFor` can be handed, is there a drawing? A gap is allowed, and
+# some are unavoidable (there is no picture of Muffin off the ground anywhere),
+# but it has to be written down with a reason in RIG_OK. These tests are what
+# make that table load-bearing rather than decorative.
+
+def posed(fetch_assets, tmp_path, monkeypatch, frames: dict):
+    """Point the coverage check at a made-up poses.json."""
+    p = tmp_path / "poses.json"
+    p.write_text(json.dumps({"frames": frames}))
+    monkeypatch.setattr(fetch_assets, "POSES_JSON", p)
+
+
+def test_a_playable_character_with_no_art_for_a_state_is_a_problem(fetch_assets, monkeypatch):
+    """The issue itself: drop Muffin's run out of the table and it comes back."""
+    mod = fetch_assets
+    monkeypatch.setattr(mod, "RIG_OK", {k: v for k, v in mod.RIG_OK.items()
+                                        if k != ("muffin", "run")})
+    problem, = [p for p in mod.coverage_problems() if p.startswith("muffin is playable")]
+    assert "'run'" in problem and "RIG_OK" in problem, problem
+
+
+def test_the_gap_is_reported_per_state_not_per_character(fetch_assets, monkeypatch):
+    """Muffin has four gaps and they are four separate decisions — one of them
+    could be closed tomorrow by one render. A single "muffin has no art" line
+    would go on being true after the run landed."""
+    mod = fetch_assets
+    monkeypatch.setattr(mod, "RIG_OK", {})
+    muffin = [p for p in mod.coverage_problems() if p.startswith("muffin is playable")]
+    assert {"'run'", "'jump'", "'float'", "'cheer'", "'idle'"} == {
+        p.split("for ")[1].split(",")[0] for p in muffin}
+
+
+def test_a_declaration_the_artwork_has_made_untrue_is_a_problem(fetch_assets, tmp_path,
+                                                                monkeypatch):
+    """The direction that rots quietly. Someone finds a running Muffin, fetches
+    it, and RIG_OK goes on saying the rig draws her — a comment explaining a
+    limitation that no longer exists, which is how a table like this stops being
+    read at all."""
+    mod = fetch_assets
+    posed(fetch_assets, tmp_path, monkeypatch,
+          {"muffin": {"run": ["assets/poses/muffin-run-0.png"]}})
+    problem, = [p for p in mod.coverage_problems() if p.startswith("muffin:run")]
+    assert "drop the line" in problem, problem
+
+
+def test_an_entry_that_gives_no_reason_is_a_problem(fetch_assets, monkeypatch):
+    """An empty string is how a gap gets waved through in a hurry."""
+    mod = fetch_assets
+    monkeypatch.setattr(mod, "RIG_OK", {**mod.RIG_OK, ("muffin", "run"): "  "})
+    problem, = [p for p in mod.coverage_problems() if "no reason" in p]
+    assert problem.startswith("muffin:run"), problem
+
+
+def test_an_entry_for_a_state_nothing_draws_is_a_problem(fetch_assets, monkeypatch):
+    """States are `poseFor`'s cases, read out of sprites.js. Rename one and the
+    line excusing it silently starts excusing nothing, leaving the real gap
+    unreported — the same failure as a typo in the character id."""
+    mod = fetch_assets
+    monkeypatch.setattr(mod, "RIG_OK", {**mod.RIG_OK, ("muffin", "hover"): "no such state"})
+    assert [p for p in mod.coverage_problems() if "'hover'" in p and "nothing draws" in p]
+
+
+def test_an_entry_for_someone_who_cannot_be_played_is_a_problem(fetch_assets, monkeypatch):
+    """Bandit is playable today. If he becomes scenery, his three lines are
+    excusing gaps nobody can see, and they would outlive the reason they name."""
+    mod = fetch_assets
+    monkeypatch.setattr(mod, "RIG_OK", {**mod.RIG_OK, ("socks", "run"): "not on the roster"})
+    assert [p for p in mod.coverage_problems() if "socks" in p and "not a playable" in p]
+
+
+def test_the_blanket_idle_line_dies_when_it_stops_being_true(fetch_assets, tmp_path,
+                                                             monkeypatch):
+    """`("*", "idle")` covers everyone, so it cannot be caught by the per-pair
+    check above — nothing would ever report it as untrue. Give every playable
+    character an idle drawing and the line has to go.
+
+    And *only* then: it is one line standing in for five entries, so it is out
+    of date when the last of them is drawn, not the first. Asserting the death
+    on its own passes an `any()`, which would tell whoever draws the first idle
+    Bluey to delete the line still excusing the other four."""
+    mod = fetch_assets
+    playable = [c["id"] for c in mod.load_chars() if c.get("playable")]
+    idle = {cid: {"idle": [f"assets/poses/{cid}-idle-0.png"]} for cid in playable}
+
+    def blanket():
+        return [p for p in mod.coverage_problems() if "'*'" in p and "'idle'" in p]
+
+    for cid in playable[:-1]:  # all but one, so the line is still doing work
+        posed(fetch_assets, tmp_path, monkeypatch, {c: idle[c] for c in playable if c != cid})
+        assert not blanket(), f"the '*' line was called out of date while {cid} still needs it"
+
+    posed(fetch_assets, tmp_path, monkeypatch, idle)
+    assert blanket()
+
+
+def test_a_state_drawn_by_another_states_art_counts_as_covered(fetch_assets, monkeypatch):
+    """float has no artwork of its own anywhere and never will: it is the jump
+    held down, drawn by the jump render (POSE_FALLBACK in sprites.js). Bluey and
+    Bingo therefore have no float gap, and no RIG_OK line for one. Take the
+    fallback away and they do — which is what pins this to the JS rather than to
+    a second opinion about it kept here."""
+    mod = fetch_assets
+    assert not [p for p in mod.coverage_problems() if "float" in p]
+    monkeypatch.setattr(mod, "pose_fallbacks", dict)
+    floats = [p for p in mod.coverage_problems() if "'float'" in p]
+    assert {p.split()[0] for p in floats} == {"bluey", "bingo"}, floats
+
+
+def test_the_command_itself_exits_non_zero_on_an_undeclared_gap(fetch_assets, monkeypatch):
+    """The signal ship.py and test_the_asset_scripts_self_check actually read."""
+    mod = fetch_assets
+    monkeypatch.setattr(mod, "RIG_OK", {})
+    assert mod.check() == 1
+
+
 # ------------------------------------ a shot run replaces its own shots (#164)
 # `--prefix live` and `--prefix live-` have to name the same files. Given the
 # first, shots.py used to write `live00-menu.png` next to the `live-00-menu.png`

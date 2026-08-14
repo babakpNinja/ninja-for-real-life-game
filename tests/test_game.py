@@ -55,6 +55,14 @@ EARED = sorted(cid for cid, r in RIGS.items() if r.get("ears"))
 POSES = json.loads((APP / "public" / "data" / "poses.json").read_text())["frames"]
 POSED = sorted((cid, state) for cid, by in POSES.items() for state in by)
 
+# Who the rig still has to carry: a character the player can pick with no
+# running render anywhere. Read the same way, so the day one is drawn for her
+# the rig test below loses its subject and says so.
+PLAYABLE = [c["id"] for c in
+            json.loads((APP / "public" / "data" / "characters.json").read_text())["characters"]
+            if c.get("playable")]
+RIGGED_RUN = sorted(cid for cid in PLAYABLE if "run" not in POSES.get(cid, {}))
+
 
 @pytest.fixture(scope="module")
 def desktop(make_page):
@@ -823,26 +831,32 @@ async ({ id, steps }) => {
 
 
 def test_a_character_with_no_run_artwork_bounds_instead_of_sliding(desktop):
-    """#168: Chilli is the hero of chapter 4 and there is no running render of
-    her to fetch — I listed all 55 files under her name on the wiki, and all 72
-    under Muffin's; the only dynamic Chilli is a dance. So she ran on the rig,
-    which cannot swing legs, and a whole level was a dog sliding along the beach
-    bobbing by 4% of her own body.
+    """#168: a dog whose legs cannot move is not jogging, it is bounding.
 
-    A dog whose legs cannot move is not jogging, it is bounding, and that is
-    what is asserted here — off the ground, gathered when she lands, drawn out
-    at the top, and one smooth arc rather than a jitter. Measured off the
-    silhouette she actually paints, sampled from one footfall to the next.
+    The rig cuts one front-facing standing render into bands, so a band below
+    the hip is not a leg — it is both legs, the gap between them and, for
+    Muffin, her tail. Swinging it slid a grey slab out sideways. So the rig
+    bounds the whole drawing instead: off the ground, gathered when it lands,
+    drawn out at the top, one smooth arc rather than a jitter. Measured off the
+    silhouette it actually paints, sampled from one footfall to the next.
 
-    Every hero, with its pose art taken off, because the rig is what is being
-    tested; the one that reaches this in the real game is named below.
+    Chilli was the case this was written for; she has a stride render now
+    (#206). Muffin is the one left — she is on the character select screen and
+    her 43 files on the wiki are the standing render, unboxing screenshots and
+    group shots, so the rig is all she will ever have. `RIGGED_RUN` is read from
+    the shipped data, so the day somebody draws her running this test loses its
+    subject rather than going on passing over nobody.
+
+    Every hero is measured too, with its pose art taken off, because the rig is
+    the thing under test and it has to hold up for whoever ends up on it.
     """
     heroes = sorted({hero for hero, _ in desktop.evaluate("window.__cast")})
-    assert "chilli" in heroes and len(heroes) >= 4, heroes
-    assert "run" not in POSES.get("chilli", {}), \
-        "chilli has run artwork now — she draws it, and this test guards the rig"
+    assert len(heroes) >= 4, heroes
+    assert RIGGED_RUN, ("every playable character has run artwork now — the rig no longer "
+                        "runs anyone, so this test is guarding nothing; see RIG_OK in "
+                        "fetch_assets.py before deleting it")
 
-    for cid in heroes:
+    for cid in sorted(set(heroes) | set(RIGGED_RUN)):
         r = desktop.evaluate(BOUND_PROBE, {"id": cid, "steps": 8})
         f, size = r["frames"], r["size"]
         assert r["drawn"] == "rig", f"{cid} drew as {r['drawn']}, not the rig"
@@ -1032,6 +1046,58 @@ def test_a_pose_never_advances_past_its_first_frame(desktop):
         assert r["changed"] == 0, (
             f"at t={t} the second frame of the set was drawn: {r} — poses are stills, "
             "one render per state; see poseFrame in sprites.js")
+
+
+def test_a_held_jump_keeps_the_leaping_drawing(desktop):
+    """`float` is the jump held down, and nobody has drawn a separate one.
+
+    Without POSE_FALLBACK a held jump swapped the artist's leaping render for the
+    rig half-way up and back again on the way down — the sliced-limbs look
+    reappearing mid-air on the one character with the artwork to avoid it. Nobody
+    reported it because the pose tests only check states poses.json names, and it
+    names no float.
+    """
+    r = pose_diff(desktop,
+                  {"id": "bluey", "state": "float", "t": 0.31},
+                  {"id": "bluey", "state": "float", "t": 0.31, "frames": {}})
+    assert r["a"] == "pose", f"a held jump drew as {r['a']} — the fall drops to the rig"
+    assert r["b"] == "rig", f"with no pose frames float drew as {r['b']} — not the rig"
+    assert r["opaqueA"] > 1000, f"the borrowed frame painted almost nothing: {r}"
+
+    # and what it borrows is the jump set specifically. Renaming the file under
+    # `jump` has to change the picture float draws, or it is reading something
+    # else and happening to look right.
+    swapped = pose_diff(
+        desktop,
+        {"id": "bluey", "state": "float", "t": 0.31,
+         "frames": {"jump": ["assets/poses/bluey-jump-0.png"]}},
+        {"id": "bluey", "state": "float", "t": 0.31,
+         "frames": {"jump": ["assets/poses/bluey-cheer-0.png"]}})
+    assert swapped["a"] == "pose" and swapped["b"] == "pose", swapped
+    assert swapped["changed"] > swapped["opaqueA"] * 0.1, (
+        f"float ignored the jump set: {swapped} — see POSE_FALLBACK in sprites.js")
+
+
+def test_a_state_with_its_own_art_does_not_fall_back(desktop):
+    """The fallback is a floor, not an override: the day somebody draws a real
+    floating Bluey, that drawing is what floats.
+
+    Two sets that agree on float and disagree on jump, both asked for float. The
+    lookup is `set[state] || set[POSE_FALLBACK[state]]`, so these are the same
+    picture; consult the fallback first and they are two different dogs.
+    """
+    r = pose_diff(desktop,
+                  {"id": "bluey", "state": "float", "t": 0.31,
+                   "frames": {"float": ["assets/poses/bluey-run-0.png"],
+                              "jump": ["assets/poses/bluey-jump-0.png"]}},
+                  {"id": "bluey", "state": "float", "t": 0.31,
+                   "frames": {"float": ["assets/poses/bluey-run-0.png"],
+                              "jump": ["assets/poses/bluey-cheer-0.png"]}})
+    assert r["a"] == "pose" and r["b"] == "pose", r
+    assert r["opaqueA"] > 1000, f"nothing was drawn: {r}"
+    assert r["changed"] == 0, (
+        f"float drew the jump frame over its own: {r} — the fallback is only for a "
+        "state with no artwork of its own")
 
 
 # --- the footfalls: what makes a still read as a run ------------------------

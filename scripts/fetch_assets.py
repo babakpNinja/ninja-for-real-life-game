@@ -21,6 +21,7 @@ import urllib.parse
 import urllib.request
 from datetime import date
 from pathlib import Path
+from typing import NamedTuple
 
 APP = Path(__file__).resolve().parent.parent
 CHARS = APP / "public" / "data" / "characters.json"
@@ -106,9 +107,37 @@ MIN_CUTOUT = 0.12  # below this the "render" is really a screenshot with a backg
 # What is NOT here matters as much: there is exactly one running render per
 # character on the wiki, so a "run" is one frame plus motion, not a six-frame
 # cycle — the file format takes a list so more frames are data if they ever
-# exist. Chilli has no running render at all (her only dynamic pose is a
-# dance) and Muffin has six files in total, none of them usable. Those two run
-# on the rig, which is why the rig's run still has to look right.
+# exist. Where a state has no drawing at all the rig draws it, and RIG_OK below
+# is where that has to be said out loud.
+#
+# A frame is a file name, or a `Frame` when the drawing has to be cut out of a
+# bigger picture — see `Frame`.
+
+
+class Frame(NamedTuple):
+    """One pose source: a wiki file, and optionally a box to cut out of it.
+
+    `crop` is (left, top, right, bottom) as fractions of the source, applied
+    before anything else. It exists because some poses are only drawn as part
+    of a two-character picture; taking a rectangle out of someone's artwork is
+    the same act of copying as taking the whole file, and it is credited the
+    same way, with the box recorded so the cut can be checked against the
+    original.
+
+    A straight rectangle through two overlapping dogs always leaves a piece of
+    the other one behind — Bluey's paw hangs over Bingo's — so a cropped frame
+    also keeps only its largest connected shape. That is why `crop` is a flag
+    for "there is more than one character in this file" and not just a box.
+    """
+
+    file: str
+    crop: tuple[float, float, float, float] | None = None
+
+
+def _frames(spec) -> list[Frame]:
+    return [f if isinstance(f, Frame) else Frame(f) for f in spec]
+
+
 POSES = {
     "bluey": {
         "run": ["Bluey-Running.png"],
@@ -117,12 +146,20 @@ POSES = {
     },
     "bingo": {
         "run": ["Bingo-Running.png"],
+        # The only drawing of Bingo off the ground is the one she shares with
+        # Bluey, both mid-leap on alpha. Cropped to her side of it.
+        "jump": [Frame("Jump_bluey_bingo.png", crop=(0.0, 0.0, 0.4759, 1.0))],
         "cheer": ["Bingo-Dance.png"],
     },
     "bandit": {
         "run": ["Bandit-Obstacle_Course-Running.png"],
     },
     "chilli": {
+        # Not a running render — there is no such drawing of Chilli — but a
+        # full stride with her weight over the front foot, which is what a run
+        # needs and what the rig cannot make out of a standing render. Her
+        # cheer is the front-on dance, so the two do not read as the same pose.
+        "run": ["Chilli-Island_Rhythms.png"],
         "cheer": ["Chilli-Dancing.png"],
     },
 }
@@ -144,6 +181,48 @@ def states() -> set[str]:
     if "default:" in body:
         found.add("idle")  # poseFor's default arm; the caller's name for it
     return found
+
+
+def pose_fallbacks() -> dict[str, str]:
+    """The state-to-state fallbacks sprites.js draws, read out of sprites.js.
+
+    `poseFrame` will use one state's artwork for another where it is the same
+    drawing (a float is a jump held longer). Coverage has to know about that or
+    it reports a gap the player cannot see; sprites.js is the author here,
+    exactly as it is for `states`.
+    """
+    m = re.search(r"const POSE_FALLBACK = \{(.*?)\};", SPRITES_JS.read_text(), re.S)
+    return dict(re.findall(r'(\w+):\s*"(\w+)"', m.group(1))) if m else {}
+
+
+# --- where the rig is allowed to draw a hero --------------------------------
+# A playable character can be put into any state in `states()` within two taps,
+# and where there is no drawing for it the rig draws it instead — a standing
+# render cut into bands, which is the look the pose artwork was fetched to get
+# rid of. Sometimes that is fine and sometimes it is the bug, and nothing could
+# tell the difference: the pose tests check what poses.json *claims*, so an
+# absence was invisible. Every (character, state) with no artwork behind it has
+# to be named here with its reason; `--check` fails on one that is not, and
+# fails again on an entry that artwork has since made untrue.
+#
+# "*" is every playable character, for a state where nobody has artwork and the
+# reason is about the state rather than about the character.
+RIG_OK = {
+    ("*", "idle"): "a standing render is what idle wants; the rig only breathes and blinks",
+    ("bandit", "jump"): "no drawing of Bandit off the ground on the wiki — the "
+                        "obstacle-course render is the only action pose of him",
+    ("bandit", "cheer"): "no celebrating render of Bandit; the nearest are episode "
+                         "screenshots, which have a background and fail the cutout floor",
+    ("bandit", "float"): "float borrows the jump drawing, and there is no jump "
+                         "drawing of Bandit to borrow",
+    ("chilli", "jump"): "no drawing of Chilli off the ground on the wiki",
+    ("chilli", "float"): "as above — nothing for float to borrow",
+    ("muffin", "run"): "Muffin has no action render at all: her 43 files are the "
+                       "standing render, unboxing screenshots and group shots",
+    ("muffin", "jump"): "as above — nothing of Muffin off the ground exists",
+    ("muffin", "float"): "as above — nothing for float to borrow",
+    ("muffin", "cheer"): "as above — the nearest is the standing render, waving",
+}
 
 # --- the licensing fact, authored once --------------------------------------
 # Before the artwork shipped the README said "no copyrighted art is used or
@@ -271,12 +350,56 @@ def strip_baked_shadow(im):
     return im, cleared
 
 
-def normalise(raw: bytes, dest: Path) -> dict:
+def largest_shape(im, alpha: int = 8):
+    """Keep the biggest connected opaque shape; erase anything else.
+
+    Only used on a cropped frame, where a rectangle through a two-character
+    picture leaves a piece of the other character floating in the corner.
+    Returns (image, pixels_erased) so the caller can print how much of the
+    source it threw away — a big number means the crop box is wrong.
+    """
+    px = im.load()
+    seen = [[False] * im.width for _ in range(im.height)]
+    best, best_n = None, 0
+    for sy in range(im.height):
+        for sx in range(im.width):
+            if seen[sy][sx] or px[sx, sy][3] <= alpha:
+                continue
+            shape, stack = [], [(sx, sy)]
+            seen[sy][sx] = True
+            while stack:
+                x, y = stack.pop()
+                shape.append((x, y))
+                for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+                    if 0 <= nx < im.width and 0 <= ny < im.height and not seen[ny][nx] \
+                            and px[nx, ny][3] > alpha:
+                        seen[ny][nx] = True
+                        stack.append((nx, ny))
+            if len(shape) > best_n:
+                best, best_n = set(shape), len(shape)
+    erased = 0
+    if best is not None:
+        for y in range(im.height):
+            for x in range(im.width):
+                if px[x, y][3] > alpha and (x, y) not in best:
+                    r, g, b, _ = px[x, y]
+                    px[x, y] = (r, g, b, 0)
+                    erased += 1
+    return im, erased
+
+
+def normalise(raw: bytes, dest: Path, crop: tuple | None = None) -> dict:
     """Trim transparent margins, cap height, write PNG. Returns size info."""
     from PIL import Image
 
     im = Image.open(io.BytesIO(raw))
     im = im.convert("RGBA")
+    stray = 0
+    if crop:
+        l, t, r, b = crop
+        im = im.crop((round(l * im.width), round(t * im.height),
+                      round(r * im.width), round(b * im.height)))
+        im, stray = largest_shape(im)
     im, cleared = strip_baked_shadow(im)
     bbox = im.split()[3].getbbox()
     if bbox:
@@ -286,13 +409,17 @@ def normalise(raw: bytes, dest: Path) -> dict:
         im = im.resize((w, MAX_H), Image.LANCZOS)
     dest.parent.mkdir(parents=True, exist_ok=True)
     im.save(dest, "PNG", optimize=True)
-    return {
+    info = {
         "w": im.width,
         "h": im.height,
         "bytes": dest.stat().st_size,
         "cutout": cutout_score(im),
         "shadow_px": cleared,
     }
+    if crop:
+        info["crop"] = [round(v, 4) for v in crop]
+        info["stray_px"] = stray
+    return info
 
 
 def cutout_score(im) -> float:
@@ -387,7 +514,8 @@ def fetch_poses(force: bool) -> int:
     problems = []
     for cid, states in POSES.items():
         for state, files in states.items():
-            for i, name in enumerate(files):
+            for i, frame in enumerate(_frames(files)):
+                name = frame.file
                 key = pose_id(cid, state, i)
                 rel = f"assets/poses/{cid}-{state}-{i}.png"
                 dest = APP / "public" / rel
@@ -400,7 +528,7 @@ def fetch_poses(force: bool) -> int:
                     if not url:
                         problems.append(f"{key}: File:{name} has no image")
                         continue
-                    info = normalise(_get(url), dest)
+                    info = normalise(_get(url), dest, frame.crop)
                 except Exception as exc:
                     problems.append(f"{key}: {exc}")
                     continue
@@ -413,10 +541,11 @@ def fetch_poses(force: bool) -> int:
                     **info,
                 }
                 flag = "  OPAQUE?" if info["cutout"] < MIN_CUTOUT else ""
+                cut = f"  cropped, {info['stray_px']}px of a neighbour erased" if frame.crop else ""
                 print(
                     f"  got   {key}  {info['w']}x{info['h']}"
                     f"  {info['bytes'] // 1024}KB  cutout={info['cutout']}"
-                    f"  <- {name}{flag}"
+                    f"  <- {name}{cut}{flag}"
                 )
                 time.sleep(0.4)
 
@@ -480,6 +609,68 @@ def pose_problems() -> list[str]:
             rel = f"assets/poses/{f.name}"
             if rel not in named:
                 problems.append(f"{rel}: on disk but poses.json never draws it")
+    return problems
+
+
+def draws(cid: str, state: str, frames: dict, fallbacks: dict[str, str]) -> str | None:
+    """The state whose artwork would be drawn for `cid` in `state`, or None.
+
+    `sprites.js` asks for the state's own frames first and then the one state
+    it will substitute for it, and this answers the same question about the
+    data — so a gap here is a gap the player can see.
+    """
+    for want in (state, fallbacks.get(state)):
+        if want and (frames.get(cid) or {}).get(want):
+            return want
+    return None
+
+
+def coverage_problems() -> list[str]:
+    """Every state a playable character can be put into is drawn on purpose.
+
+    Either there is artwork for it (its own, or the one state sprites.js falls
+    back to), or RIG_OK says the rig is acceptable there and why. The absence
+    of a pose cannot fail any other check in this file — poses.json is the only
+    thing they read, and poses.json does not know what is missing from it.
+
+    Both directions: an undeclared gap, and a declaration artwork has since
+    made untrue (which would otherwise sit here reading as a known limitation
+    long after it stopped being one).
+    """
+    if not POSES_JSON.exists():
+        return []  # pose_problems has already said this louder
+    frames = json.loads(POSES_JSON.read_text()).get("frames", {})
+    fallbacks = pose_fallbacks()
+    playable = [c["id"] for c in load_chars() if c.get("playable")]
+    every = sorted(states())
+    problems = []
+    for cid in playable:
+        for state in every:
+            drawn = draws(cid, state, frames, fallbacks)
+            why = RIG_OK.get((cid, state)) or RIG_OK.get(("*", state))
+            if drawn and (cid, state) in RIG_OK:
+                problems.append(
+                    f"{cid}:{state}: RIG_OK says the rig draws this, but there is "
+                    f"{drawn} artwork for it now — drop the line"
+                )
+            elif not drawn and not why:
+                problems.append(
+                    f"{cid} is playable and has no pose artwork for {state!r}, so the "
+                    f"rig draws it. Fetch a render, or say why the rig is right here "
+                    f"in RIG_OK[({cid!r}, {state!r})]"
+                )
+    for (cid, state), why in RIG_OK.items():
+        if cid != "*" and cid not in playable:
+            problems.append(f"RIG_OK names {cid}, which is not a playable character")
+        if state not in every:
+            problems.append(f"RIG_OK names the state {state!r}, which nothing draws")
+        elif cid == "*" and all(draws(c, state, frames, fallbacks) for c in playable):
+            problems.append(
+                f"RIG_OK's '*' line for {state!r} is out of date: every playable "
+                f"character has artwork for it now"
+            )
+        elif not str(why).strip():
+            problems.append(f"{cid}:{state}: the RIG_OK entry gives no reason")
     return problems
 
 
@@ -678,10 +869,12 @@ def check() -> int:
     problems += prose_problems(credits, shipped)
     problems += name_problems()
     problems += pose_problems()
+    problems += coverage_problems()
     frames = sum(len(f) for s in json.loads(POSES_JSON.read_text())["frames"].values()
                  for f in s.values()) if POSES_JSON.exists() else 0
     print(f"{len(assets)} assets, {total // 1024}KB total, {shipped} renders on disk, "
-          f"{frames} pose frames, and every visible copy of {GAME_NAME!r} checked")
+          f"{frames} pose frames, {len(RIG_OK)} states left to the rig on purpose, "
+          f"and every visible copy of {GAME_NAME!r} checked")
     for p in problems:
         print(f"  PROBLEM {p}")
     return 1 if problems else 0

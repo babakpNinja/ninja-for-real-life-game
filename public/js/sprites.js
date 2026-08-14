@@ -394,6 +394,19 @@ function frameMotion(state, t) {
 }
 
 /**
+ * A state drawn by another state's artwork, where it is the same drawing.
+ *
+ * `float` is the jump held down — the player keeps a finger on the screen and
+ * the fall slows — so it is the same body in the air, and nobody has ever drawn
+ * a separate one. Without this line a jump that is held swaps the artist's
+ * leaping render for the rig half-way up and back again on the way down, which
+ * is the sliced-limbs look reappearing mid-jump on the one character who has
+ * the artwork to avoid it. fetch_assets.py reads this object (`pose_fallbacks`)
+ * so its coverage check counts a fallback as covered.
+ */
+const POSE_FALLBACK = { float: "jump" };
+
+/**
  * The pose to draw for `id` in `state`, or null if there is no pose artwork for
  * it or it has not arrived yet — in which case the caller uses the rig.
  *
@@ -411,9 +424,13 @@ function frameMotion(state, t) {
  * `poses.json` still stores a list, so real frames are data if a set ever
  * exists — but the code that walks it will be written against artwork that
  * actually cycles, not kept warm in the hope of it.
+ *
+ * Where a state has no artwork, POSE_FALLBACK may name one that is the same
+ * drawing before the rig is reached; anything not there falls to the rig.
  */
 function poseFrame(id, state) {
-  const frames = (poses[id] || {})[state];
+  const set = poses[id] || {};
+  const frames = set[state] || set[POSE_FALLBACK[state]];
   if (!frames || !frames.length) return null;
   const path = frames[0];
   const img = load(poseArt, path, path);

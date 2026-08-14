@@ -15,6 +15,9 @@
       "run": [
         "assets/poses/bingo-run-0.png"
       ],
+      "jump": [
+        "assets/poses/bingo-jump-0.png"
+      ],
       "cheer": [
         "assets/poses/bingo-cheer-0.png"
       ]
@@ -25,6 +28,9 @@
       ]
     },
     "chilli": {
+      "run": [
+        "assets/poses/chilli-run-0.png"
+      ],
       "cheer": [
         "assets/poses/chilli-cheer-0.png"
       ]
