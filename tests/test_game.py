@@ -1650,7 +1650,7 @@ PARTICLE_SOURCES = {
 # fixed number per (chapter, source) that a change to the artwork can move and
 # nothing else can.
 SEEN_PROBE = """
-({ chapter, frames, seed }) => {
+({ chapter, frames, seed, warm }) => {
     const g = window.game;
     document.getElementById('overlay').classList.add('hidden');
     const realRandom = Math.random;
@@ -1669,6 +1669,11 @@ SEEN_PROBE = """
         for (let n = 0; n < frames && g.particles.length; n++) {
             alive++;
             g.render();
+            // A warm-up pass draws every frame the measured pass will draw and
+            // reads no pixels back. What it is for is the *asking*: a sprite is
+            // requested at the moment it is first drawn, and nothing can arrive
+            // inside the synchronous block below.
+            if (warm) { g.step(1 / 60); continue; }
             const shown = g.ctx.getImageData(0, 0, w, h).data;
             const kept = g.particles;
             g.particles = [];
@@ -1687,7 +1692,7 @@ SEEN_PROBE = """
             if (peak > top) top = peak;
             g.step(1 / 60);
         }
-        out = { had, seen, top, alive };
+        out = warm ? { warmed: true } : { had, seen, top, alive };
     } finally {
         // Put the page's own randomness back before anything else: a seeded
         // Math.random left installed makes every later test on this page a
@@ -1707,6 +1712,13 @@ SEEN_PROBE = """
 
 SEED = 20260814  # any fixed value; see the sweep below the test
 
+# Nothing still on its way. `pending` empties whether the image arrived or gave
+# up, which is what this needs: the question is not "did it load" but "has the
+# picture stopped changing", and a sprite that failed is as settled as one that
+# decoded — the fallback dog it falls back to is drawn from then on.
+ART_SETTLED = ("() => window.__art().pending.length === 0 "
+               "&& window.__art().posePending.length === 0")
+
 
 def particles_seen(page, chapter, source, frames=40, seed=SEED):
     """How many pixels one source's burst is worth on one chapter, at its best
@@ -1714,10 +1726,22 @@ def particles_seen(page, chapter, source, frames=40, seed=SEED):
     channel difference anywhere in the picture.
 
     The same answer every time it is asked, for a given chapter, source and
-    seed: the burst's randomness is seeded inside the probe.
+    seed. Two things have to hold for that, and the second one is why the
+    measurement is run twice:
+
+    * the burst's randomness is seeded inside the probe, and
+    * the page has stopped fetching its artwork. A sprite is requested at the
+      moment it is first drawn and can only arrive between two evaluates, so
+      the first pass throws its pixels away and exists to ask for everything
+      the second pass will draw. Against a local server this changes nothing —
+      everything is already decoded. Against the deployed site it is the whole
+      difference: measured mid-load, `top` came back 69 rather than 71 and the
+      reproducibility test below failed a ship (#222).
     """
     js = (SEEN_PROBE.replace("/*MAKE*/", PARTICLE_SOURCES[source]["make"])
                     .replace("NO_BALLOON", json.dumps(NO_BALLOON)))
+    page.evaluate(js, {"chapter": chapter, "frames": frames, "seed": seed, "warm": True})
+    page.wait_for_function(ART_SETTLED, timeout=20000)
     return page.evaluate(js, {"chapter": chapter, "frames": frames, "seed": seed})
 
 
@@ -1814,27 +1838,31 @@ def test_the_visibility_probe_measures_the_same_burst_every_time(own_page):
 ART_IS_WORTH = 4
 
 
-def test_the_visibility_measurement_does_not_depend_on_the_artwork_arriving(own_page):
-    """The other half of #222, and the half that turned out to be wrong.
+def test_what_the_artwork_is_worth_to_the_visibility_measurement(own_page):
+    """The other half of #222: how much of the number is the page rather than
+    the burst.
 
     The failing measurement (114 pixels, against a bound of 120) was below the
-    whole observed range of that case — 12 samples of it ran 190 to 493 — so the
-    first explanation offered was the page rather than the dice: the probe
-    measures the burst as a *contrast* against the frame behind it, and nothing
-    in it required the sprites to have decoded. Pale dust over the pale sand of
-    a half-drawn Chapter 4 would clear the `d > 12` threshold far less often,
-    which would put a number out of band rather than at the edge of one.
+    whole observed range of that case — 12 samples of it ran 190 to 493 — and
+    the explanation offered was the page: the probe measures the burst as a
+    *contrast* against the frame behind it, and nothing in it required the
+    sprites to have decoded. Pale dust over the pale sand of a half-drawn
+    Chapter 4 would clear the `d > 12` threshold far less often.
 
-    It does not. This is that experiment, kept: the same seeded measurement on a
-    page holding all its artwork and on a page whose sprite requests are refused
-    outright. `seen` is identical, and `top` moves by 2/255. The dust falls at
-    the character's feet, over ground the fallback drawing does not cover, so
-    which dog is standing there is worth almost nothing to it.
+    Measured, that is only a quarter right, and this is the experiment kept:
+    the same seeded measurement on a page holding all its artwork and on a page
+    whose sprite requests are refused outright. `seen` — the number the
+    40-per-particle bound reads — is *identical*, so the 114 was the dice and
+    the seeding above is what answers it. `top` moves, by 2/255, and 2/255 is
+    enough to fail an exact-equality check: measured against the deployed site,
+    where the sprites arrive over a network rather than off the disk, that is
+    precisely what happened. Hence the warm-up pass in `particles_seen`.
 
-    Which leaves the seeding above as the whole of the fix, and is why there is
-    no wait-for-artwork in `particles_seen`: a warm-up pass per measurement
-    would buy 2/255 of a bound that has 30 to spare, on a suite already paying
-    28s for this file.
+    The bound this bakes in is a ceiling, not a target: it says the page state
+    can be worth 4/255 to the probe and no more. If the artwork ever starts
+    carrying the measurement — dust drawn over a character rather than the
+    ground — this is what says so, and the burst's visibility would then be a
+    claim about which dog is standing there.
     """
     own_page.wait_for_function(
         "() => window.__art().loaded.length >= 5 && window.__art().pending.length === 0",
@@ -1863,8 +1891,57 @@ def test_the_visibility_measurement_does_not_depend_on_the_artwork_arriving(own_
     assert abs(bare["top"] - loaded["top"]) <= ART_IS_WORTH, (
         f"the strongest pixel moved by {loaded['top']}/255 over the artwork and "
         f"{bare['top']}/255 without it — more than the {ART_IS_WORTH} this probe is "
-        "allowed to owe to page state; `particles_seen` now needs to wait for the "
-        "sprites before it measures anything")
+        "allowed to owe to page state, so what it reports about a burst is partly a "
+        "report about which dog had loaded")
+
+
+# A connection with a lot of distance in it and not much room: enough that the
+# sprites are still on their way when the engine says it is ready, which is the
+# state the deployed site was measured in and a local server never reaches.
+SLOW_LINK = {"offline": False, "latency": 800,
+             "downloadThroughput": 200_000, "uploadThroughput": 200_000}
+
+
+def test_the_visibility_probe_answers_the_same_on_a_page_still_loading(own_page):
+    """The failure this reproduces only ever happened over a network.
+
+    `test_..._same_burst_every_time` above failed against the deployed site
+    while passing locally forever: the first of its three measurements answered
+    `top` 69 and the other two 71. Locally the sprites are decoded off the disk
+    before the first test runs, so there is no such thing as a page mid-load and
+    nothing to catch. Here the link is slowed until there is one.
+
+    What is asserted is `particles_seen`'s promise, not the flake: asked for a
+    measurement on a page that is still fetching its artwork, it answers what
+    the settled page answers. Take its warm-up pass away and the two differ,
+    which is the mutation recorded against this test.
+    """
+    cdp = own_page.context.new_cdp_session(own_page)
+    cdp.send("Network.enable")
+    cdp.send("Network.emulateNetworkConditions", SLOW_LINK)
+    # ...and fetched, not remembered: this page has already loaded once, and a
+    # sprite served out of the browser's own cache never touches the slow link.
+    cdp.send("Network.setCacheDisabled", {"cacheDisabled": True})
+    own_page.reload(wait_until="domcontentloaded")
+    own_page.wait_for_function("window.__ready === true", timeout=60000)
+
+    art = own_page.evaluate("window.__art()")
+    assert art["pending"] or art["posePending"], (
+        "the page had already finished fetching its artwork by the time the engine "
+        f"was ready ({len(art['loaded'])} sprites, {len(art['poseFrames'])} pose "
+        "frames), so this test measured a settled page twice and proves nothing — "
+        "the link above is not slow enough to reach the state it is here for")
+    mid = particles_seen(own_page, 4, "the footfall dust")
+
+    own_page.wait_for_function(ART_SETTLED, timeout=60000)
+    js = (SEEN_PROBE.replace("/*MAKE*/", PARTICLE_SOURCES["the footfall dust"]["make"])
+                    .replace("NO_BALLOON", json.dumps(NO_BALLOON)))
+    settled = own_page.evaluate(js, {"chapter": 4, "frames": 40, "seed": SEED})
+    assert (mid["seen"], mid["top"]) == (settled["seen"], settled["top"]), (
+        f"asked on a page still fetching its sprites the probe said {mid}, and the "
+        f"same page once everything had arrived said {settled} — what it reports is "
+        "partly how much of the page was there when it was asked, which is a ship "
+        "failing on a burst nothing is wrong with (#222)")
 
 
 def test_every_particle_call_site_is_covered_by_a_visibility_case():

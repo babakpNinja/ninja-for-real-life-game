@@ -94,6 +94,10 @@ export function artState() {
     // render, not whether her run frame happens to have arrived too.
     posed: Object.keys(poses),
     poseFrames: [...poseArt.images.keys()],
+    // ...and the frames still on their way, for a caller that needs the picture
+    // to have stopped changing before it measures anything: a run frame that
+    // decodes between two renders swaps the character's drawing under them.
+    posePending: [...poseArt.pending],
     credits,
   };
 }
