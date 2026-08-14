@@ -2428,10 +2428,19 @@ def test_every_prop_stands_on_the_surface_its_chapter_paints(own_page):
         f"only {total} props over {dressed} — there is not enough scenery here for "
         "this to have tested anything")
     bare = sorted(c["id"] for c in chapters if not c["checked"])
-    assert bare == ["hammerbarn", "sleepytime"], (
-        f"{bare} ship no scenery at all — hammerbarn's horizon is a shop floor and "
-        "sleepytime's sky has no surface, but a chapter that has quietly lost its "
-        "trees is a regression, not a decision")
+    assert bare == ["sleepytime"], (
+        f"{bare} ship no scenery at all — sleepytime's dream sky has no surface to "
+        "stand anything on, but a chapter that has quietly lost its trees is a "
+        "regression, not a decision")
+    # hammerbarn was in that list until #213: it declared a horizon (the shop
+    # floor) and put nothing on it, so the aisle had a far layer of shelving,
+    # a player, and no middle distance at all. Its props are the reason the
+    # background now paints the floor its horizon names — the picture had no
+    # surface at that y, only the shelving standing in front of one.
+    shop = next(c for c in chapters if c["id"] == "hammerbarn")
+    assert shop["checked"] >= 6, (
+        f"hammerbarn is down to {shop['checked']} props — the chapter it was "
+        "before #213 is one with nothing between the shelving and the player")
     sleepy = next(c for c in chapters if c["id"] == "sleepytime")
     assert sleepy["horizon"] is None, (
         "sleepytime is a dream sky with no ground in it — declaring a horizon there "

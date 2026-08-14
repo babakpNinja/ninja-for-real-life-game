@@ -9,6 +9,7 @@
 
 import {
   drawTree, drawGumTree, drawHouse, drawCloud, drawBalloon,
+  drawPallets, drawTrolleys, drawStepLadder,
   drawToken, drawObstacle, roundRect, star,
 } from "./art.js";
 import { drawCharacter, footfall, stridePhase, BLEND } from "./sprites.js";
@@ -543,10 +544,18 @@ export class Game {
         ctx.fillRect(x, SEA_TOP + 20 + (i % 3) * 22, 60, 4);
       }
     } else if (ch.id === "hammerbarn") {
+      // The shop floor this chapter's horizon names (#213). Without it the
+      // aisles ended in mid-cream: the only surface in the picture was the
+      // shelving itself, so anything standing in the middle distance was
+      // standing on a line the background does not draw.
+      ctx.fillStyle = "#BDB5AA";
+      ctx.fillRect(-600, GROUND_Y, 7200, WORLD_H - GROUND_Y);
       for (let i = 0; i < 14; i++) {
         const x = i * 420;
         ctx.fillStyle = "#E4DED4";
-        roundRect(ctx, x, GROUND_Y - 240, 300, 240, 8);
+        // 10px of lit floor under the racking, the same gap the hills of
+        // chapters 1-2 leave above their ground line
+        roundRect(ctx, x, GROUND_Y - 240, 300, 230, 8);
         ctx.fill();
         ctx.fillStyle = "#CFC7BB";
         for (let r = 0; r < 3; r++) ctx.fillRect(x + 16, GROUND_Y - 210 + r * 66, 268, 12);
@@ -576,6 +585,9 @@ export class Game {
     for (const it of sceneryFor(ch)) {
       if (it.kind === "house") drawHouse(ctx, it.x, it.y, it.scale);
       else if (it.kind === "gum") drawGumTree(ctx, it.x, it.y, it.scale);
+      else if (it.kind === "pallets") drawPallets(ctx, it.x, it.y, it.scale);
+      else if (it.kind === "trolleys") drawTrolleys(ctx, it.x, it.y, it.scale);
+      else if (it.kind === "ladder") drawStepLadder(ctx, it.x, it.y, it.scale);
       else drawTree(ctx, it.x, it.y, it.scale, it.leaf, it.trunk);
     }
     ctx.restore();

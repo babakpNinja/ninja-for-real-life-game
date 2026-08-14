@@ -221,6 +221,101 @@ export function drawHouse(ctx, x, groundY, scale) {
   ctx.restore();
 }
 
+/*
+ * The middle distance of chapter 3 (#213). The far layer is a row of warehouse
+ * shelving; between it and the player there was nothing at all, so the aisle
+ * had no depth. These three stand on the shop floor at the chapter's horizon.
+ *
+ * All three are drawn upward from (x, groundY) and paint nothing below it —
+ * the foot *is* the ground line, which is what lets the placement test measure
+ * them against the surface the background paints.
+ */
+
+export function drawPallets(ctx, x, groundY, scale) {
+  ctx.save();
+  ctx.translate(x, groundY);
+  ctx.scale(scale, scale);
+  // three timber pallets, the top one carrying bags of potting mix
+  for (let i = 0; i < 3; i++) {
+    const y = -13 - i * 15;   // the bottom one sits *on* the floor, not 3px over it
+    ctx.fillStyle = i % 2 ? "#B0854F" : "#C89A63";
+    roundRect(ctx, -46, y, 92, 13, 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(0,0,0,0.14)";
+    for (let s = 0; s < 4; s++) ctx.fillRect(-40 + s * 24, y + 3, 5, 8);
+  }
+  ctx.fillStyle = "#7E9160";
+  roundRect(ctx, -40, -78, 44, 20, 6); ctx.fill();
+  roundRect(ctx, 2, -74, 40, 16, 6); ctx.fill();
+  ctx.fillStyle = "#6C7F51";
+  roundRect(ctx, -26, -94, 44, 20, 6); ctx.fill();
+  ctx.restore();
+}
+
+export function drawTrolleys(ctx, x, groundY, scale) {
+  ctx.save();
+  ctx.translate(x, groundY);
+  ctx.scale(scale, scale);
+  // a bay of nested trolleys, back to front so the near one sits on top
+  for (let i = 4; i >= 0; i--) {
+    const dx = -34 + i * 15;
+    ctx.strokeStyle = i ? "#B6BEC6" : "#9AA6B0";
+    ctx.lineWidth = 3;
+    ctx.beginPath();                       // the basket, tipped back
+    ctx.moveTo(dx - 20, -74);
+    ctx.lineTo(dx + 22, -74);
+    ctx.lineTo(dx + 16, -34);
+    ctx.lineTo(dx - 12, -34);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.beginPath();                       // the mesh, two bars of it
+    ctx.moveTo(dx - 17, -61); ctx.lineTo(dx + 20, -61);
+    ctx.moveTo(dx - 14, -48); ctx.lineTo(dx + 18, -48);
+    ctx.stroke();
+    ctx.beginPath();                       // the frame down to the wheels
+    ctx.moveTo(dx - 11, -34); ctx.lineTo(dx - 8, -8);
+    ctx.moveTo(dx + 15, -34); ctx.lineTo(dx + 12, -8);
+    ctx.stroke();
+    ctx.fillStyle = "#5C6670";
+    ellipse(ctx, dx - 8, -5, 5, 5, "#5C6670");
+    ellipse(ctx, dx + 12, -5, 5, 5, "#5C6670");
+    ctx.strokeStyle = "#C1543E";           // the handle
+    ctx.beginPath();
+    ctx.moveTo(dx - 22, -78); ctx.lineTo(dx - 6, -78);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+export function drawStepLadder(ctx, x, groundY, scale) {
+  ctx.save();
+  ctx.translate(x, groundY);
+  ctx.scale(scale, scale);
+  ctx.strokeStyle = "#E08A3C";
+  ctx.lineWidth = 6;
+  ctx.lineCap = "round";
+  ctx.beginPath();                         // the A of it
+  ctx.moveTo(-26, -2); ctx.lineTo(-7, -108);
+  ctx.moveTo(26, -2); ctx.lineTo(9, -108);
+  ctx.stroke();
+  ctx.strokeStyle = "#C9762F";
+  ctx.lineWidth = 5;
+  ctx.beginPath();                         // the spreader bar, down on the floor
+  ctx.moveTo(-24, -2); ctx.lineTo(24, -2);
+  ctx.stroke();
+  ctx.lineWidth = 4;
+  for (let i = 0; i < 4; i++) {            // the steps, narrowing upward
+    const y = -26 - i * 22, w = 21 - i * 3.4;
+    ctx.beginPath();
+    ctx.moveTo(-w, y); ctx.lineTo(w, y);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#D9D2C8";               // the paint shelf on top
+  roundRect(ctx, -14, -118, 28, 9, 3);
+  ctx.fill();
+  ctx.restore();
+}
+
 export function drawCloud(ctx, x, y, scale, alpha = 0.9) {
   ctx.save();
   ctx.globalAlpha = alpha;

@@ -305,7 +305,8 @@ export const CHAPTERS = [
 ];
 
 /**
- * The standing scenery of the mid parallax layer: trees, and the house.
+ * The standing scenery of the mid parallax layer: trees, the house, and the
+ * pallets, trolleys and stepladders of the hardware shop.
  *
  * Every item stands on `ch.horizon`, and a chapter whose background has no
  * surface (`horizon: null`) has none. That is the whole rule, and it is here
@@ -333,6 +334,14 @@ export function sceneryFor(ch) {
     for (let i = 0; i < 16; i++) {
       out.push({ kind: "tree", x: 200 + i * 340, y, scale: 0.9 + (i % 3) * 0.2,
                  leaf: "#6FAF63", trunk: "#8B6A4F" });
+    }
+  } else if (ch.id === "hammerbarn") {
+    // The aisle's middle distance (#213): shelving in the far layer, the player
+    // in the front one, and nothing in between. Sparse on purpose — this is
+    // depth, not clutter — and cycled so no two neighbours are the same thing.
+    const kinds = ["pallets", "trolleys", "pallets", "ladder"];
+    for (let i = 0; i < 9; i++) {
+      out.push({ kind: kinds[i % kinds.length], x: 320 + i * 430, y, scale: 1.05 });
     }
   } else if (ch.id === "beach") {
     // smaller than they were: they now stand at the shoreline, which is further
