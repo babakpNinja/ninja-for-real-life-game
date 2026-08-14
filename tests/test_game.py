@@ -22,10 +22,13 @@ import contextlib
 import json
 import math
 import re
+import subprocess
+import sys
 import urllib.request
 from pathlib import Path
 
 import pytest
+from conftest import DESKTOP        # the viewport `own_page` opens too, authored there
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 APP = Path(__file__).resolve().parent.parent
@@ -36,7 +39,6 @@ APP = Path(__file__).resolve().parent.parent
 GAME_NAME = re.search(r'^GAME_NAME = "(.*)"$',
                       (APP / "scripts" / "fetch_assets.py").read_text(), re.M).group(1)
 
-DESKTOP = {"width": 1280, "height": 800}
 IPHONE = {"width": 390, "height": 844}
 PIXEL = {"width": 412, "height": 915}
 
@@ -64,20 +66,14 @@ def phone(request, make_page):
     return make_page(request.param, touch=True)
 
 
-@pytest.fixture
-def own_page(make_page):
-    """A page of this test's own, for the tests that must not inherit a screen.
-
-    Everything else here shares ``desktop`` on purpose. Two things cannot: a page
-    whose artwork is blocked (the route would break every test after it) and
-    anything asserting a sprite has *not* been drawn yet, since by the end of the
-    file the gallery has drawn all twenty-five.
-    """
-    return make_page(DESKTOP)
-
-
 def play_chapter(page, index):
-    """Start a chapter and fast-forward the physics until it completes."""
+    """Start a chapter and fast-forward the physics until it completes.
+
+    Ends with `stop()`: crossing the finish line leaves the results screen
+    painting for as long as the page is open, and these run on the shared pages
+    (#182). The physics here is stepped by hand, so nothing is lost by putting
+    the render loop down — the completion event has already been captured.
+    """
     page.evaluate(
         """(i) => {
             window.__result = null;
@@ -99,6 +95,7 @@ def play_chapter(page, index):
                 if (n % 26 === 12) g.release();
                 g.step(1 / 120);
             }
+            g.stop();
         }"""
     )
     return page.evaluate("window.__result")
@@ -285,7 +282,13 @@ def test_the_stats_screen_opens(desktop):
 
 
 # --- desktop: playing -------------------------------------------------------
+# These four are one chapter played across four tests, which is what a shared
+# page is for: the click that starts it, a jump, a score that climbs with real
+# time, and the pause button. Each hands the running game to the next, so each
+# declares it (#182) — and the last one puts the loop down.
 
+@pytest.mark.leaves_a_game_running(reason="test_tapping_the_canvas_makes_the_player_jump "
+                                          "jumps the player this starts")
 def test_the_story_card_leads_into_chapter_one(desktop):
     desktop.click("#btn-play")
     desktop.wait_for_selector("#btn-go")
@@ -296,6 +299,8 @@ def test_the_story_card_leads_into_chapter_one(desktop):
     assert desktop.evaluate("window.game.mode") == "playing"
 
 
+@pytest.mark.leaves_a_game_running(reason="test_the_score_climbs_while_the_level_runs "
+                                          "needs the same chapter still running")
 def test_tapping_the_canvas_makes_the_player_jump(desktop):
     before = desktop.evaluate("window.game.player.y")
     desktop.mouse.click(640, 500)
@@ -304,6 +309,8 @@ def test_tapping_the_canvas_makes_the_player_jump(desktop):
     assert after < before, f"{before} -> {after}"
 
 
+@pytest.mark.leaves_a_game_running(reason="test_pause_and_resume pauses the chapter "
+                                          "this one watched score")
 def test_the_score_climbs_while_the_level_runs(desktop):
     desktop.wait_for_timeout(1500)
     assert desktop.evaluate("window.game.score") > 0
@@ -316,6 +323,9 @@ def test_pause_and_resume(desktop):
     desktop.click("#btn-resume")
     desktop.wait_for_timeout(200)
     assert desktop.evaluate("window.game.paused") is False
+    # end of the chain: nothing after this plays the chapter the story card
+    # started, so it is put down rather than left painting (#182)
+    desktop.evaluate("() => window.game.stop()")
 
 
 @pytest.mark.parametrize("index", range(5))
@@ -1098,7 +1108,9 @@ def test_running_kicks_up_dust_under_the_feet(own_page):
                 for (const q of g.particles) if (!known.has(q)) { known.add(q); fresh++; }
                 if (fresh) bursts++;
             }
-            return { bursts, from, to: g.t, stride: STRIDE, state: g.player.state };
+            const out = { bursts, from, to: g.t, stride: STRIDE, state: g.player.state };
+            g.stop();   // `start()` left the loop painting this chapter (#182)
+            return out;
         }"""
     )
     assert r["state"] == "run", f"the player was not running: {r}"
@@ -1247,6 +1259,8 @@ SEEN_PROBE = """
         // prototype's. Left there they outlive `start()`, and the next chapter
         // measured on this page quietly makes no particles at all.
         delete g.puff; delete g.scuff; delete g.sparkle;
+        g.stop();     // `start()` began painting; five chapters of that is load
+                      // on every page after this one (#182)
     }
     return out;
 }
@@ -1592,6 +1606,7 @@ async ({ step }) => {
     out.push({ id: ch.id, length: ch.length, plats: plats.length, from, checked, bad,
                end: Math.max(...plats.map((s) => s.x + s.w)) });
   }
+  g.stop();   // nothing here draws, but `start()` set the loop painting (#182)
   return out;
 }
 """
@@ -1721,6 +1736,8 @@ async ({ dt, chapter, before, after, tail, hunt, hurl }) => {
   // the stubs are instance properties: they shadow the prototype and would
   // outlive this probe, `start()` included
   delete g.toast; delete g.scuff; delete g.puff; delete g.recoverySpot;
+  g.stop();   // `begin()` starts a chapter twice over, and each one starts the
+              // loop painting; left running it is load on every page after (#182)
   return {
     moved: frameToFrame(eased), snapped: frameToFrame(snap),
     apart: eased.shots.map((s, i) => ink(s, snap.shots[i])),
@@ -1842,6 +1859,8 @@ def test_the_menu_fits_without_scrolling(phone):
     assert phone.locator("#rotate-hint").is_visible()
 
 
+@pytest.mark.leaves_a_game_running(reason="test_a_tap_jumps_on_touch taps the player "
+                                          "this starts, and stops it afterwards")
 def test_it_plays_on_touch(phone):
     phone.click("#btn-play")
     phone.wait_for_selector("#btn-go")
@@ -1849,6 +1868,47 @@ def test_it_plays_on_touch(phone):
     phone.wait_for_timeout(400)
     assert phone.evaluate("window.game.mode") == "playing"
     assert phone.evaluate("window.game && !!document.querySelector('canvas')")
+
+
+# Counted in the browser, over its own clock: a frame is a `requestAnimationFrame`
+# callback, which is the same thing the game gets to move on.
+FRAME_RATE = """
+() => new Promise((done) => {
+  let n = 0;
+  const t0 = performance.now();
+  const tick = () => {
+    n++;
+    const ms = performance.now() - t0;
+    if (ms < 700) requestAnimationFrame(tick);
+    else done(Math.round((n * 1000) / ms));
+  };
+  requestAnimationFrame(tick);
+})
+"""
+PLAYABLE_FPS = 20
+
+
+@pytest.mark.leaves_a_game_running(reason="it measures the chapter test_it_plays_on_touch "
+                                          "started, and hands it on to the tap test")
+def test_the_phone_gets_enough_frames_to_be_played(phone):
+    """Above the tap test on purpose, because it is the same fault said plainly.
+
+    A page starved of frames fails as a jump that did not happen — the player's y
+    is unchanged and nothing in the message suggests the cause is elsewhere. That
+    is what #182 cost: five abandoned pages animating results screens took this
+    one to about three frames a second.
+
+    The floor is a playability floor, not a benchmark. This page is backgrounded
+    (the later tests took the foreground) and the browser throttles it on
+    purpose, and it still measures 44-63 here — so 20 is what a *starved* page
+    looks like, not what a busy machine does.
+    """
+    fps = phone.evaluate(FRAME_RATE)
+    assert fps >= PLAYABLE_FPS, (
+        f"{fps}fps on {phone.viewport_size['width']}px: this page is not getting "
+        f"frames. Something else in this run is probably still animating — an "
+        f"`own_page` that walked away from a running game loop is the one that has "
+        f"happened (#182).")
 
 
 def test_a_tap_jumps_on_touch(phone):
@@ -1874,6 +1934,8 @@ def test_a_tap_jumps_on_touch(phone):
         " paused: window.game.paused, hidden: document.hidden, "
         " x: Math.round(window.game.player.x), t: window.game.t.toFixed(2) })")
     assert after["y"] < before, f"tapped at y={before}, then {after}"
+    # last of the phone chain: nothing after this taps, so the loop stops here
+    phone.evaluate("() => window.game.stop()")
 
 
 def test_the_canvas_fills_the_viewport(phone):
@@ -1884,3 +1946,81 @@ def test_the_canvas_fills_the_viewport(phone):
 
 def test_no_console_errors_on_touch(phone):
     assert not phone.errors, str(phone.errors[:3])
+
+
+# --- the suite's own guard --------------------------------------------------
+# `own_page` fails a test that walks away from a running game loop (#182). That
+# is a claim about pytest's report, not about the game, so it is asked the only
+# way it can honestly be answered: run a test that leaks and read the verdict.
+
+DRILLS = Path(__file__).resolve().parent / "drills"
+
+
+def run_drill(base_url, name):
+    """Run one drill file in a pytest of its own and hand back what it printed."""
+    run = subprocess.run(
+        [sys.executable, "-m", "pytest", str(DRILLS / name), "-q", "--base-url", base_url],
+        cwd=APP, capture_output=True, text=True, timeout=300)
+    return run.returncode, run.stdout + run.stderr
+
+
+def test_a_leaked_game_loop_fails_the_test_that_left_it(base_url):
+    """The failure it is here to prevent lands somewhere else entirely: five
+    results screens animating on abandoned pages dropped the phone page to about
+    three frames a second, and what failed was a tap test two hundred lines away,
+    reporting a player who had not moved (#182).
+
+    A subprocess, because the guard is a *teardown*: it cannot fail the test it
+    is guarding from inside the same run. Its own browser too — this is the whole
+    machinery, conftest included, not a hand-assembled copy of it.
+    """
+    code, out = run_drill(base_url, "leaks_on_purpose.py")
+    assert code != 0, f"a leaked game loop was reported as a clean run:\n{out}"
+    # pytest calls a teardown failure an ERROR and still prints the test as
+    # passed, so the exit code above is the signal — and the line has to name
+    # both the test and the leak, or the reader is back to guessing
+    named = [ln for ln in out.splitlines() if "leaks_on_purpose.py::" in ln
+             and "left the game loop running" in ln]
+    assert named, f"nothing named the test that leaked:\n{out}"
+    assert "g.stop()" in out, f"the message does not say what to do about it:\n{out}"
+
+
+def test_a_probe_that_puts_the_loop_down_is_left_alone(base_url):
+    """The direction that decides whether the guard survives contact with people.
+
+    A leak check that also fires on the tests doing it right is noise, and noise
+    gets switched off — so the correct probe, one line different from the drill
+    above, has to come back green.
+    """
+    code, out = run_drill(base_url, "stops_the_game.py")
+    assert code == 0, f"stopping the loop was reported as a leak anyway:\n{out}"
+    assert "1 passed" in out, f"the drill did not run:\n{out}"
+
+
+def test_a_leak_on_a_shared_page_is_blamed_once_and_put_down(base_url):
+    """The case `own_page` cannot cover, and the one that actually happened.
+
+    `own_page` closes its page at teardown, so a loop left there dies with it.
+    `desktop` and the phones are opened once and used by every test after —
+    that is where a walked-away loop keeps painting for the rest of the session
+    (#182), and the autouse guard is what watches them.
+
+    Four claims in one run, because they only mean anything together: the leaker
+    is named; the test *after* it comes back clean, because the guard stops the
+    loop before failing rather than re-reporting it on everything downstream; a
+    declared handoff is not reported at all, which is what stops the marker being
+    a nuisance; and a declaration with no reason is refused, which is what stops
+    the marker being a way to wave leaks through.
+    """
+    code, out = run_drill(base_url, "leaks_on_a_shared_page.py")
+    assert code != 0, f"a game left running on a shared page passed:\n{out}"
+    blamed = [ln for ln in out.splitlines() if "left the game loop running" in ln]
+    assert len(blamed) == 1 and "walks_away_from_a_running_game" in blamed[0], (
+        f"the leak was not blamed on exactly the test that left it:\n{out}")
+    unexplained = [ln for ln in out.splitlines() if "with no reason" in ln]
+    assert len(unexplained) == 1 and "no_reason_is_refused" in unexplained[0], (
+        f"an exemption with no reason was accepted:\n{out}")
+    # a teardown failure is an ERROR and the test still prints as passed, so the
+    # count to read is the errors: the leaker and the empty exemption, and
+    # nothing for the test that declared its handoff or the one that followed
+    assert "4 passed, 2 errors" in out, f"the blame did not land where it should:\n{out}"
