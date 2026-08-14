@@ -1640,14 +1640,26 @@ PARTICLE_SOURCES = {
 # window used to be 8 frames, which is the burst still inside the character that
 # made it: it read a secret's sparkle at a third of its real worth, and a run
 # that lifts the body over the burst was enough to fail it.
+#
+# ...and measured on a burst that is the same burst every time. Every particle
+# is built from `Math.random`: `r: 3 + Math.random() * 4` is a disc of 28 to 154
+# pixels, so three unlucky rolls are a fifth of the picture three lucky ones
+# would change. Unseeded, this number was a lottery — 60 samples of one case ran
+# 149 to 486 — and it failed a ship at 114 (#222). The randomness is replaced
+# for the length of the probe and put back afterwards, which makes `seen` a
+# fixed number per (chapter, source) that a change to the artwork can move and
+# nothing else can.
 SEEN_PROBE = """
-({ chapter, frames }) => {
+({ chapter, frames, seed }) => {
     const g = window.game;
     document.getElementById('overlay').classList.add('hidden');
-    g.start(chapter);
-    const make = () => { /*MAKE*/ };
+    const realRandom = Math.random;
+    let s = seed >>> 0;
+    Math.random = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
     let out;
     try {
+        g.start(chapter);
+        const make = () => { /*MAKE*/ };
         const why = make();
         if (why) return { skipped: why };
         const had = g.particles.length;
@@ -1677,6 +1689,10 @@ SEEN_PROBE = """
         }
         out = { had, seen, top, alive };
     } finally {
+        // Put the page's own randomness back before anything else: a seeded
+        // Math.random left installed makes every later test on this page a
+        // replay of this one.
+        Math.random = realRandom;
         // The stubs above are the *instance's* own properties, shadowing the
         // prototype's. Left there they outlive `start()`, and the next chapter
         // measured on this page quietly makes no particles at all.
@@ -1689,13 +1705,20 @@ SEEN_PROBE = """
 """
 
 
-def particles_seen(page, chapter, source, frames=40):
+SEED = 20260814  # any fixed value; see the sweep below the test
+
+
+def particles_seen(page, chapter, source, frames=40, seed=SEED):
     """How many pixels one source's burst is worth on one chapter, at its best
     frame: `seen` pixels changed by more than a nudge, `top` the strongest
-    channel difference anywhere in the picture."""
+    channel difference anywhere in the picture.
+
+    The same answer every time it is asked, for a given chapter, source and
+    seed: the burst's randomness is seeded inside the probe.
+    """
     js = (SEEN_PROBE.replace("/*MAKE*/", PARTICLE_SOURCES[source]["make"])
                     .replace("NO_BALLOON", json.dumps(NO_BALLOON)))
-    return page.evaluate(js, {"chapter": chapter, "frames": frames})
+    return page.evaluate(js, {"chapter": chapter, "frames": frames, "seed": seed})
 
 
 @pytest.mark.parametrize("source", list(PARTICLE_SOURCES))
@@ -1722,19 +1745,126 @@ def test_every_particle_source_can_actually_be_seen(own_page, source):
         "probe, not an invisible burst")
     assert seen, f"{source} never fired on any chapter: {skipped}"
     for chapter, r in sorted(seen.items()):
-        # Measured over all five chapters and the full life of each burst, a
-        # particle is worth 89 pixels (the smallest: dust on Chapter 1's pale
-        # path) to 212 (a takeoff puff on Chapter 5). 40 sits well under every
-        # one of them, and is the same bound the single-chapter dust test this
-        # grew out of used.
+        # Measured over all five chapters and the full life of each burst, at
+        # the seed above, a particle is worth 70 pixels (the smallest: footfall
+        # dust on Chapter 5's sand) to 232 (a landing puff, same chapter). 40
+        # sits well under every one of them, and is the same bound the
+        # single-chapter dust test this grew out of used.
+        #
+        # The seed is not a lucky one. Sweeping twelve seeds over all 30
+        # chapter/source pairs, the worst any of them produced was 58 pixels a
+        # particle, and for the footfall dust — the tightest case, and the one
+        # that failed a ship — this seed is the *worst* of the twelve on three
+        # chapters of five.
         assert r["seen"] >= 40 * r["had"], (
             f"{source}: {r['had']} particles changed only {r['seen']} pixels on chapter "
             f"{chapter} over {r['alive']} frames — drawn, and not visible against that "
             f"background. Skipped elsewhere: {skipped}")
-        # and its strongest pixel by 51/255 at worst (a landing puff on Chapter 3)
+        # and its strongest pixel by 65/255 at worst (dust on Chapter 5's sand)
         assert r["top"] >= 35, (
             f"{source}: the strongest pixel it changed on chapter {chapter} moved by "
             f"{r['top']}/255 — too faint to read as anything")
+
+
+def test_the_visibility_probe_measures_the_same_burst_every_time(own_page):
+    """The bound above is only a gate if the number under it is reproducible.
+
+    It was not. Every particle's velocity and radius is a `Math.random`, and
+    `r: 3 + Math.random() * 4` is a disc of 28 to 154 pixels — so three unlucky
+    rolls in a row measure a fifth of what three lucky ones do. Sixty samples of
+    one case (the footfall dust on Chapter 5) ran 149 to 486 pixels against a
+    bound of 120, and on 2026-08-14 one of them came in at 114 and failed a
+    ship for a burst nothing was wrong with (#222).
+
+    So: same chapter, same source, same seed, same answer — three times, because
+    two unseeded runs can coincide and three barely ever do. A different seed is
+    asked for as well, since a probe that ignored the seed entirely would pass
+    the first half of this and mean nothing.
+
+    And the page's own randomness has to come back afterwards. A seeded
+    generator left installed would make every later test on this page a replay
+    of this one — and, worse, would keep this test passing while doing it. It is
+    detectable because the seeded stream restarts at the same place on every
+    probe: ask the page for a number after two identical runs and get the same
+    one twice.
+    """
+    runs, after = [], []
+    for _ in range(3):
+        runs.append(particles_seen(own_page, 4, "the footfall dust"))
+        after.append(own_page.evaluate("() => Math.random()"))
+    got = [(r["seen"], r["top"], r["had"], r["alive"]) for r in runs]
+    assert len(set(got)) == 1, (
+        f"the same measurement, asked for three times, answered {got} — the burst "
+        "is still random, so the bound it feeds is a lottery, not a gate")
+    assert len(set(after)) == 3, (
+        f"the page answered Math.random() with {after} after three identical probe "
+        "runs — the probe's seeded generator is still installed, and every test "
+        "after this one on this page is replaying its dice")
+
+    other = particles_seen(own_page, 4, "the footfall dust", seed=1234)
+    assert (other["seen"], other["top"]) != got[0][:2], (
+        f"seed 1234 measured exactly what seed {SEED} did ({got[0][:2]}) — the "
+        "probe is not reading the seed at all, and its determinism is luck")
+
+
+# What the artwork is worth to the measurement, measured: the strongest pixel
+# the burst changes moved by 2/255 between a page with its sprites and a page
+# without them, and the pixel *count* did not move at all. 4 is that difference
+# with room, and still 30 clear of the `top >= 35` bound the probe feeds.
+ART_IS_WORTH = 4
+
+
+def test_the_visibility_measurement_does_not_depend_on_the_artwork_arriving(own_page):
+    """The other half of #222, and the half that turned out to be wrong.
+
+    The failing measurement (114 pixels, against a bound of 120) was below the
+    whole observed range of that case — 12 samples of it ran 190 to 493 — so the
+    first explanation offered was the page rather than the dice: the probe
+    measures the burst as a *contrast* against the frame behind it, and nothing
+    in it required the sprites to have decoded. Pale dust over the pale sand of
+    a half-drawn Chapter 4 would clear the `d > 12` threshold far less often,
+    which would put a number out of band rather than at the edge of one.
+
+    It does not. This is that experiment, kept: the same seeded measurement on a
+    page holding all its artwork and on a page whose sprite requests are refused
+    outright. `seen` is identical, and `top` moves by 2/255. The dust falls at
+    the character's feet, over ground the fallback drawing does not cover, so
+    which dog is standing there is worth almost nothing to it.
+
+    Which leaves the seeding above as the whole of the fix, and is why there is
+    no wait-for-artwork in `particles_seen`: a warm-up pass per measurement
+    would buy 2/255 of a bound that has 30 to spare, on a suite already paying
+    28s for this file.
+    """
+    own_page.wait_for_function(
+        "() => window.__art().loaded.length >= 5 && window.__art().pending.length === 0",
+        timeout=30000)
+    loaded = particles_seen(own_page, 4, "the footfall dust")
+
+    # ...and the same page again with the pictures refused. Reloaded, because the
+    # sprites are asked for during boot: a route installed after that blocks
+    # nothing, and this test would then compare a loaded page with itself.
+    own_page.route("**/assets/characters/*", lambda route: route.abort())
+    own_page.reload(wait_until="domcontentloaded")
+    own_page.wait_for_function("window.__ready === true", timeout=20000)
+    own_page.wait_for_function("() => window.__art().failed.length >= 5", timeout=30000)
+    art = own_page.evaluate("window.__art()")
+    assert not art["loaded"], (
+        f"the second measurement was supposed to be on a page with no artwork, and "
+        f"{len(art['loaded'])} sprites decoded on it anyway ({art['loaded'][:5]}) — "
+        "this test compared a loaded page with a loaded page")
+    bare = particles_seen(own_page, 4, "the footfall dust")
+
+    assert bare["seen"] == loaded["seen"], (
+        f"the same seeded burst was worth {loaded['seen']} pixels over the artwork and "
+        f"{bare['seen']} over the fallback dogs — the measurement the bound reads is a "
+        "measurement of how much of the page had loaded, and a slow machine can fail a "
+        "ship for a burst nothing is wrong with (#222)")
+    assert abs(bare["top"] - loaded["top"]) <= ART_IS_WORTH, (
+        f"the strongest pixel moved by {loaded['top']}/255 over the artwork and "
+        f"{bare['top']}/255 without it — more than the {ART_IS_WORTH} this probe is "
+        "allowed to owe to page state; `particles_seen` now needs to wait for the "
+        "sprites before it measures anything")
 
 
 def test_every_particle_call_site_is_covered_by_a_visibility_case():
