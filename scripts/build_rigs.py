@@ -77,7 +77,7 @@ OVERRIDES: dict[str, dict] = {
     "bingo": {"neck": 0.57, "hip": 0.78},
     "bandit": {"neck": 0.52, "hip": 0.78},
     "chilli": {"neck": 0.53, "hip": 0.77},
-    "muffin": {"neck": 0.50, "hip": 0.78},
+    "muffin": {"neck": 0.55, "hip": 0.80},
     "lucky": {"neck": 0.42, "hip": 0.75},
     "nana_chris": {"neck": 0.44, "hip": 0.79},
     # Chattermax is a toy owl: no neck, and two little feet right at the bottom.
@@ -148,13 +148,17 @@ PARTS: dict[str, dict] = {
         "eyes": [[0.19, 0.20, 0.29, 0.30], [0.32, 0.20, 0.58, 0.41]],
         "lid": [0.62, 0.30, 0.68, 0.38],
     },
+    # Re-measured off File:Muffin.png, which replaced the waving infobox render
+    # as her base in #220. She faces three-quarters left in it, so her far eye
+    # is the small one and her tail lies out to her right — behind her own hind
+    # paw, so still not boxable as a part.
     "muffin": {
         "ears": [
-            {"box": [0.29, 0.0, 0.53, 0.20], "pivot": [0.41, 0.20]},
-            {"box": [0.55, 0.0, 0.81, 0.20], "pivot": [0.68, 0.20]},
+            {"box": [0.03, 0.0, 0.306, 0.169], "pivot": [0.166, 0.169]},
+            {"box": [0.306, 0.0, 0.545, 0.169], "pivot": [0.44, 0.169]},
         ],
-        "eyes": [[0.40, 0.29, 0.62, 0.48], [0.635, 0.29, 0.78, 0.43]],
-        "lid": [0.28, 0.32, 0.34, 0.40],
+        "eyes": [[0.056, 0.266, 0.214, 0.402], [0.263, 0.264, 0.497, 0.498]],
+        "lid": [0.23, 0.25, 0.262, 0.282],
     },
     # Lucky's ears hang: they pivot at the top, not at the base, and his tail
     # sweeps out to his left.

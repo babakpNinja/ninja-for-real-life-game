@@ -85,9 +85,18 @@ FALLBACKS = {
 # The page's own infobox image is usually a clean transparent render, but not
 # always: Trixie's was an opaque screenshot and Chattermax has no page of his
 # own (he is listed under "Toys"). Name the file directly in those cases.
+#
+# Muffin is here for a third reason. Her infobox render (File:Muffin 1.png) has
+# one arm up and her mouth open, and the rig animates the base render, so she
+# ran, jumped and floated through the whole game waving and shouting — the
+# single biggest reason she read as a different kind of drawing from the four
+# heroes with their own run artwork (#220). File:Muffin.png is the same
+# character standing still with both paws down, which is what the rig wants;
+# the waving one is not thrown away, it becomes her cheer in POSES below.
 FILE_OVERRIDES = {
     "trixie": ("File:Aunt Trixie.png", "Trixie Heeler"),
     "chattermax": ("File:Bluey.tv - Chattermax Icon.png", "Chattermax"),
+    "muffin": ("File:Muffin.png", "Muffin Heeler"),
 }
 
 MAX_H = 512  # stored height; sprites are drawn ~1/4 of this on screen
@@ -163,6 +172,14 @@ POSES = {
         "cheer": ["Chilli-Dancing.png"],
     },
 }
+# Muffin is deliberately not here. Her old infobox render (File:Muffin 1.png,
+# one arm up, mouth open) is a real drawing of her celebrating and was fetched
+# as her cheer during #220 — at which point
+# `test_a_hero_is_the_same_kind_of_drawing_all_the_way_through` failed her:
+# cheer=pose, run=jump=float=rig. That is #215's defect exactly, a character
+# swapping between two drawing styles mid-play, and `cheer` falls back to `run`
+# rather than the other way round, so one cheer render cannot carry the rest.
+# One kind of drawing throughout beats one good state out of four.
 POSES_OUT = APP / "public" / "assets" / "poses"
 POSES_JSON = APP / "public" / "data" / "poses.json"
 SPRITES_JS = APP / "public" / "js" / "sprites.js"
@@ -217,11 +234,23 @@ RIG_OK = {
     # from this table is what keeps that true — `draws` follows the same chain
     # sprites.js does, so if the fallback were removed these five would come
     # back as undeclared gaps rather than quietly returning to the rig.
-    ("muffin", "run"): "Muffin has no action render at all: her 43 files are the "
-                       "standing render, unboxing screenshots and group shots",
-    ("muffin", "jump"): "as above — nothing of Muffin off the ground exists",
-    ("muffin", "float"): "as above — nothing for float to borrow",
-    ("muffin", "cheer"): "as above — the nearest is the standing render, waving",
+    # #220 searched for a Muffin action render properly — every file with her
+    # name (72), the file namespace (100 hits) and Muffin Heeler/Gallery (42
+    # images), reviewed as contact sheets. There is exactly one drawing of her
+    # in a stride, the Super Granny phone wallpaper, and she is in a cape and
+    # oversized glasses in it: borrowing it would put a costume on her the
+    # instant she started running and take it off again when she stopped. The
+    # only other dynamic Muffins are episode screenshots on opaque backgrounds.
+    # So run has no artwork, and jump/float have nothing to reach through
+    # POSE_FALLBACK. What the search did turn up is a better *base* render, and
+    # the rig animates the base: see FILE_OVERRIDES.
+    ("muffin", "run"): "the only Muffin in a stride on the whole wiki is the "
+                       "Super Granny wallpaper, in a cape and glasses (#220)",
+    ("muffin", "jump"): "as above — and jump falls back to run, which has none",
+    ("muffin", "float"): "as above — float falls back to jump, then to run",
+    ("muffin", "cheer"): "her celebrating render exists, but taking it would "
+                         "make her the rig in three states and a drawing in "
+                         "one — see the note under POSES",
 }
 
 # --- the licensing fact, authored once --------------------------------------

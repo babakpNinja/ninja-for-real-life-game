@@ -179,13 +179,13 @@
     "muffin": {
       "file": "assets/characters/muffin.png",
       "source": "https://bluey.fandom.com/wiki/Muffin_Heeler",
-      "image": "https://static.wikia.nocookie.net/blueypedia/images/7/7c/Muffin_1.png",
-      "retrieved": "2026-08-13",
-      "w": 414,
-      "h": 512,
-      "bytes": 106511,
-      "cutout": 0.443,
-      "shadow_px": 23974
+      "image": "https://static.wikia.nocookie.net/blueypedia/images/1/1d/Muffin.png",
+      "retrieved": "2026-08-14",
+      "w": 304,
+      "h": 425,
+      "bytes": 105224,
+      "cutout": 0.392,
+      "shadow_px": 119
     },
     "nana_chris": {
       "file": "assets/characters/nana_chris.png",
