@@ -18,6 +18,7 @@ place their state belongs.
 """
 
 import json
+import math
 import re
 import urllib.request
 from pathlib import Path
@@ -885,44 +886,115 @@ def test_a_pose_faces_the_way_it_is_travelling(desktop, cid, state):
         f"flipping made no difference to the picture — facing is ignored: {unmirrored}")
 
 
-def test_a_multi_frame_pose_advances_through_its_frames(desktop):
-    """Every set in poses.json is one frame today — the wiki has exactly one
-    running render per character — so the cycling code is unreached by the
-    shipped data, and would stay unreached until the day a second frame lands.
+def test_every_pose_state_ships_exactly_one_frame():
+    """The wiki holds one action render of each character, so each state is a
+    still. This reads the shipped poses.json rather than restating it: the day a
+    real two-frame set lands, this fails and the pair below has to be revisited
+    together — a cycle needs drawing code, and drawing code needs a test."""
+    bad = {f"{cid}.{state}": len(POSES[cid][state])
+          for cid, state in POSED if len(POSES[cid][state]) != 1}
+    assert not bad, (
+        f"a pose set is no longer a single still: {bad} — sprites.js draws frames[0] "
+        "and never advances, so every frame after the first would be dead data")
 
-    So it is driven here: the same character, the same moment, drawn once from
-    a one-frame set and once from a two-frame set. At a time whose frame index
-    is 1 the two must differ; at a time whose index is 0 they must be identical.
-    Same clock both times, so the motion is not what is being measured.
+
+def test_a_pose_never_advances_past_its_first_frame(desktop):
+    """The decision #169 asked for, pinned in the picture: poses do not cycle.
+
+    The same character at two moments a long way apart, given a two-frame set
+    whose second frame is a completely different drawing. If any cadence is
+    reintroduced, one of these samples lands on frame 1 and the drawing changes.
+    So this is checked against a one-frame set at the same instants — the motion
+    applied on top is identical, and only the artwork could differ.
     """
     one = ["assets/poses/bluey-run-0.png"]
     two = ["assets/poses/bluey-run-0.png", "assets/poses/bluey-cheer-0.png"]
-    fps = 12  # POSE_FPS in sprites.js; asserted below rather than trusted
-    second = 1.5 / fps  # frame index 1
-    first = 0.5 / fps   # frame index 0
 
-    on = pose_diff(desktop,
-                   {"id": "bluey", "state": "run", "t": second, "frames": {"run": one}},
-                   {"id": "bluey", "state": "run", "t": second, "frames": {"run": two}})
-    assert on["a"] == "pose" and on["b"] == "pose", on
-    assert on["changed"] > on["opaqueA"] * 0.2, (
-        f"the second frame of the set was never drawn: {on}")
-
-    off = pose_diff(desktop,
-                    {"id": "bluey", "state": "run", "t": first, "frames": {"run": one}},
-                    {"id": "bluey", "state": "run", "t": first, "frames": {"run": two}})
-    assert off["changed"] == 0, (
-        f"a two-frame set drew something else at frame index 0: {off}")
+    for t in (0.042, 0.125, 0.31, 0.5, 1.7):
+        r = pose_diff(desktop,
+                      {"id": "bluey", "state": "run", "t": t, "frames": {"run": one}},
+                      {"id": "bluey", "state": "run", "t": t, "frames": {"run": two}})
+        assert r["a"] == "pose" and r["b"] == "pose", r
+        assert r["opaqueA"] > 1000, f"nothing was drawn at t={t}: {r}"
+        assert r["changed"] == 0, (
+            f"at t={t} the second frame of the set was drawn: {r} — poses are stills, "
+            "one render per state; see poseFrame in sprites.js")
 
 
-def test_the_pose_cadence_in_the_test_matches_the_code():
-    """The test above names 12fps to pick its two moments. If sprites.js changes
-    its cadence, that test starts sampling the wrong frames and its failure
-    would read as a broken run cycle."""
-    src = (APP / "public" / "js" / "sprites.js").read_text()
-    assert re.search(r"^const POSE_FPS = 12;$", src, re.M), (
-        "POSE_FPS is no longer 12 — test_a_multi_frame_pose_advances_through_its_frames "
-        "picks its sample times from that number")
+# --- the footfalls: what makes a still read as a run ------------------------
+
+FOOTFALL = """
+async ({ steps }) => {
+  const s = await import('/js/sprites.js');
+  let t = 0, hits = 0;
+  for (const dt of steps) { if (s.footfall(t, t + dt)) hits++; t += dt; }
+  return { hits, stride: s.STRIDE, t };
+}
+"""
+
+
+@pytest.mark.parametrize("dt,ids", [(1 / 240, "240fps"), (1 / 60, "60fps"), (1 / 12, "12fps")],
+                         ids=["240fps", "60fps", "12fps"])
+def test_the_same_footfalls_are_reported_at_every_frame_rate(desktop, dt, ids):
+    """Contacts are a property of the clock, not of how often it is read. A
+    frame long enough to step over a whole contact must still report it, and a
+    very short one must not report the same contact twice — otherwise the dust
+    thins out on a fast machine and doubles up on a slow one."""
+    span = 2.0
+    r = desktop.evaluate(FOOTFALL, {"steps": [dt] * round(span / dt)})
+    # exactly, not about: one contact every half turn, and the count of half
+    # turns in the span the harness actually walked. A tolerance of one here
+    # would forgive a window that overlaps its neighbour, which is the way a
+    # frame-rate assumption gets in — it double-counts only the contacts that
+    # land in the overlap, so it is a few percent off and always looks fine.
+    want = math.floor(r["t"] * r["stride"] / math.pi)
+    assert r["hits"] == want, (
+        f"{r['hits']} footfalls in {r['t']:.3f}s at {ids}, expected {want}")
+
+
+def test_a_footfall_is_reported_once(desktop):
+    """The interval either contains a contact or it does not; asking twice about
+    the same stretch of time must not produce two puffs of dust."""
+    beat = math.pi / desktop.evaluate("async () => (await import('/js/sprites.js')).STRIDE")
+    # a hair either side of the first contact after zero
+    r = desktop.evaluate(FOOTFALL, {"steps": [beat * 0.99, beat * 0.02, beat * 0.5]})
+    assert r["hits"] == 1, f"the contact at {beat:.3f}s was counted {r['hits']} times"
+
+
+def test_running_kicks_up_dust_under_the_feet(own_page):
+    """Its own page: this drives the physics by hand and leaves the engine mid-
+    chapter, which the shared desktop page's later tests would inherit.
+
+    The player is pinned to the ground so the only thing that can make a
+    particle is a footfall — landing puffs are the other source and they need an
+    airborne frame.
+    """
+    r = own_page.evaluate(
+        """async () => {
+            const { STRIDE } = await import('/js/sprites.js');
+            const g = window.game;
+            document.getElementById('overlay').classList.add('hidden');
+            g.start(0);
+            g.particles.length = 0;
+            const from = g.t;
+            let bursts = 0;
+            const dt = 1 / 120;
+            for (let n = 0; n < 240; n++) {
+                g.player.onGround = true; g.player.vy = 0;
+                const before = g.particles.length;
+                g.step(dt);
+                if (g.particles.length > before) bursts++;
+            }
+            return { bursts, from, to: g.t, stride: STRIDE, state: g.player.state };
+        }"""
+    )
+    assert r["state"] == "run", f"the player was not running: {r}"
+    beat = math.pi / r["stride"]
+    want = math.floor(r["to"] / beat) - math.floor(r["from"] / beat)
+    assert r["bursts"] == want, (
+        f"{r['bursts']} dust puffs over {r['to'] - r['from']:.2f}s of running, expected "
+        f"{want} — one per footfall, and no step may claim a contact its neighbour "
+        "already reported")
 
 
 def test_no_console_errors_on_desktop(desktop):

@@ -63,9 +63,24 @@ Where the artist drew the action, that drawing is what you see.
 `public/data/poses.json` maps a character and a state — run, jump, cheer — to the
 side-on renders in `public/assets/poses/`, and `public/js/sprites.js` draws the
 whole frame, flipped to face the way it is travelling, with a bob, a squash and a
-lean about the feet on top. Nothing is cut up, so nothing can tear. Seven of these
-exist today, because the wiki has exactly one running render per character; the
-format takes a list per state, so a real multi-frame cycle is data, not code.
+lean about the feet on top. Nothing is cut up, so nothing can tear.
+
+**Each state is a still, and the motion is applied on top of it.** The wiki has
+exactly one action render of each character, so the seven that exist are seven
+single frames; the code draws `frames[0]` and never advances. It used to step
+through the list at 12fps, which could never happen with one frame in it — and if
+a second ever landed it would have been a strobe between two unrelated drawings
+(`Bluey-Running` is a three-quarter view facing right, `Bluey-Leaping` is front-on
+with the legs splayed), not a run cycle. `poses.json` still takes a list per state,
+so real cycle artwork is data; the code that walks it should be written against
+frames that actually cycle rather than kept warm in the hope of them.
+
+What sells the run instead is the cadence. `STRIDE` in `sprites.js` is the run
+clock in radians per second, shared by the pose motion and the rig so a character
+with artwork keeps time with one falling back to the cut-out. The game reads the
+same clock through `footfall()` — which asks whether the step just simulated
+crossed a foot contact, so it reports the same footfalls whatever the frame rate —
+and kicks up a little dust under the feet each time one lands.
 
 Everything else is one flat front-facing render animated as a cut-out rig.
 `public/data/rigs.json` names two lines across it — the neck and the hip — which

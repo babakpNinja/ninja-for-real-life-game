@@ -11,7 +11,7 @@ import {
   drawTree, drawGumTree, drawHouse, drawCloud, drawBalloon,
   drawToken, drawObstacle, roundRect, star,
 } from "./art.js";
-import { drawCharacter } from "./sprites.js";
+import { drawCharacter, footfall } from "./sprites.js";
 import { sound } from "./audio.js";
 import { CHAPTERS, buildLevel, starsFor, GROUND_Y, WORLD_W, WORLD_H } from "./chapters.js";
 
@@ -201,6 +201,12 @@ export class Game {
       ? (speed === 0 ? "idle" : "run")
       : (this.holding && p.vy > 0 ? "float" : "jump");
 
+    // Dust where the feet land. The run pose is a single drawing — the legs
+    // never move within it — so the footfalls are what stops it reading as a
+    // dog sliding along the ground. `footfall` answers from the same cadence
+    // the bob swings to, so the puffs land on the beat at any frame rate.
+    if (p.state === "run" && footfall(this.t - dt, this.t)) this.scuff(p.x, p.y, p.facing);
+
     // fell in the water / off the edge — a splash and a friendly lift back up
     if (p.y > WORLD_H + 40) {
       sound.splash();
@@ -332,6 +338,17 @@ export class Game {
       this.particles.push({
         x, y, vx: (Math.random() - 0.5) * 90, vy: -Math.random() * 60,
         life: 0.4, r: 4 + Math.random() * 5, color: "rgba(255,255,255,0.75)",
+      });
+    }
+  }
+
+  /** A kick of dust under one foot, thrown back the way the runner came. */
+  scuff(x, y, facing) {
+    for (let i = 0; i < 3; i++) {
+      this.particles.push({
+        x: x - facing * 6, y: y - 2,
+        vx: -facing * (40 + Math.random() * 70), vy: -20 - Math.random() * 45,
+        life: 0.3, r: 2 + Math.random() * 3, color: "rgba(255,255,255,0.55)",
       });
     }
   }

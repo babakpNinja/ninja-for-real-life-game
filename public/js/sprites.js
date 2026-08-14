@@ -187,7 +187,7 @@ export function preload(ids) {
  * without ever taking its legs apart.
  */
 function poseFor(state, t) {
-  const step = t * 11; // run cadence
+  const step = t * STRIDE;
   switch (state) {
     case "run": {
       const swing = Math.sin(step);
@@ -252,6 +252,28 @@ function poseFor(state, t) {
 /* ------------------------------------------------------------ pose frames -- */
 
 /**
+ * The run cadence, in radians per second: `|sin(t * STRIDE)|` is 0 the instant a
+ * foot is down and 1 at full stretch. Both the rig and the pose motion swing to
+ * it, so a character falling back to the rig keeps time with one that has
+ * artwork — and the game reads it too, through `footfall`, so the dust comes up
+ * where the feet land instead of on a rhythm of its own.
+ */
+export const STRIDE = 11;
+
+/**
+ * Did a foot come down between `prev` and `now`?
+ *
+ * Contacts are the zeroes of the swing above, one every half turn, so the
+ * question is whether `t * STRIDE` crossed a multiple of π in that interval —
+ * which is frame-rate independent: a long frame that steps over a whole contact
+ * still reports it, and a short one cannot report the same contact twice.
+ */
+export function footfall(prev, now) {
+  const beat = Math.PI / STRIDE;
+  return Math.floor(now / beat) > Math.floor(prev / beat);
+}
+
+/**
  * Motion applied to a *whole* pose render — no cutting, no rotating parts.
  *
  * The rig above exists because one standing render has to do everything. Where
@@ -266,7 +288,7 @@ function poseFor(state, t) {
 function frameMotion(state, t) {
   switch (state) {
     case "run": {
-      const stride = t * 11; // same cadence as the rig, so a fallback matches
+      const stride = t * STRIDE;
       const air = Math.abs(Math.sin(stride)); // 0 at contact, 1 at full stretch
       return {
         lift: air * 0.05,
@@ -298,17 +320,29 @@ function frameMotion(state, t) {
   }
 }
 
-/** How fast a multi-frame set cycles. One frame ignores this entirely. */
-const POSE_FPS = 12;
-
 /**
- * The frame to draw for `id` in `state`, or null if there is no pose artwork
- * for it or it has not arrived yet — in which case the caller uses the rig.
+ * The pose to draw for `id` in `state`, or null if there is no pose artwork for
+ * it or it has not arrived yet — in which case the caller uses the rig.
+ *
+ * One render per state, and it does not cycle. This used to step through the
+ * list at 12fps, which was cycling code that could never run: the wiki holds
+ * exactly one action render of each character (I listed all 462 files under
+ * their names to be sure), so every state ships a single frame and the modulo
+ * was always 0. Worse than dead — the two candidates for a second Bluey run
+ * frame are `Bluey-Running` (three-quarter view, facing right) and
+ * `Bluey-Leaping` (front-on, legs splayed); alternating those twelve times a
+ * second is a strobe between two different drawings, not a run cycle. A still
+ * that bobs and squashes to `STRIDE` reads better than that, and the dust at
+ * its feet does the rest.
+ *
+ * `poses.json` still stores a list, so real frames are data if a set ever
+ * exists — but the code that walks it will be written against artwork that
+ * actually cycles, not kept warm in the hope of it.
  */
-function poseFrame(id, state, t) {
+function poseFrame(id, state) {
   const frames = (poses[id] || {})[state];
   if (!frames || !frames.length) return null;
-  const path = frames[Math.floor(t * POSE_FPS) % frames.length];
+  const path = frames[0];
   const img = load(poseArt, path, path);
   return img && img.width ? img : null;
 }
@@ -482,7 +516,7 @@ export function drawCharacter(ctx, id, x, y, size, pal, t, state = "run", facing
 
   // the artist's own drawing of this pose, if there is one — preferred over
   // anything the rig can assemble out of a standing render
-  const frame = poseFrame(id, state, t);
+  const frame = poseFrame(id, state);
   if (frame) {
     const m = frameMotion(state, t);
     drawn.set(id, "pose");
