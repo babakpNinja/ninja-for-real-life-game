@@ -346,9 +346,12 @@ export class Game {
   scuff(x, y, facing) {
     for (let i = 0; i < 3; i++) {
       this.particles.push({
-        x: x - facing * 6, y: y - 2,
-        vx: -facing * (40 + Math.random() * 70), vy: -20 - Math.random() * 45,
-        life: 0.3, r: 2 + Math.random() * 3, color: "rgba(255,255,255,0.55)",
+        // warm and not white: the path under the runner is nearly white, and a
+        // white puff at a third of a second's alpha was invisible on it —
+        // present in `particles`, and present in nothing anyone could see
+        x: x - facing * 6, y: y - 3,
+        vx: -facing * (40 + Math.random() * 70), vy: -25 - Math.random() * 45,
+        life: 0.45, r: 3 + Math.random() * 4, color: "rgba(176,160,133,0.9)",
       });
     }
   }

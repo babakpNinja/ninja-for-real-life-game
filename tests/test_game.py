@@ -965,9 +965,11 @@ def test_running_kicks_up_dust_under_the_feet(own_page):
     """Its own page: this drives the physics by hand and leaves the engine mid-
     chapter, which the shared desktop page's later tests would inherit.
 
-    The player is pinned to the ground so the only thing that can make a
-    particle is a footfall — landing puffs are the other source and they need an
-    airborne frame.
+    Every other source of particles is taken away first, so a burst can only be
+    a footfall: the player is pinned to the ground (landing puffs need an
+    airborne frame), the collectibles, which sparkle when picked up, are emptied
+    out of the level, and the balloon — which sparkles eight when it is bopped —
+    is taken away.
     """
     r = own_page.evaluate(
         """async () => {
@@ -975,15 +977,23 @@ def test_running_kicks_up_dust_under_the_feet(own_page):
             const g = window.game;
             document.getElementById('overlay').classList.add('hidden');
             g.start(0);
+            g.level.tokens = [];
+            g.level.secret.taken = true;
+            g.balloon = null;
             g.particles.length = 0;
             const from = g.t;
             let bursts = 0;
             const dt = 1 / 120;
+            // count particles that are new, not a longer array: a burst landing
+            // on the step that sweeps up the last one leaves the length alone,
+            // so a shorter particle life would read here as a missing footfall
+            const known = new WeakSet();
             for (let n = 0; n < 240; n++) {
                 g.player.onGround = true; g.player.vy = 0;
-                const before = g.particles.length;
                 g.step(dt);
-                if (g.particles.length > before) bursts++;
+                let fresh = 0;
+                for (const q of g.particles) if (!known.has(q)) { known.add(q); fresh++; }
+                if (fresh) bursts++;
             }
             return { bursts, from, to: g.t, stride: STRIDE, state: g.player.state };
         }"""
@@ -995,6 +1005,49 @@ def test_running_kicks_up_dust_under_the_feet(own_page):
         f"{r['bursts']} dust puffs over {r['to'] - r['from']:.2f}s of running, expected "
         f"{want} — one per footfall, and no step may claim a contact its neighbour "
         "already reported")
+
+
+def test_the_dust_can_actually_be_seen(own_page):
+    """A particle in the array is not a particle on the screen. The first draft
+    of this was white at a third of a second's alpha, over a path that is nearly
+    white — three of them existed at the feet and the picture was identical.
+
+    So: draw the frame, throw the particles away, draw it again, and count what
+    changed. Both renders happen inside one synchronous block, so nothing moves
+    between them and the difference is the dust and only the dust.
+    """
+    r = own_page.evaluate(
+        """() => {
+            const g = window.game;
+            document.getElementById('overlay').classList.add('hidden');
+            g.start(0);
+            for (let n = 0; n < 600 && !g.particles.length; n++) {
+                g.player.onGround = true; g.player.vy = 0;
+                g.step(1 / 120);
+            }
+            const c = g.ctx.canvas, w = c.width, h = c.height;
+            g.render();
+            const dusty = g.ctx.getImageData(0, 0, w, h).data;
+            const had = g.particles.length;
+            g.particles = [];
+            g.render();
+            const clean = g.ctx.getImageData(0, 0, w, h).data;
+            let seen = 0;
+            for (let i = 0; i < dusty.length; i += 4) {
+                const d = Math.max(Math.abs(dusty[i] - clean[i]),
+                                   Math.abs(dusty[i + 1] - clean[i + 1]),
+                                   Math.abs(dusty[i + 2] - clean[i + 2]));
+                if (d > 12) seen++;
+            }
+            return { seen, had };
+        }"""
+    )
+    assert r["had"] > 0, f"no dust was made to look at: {r}"
+    # three puffs of a few pixels' radius; well under a hundred is dust that is
+    # technically drawn and cannot be seen
+    assert r["seen"] > 120, (
+        f"{r['had']} dust particles changed only {r['seen']} pixels — too faint "
+        "against the path to be worth drawing")
 
 
 def test_no_console_errors_on_desktop(desktop):
