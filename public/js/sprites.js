@@ -209,8 +209,7 @@ const BOUND = {
  * (poses.json) is the way to get a run cycle; the rig's job is to move a
  * character that has no pose art without ever taking its legs apart.
  */
-function poseFor(state, t) {
-  const step = t * STRIDE;
+function poseFor(state, t, step) {
   switch (state) {
     case "run": {
       const swing = Math.sin(step);
@@ -294,16 +293,49 @@ function poseFor(state, t) {
 export const STRIDE = 11;
 
 /**
- * Did a foot come down between `prev` and `now`?
+ * The speed the cadence above is right at, in px/s, and the radians of stride
+ * that buys per pixel travelled.
+ *
+ * `STRIDE` on its own is a *wall-clock* rhythm, and that is a footskate: the
+ * five chapters run at 220–292 px/s and a slowed player at 0.45 of that, so
+ * the ground moved past at anything from 99 to 292 px/s while the legs kept
+ * one fixed beat. A dog whose feet plant every 0.29s regardless of how far it
+ * got is skating, and no amount of squash on top reads as anything else —
+ * this, not the still frame, is the larger half of why running looked like
+ * sliding.
+ *
+ * So the phase is carried by *distance*: `stridePhase` below. 250 is the
+ * middle of the chapter speeds, which makes this a pure refactor at that
+ * speed — the look everyone signed off on is the look at 250 px/s.
+ */
+export const NOMINAL_SPEED = 250;
+
+/**
+ * The stride phase of something that has travelled `px` pixels on foot.
+ *
+ * Distance *on foot*, which is why the game accumulates it rather than passing
+ * `p.x`: a chapter crossed partly in the air covers ground that no step paid
+ * for, and counting it would put the feet back out of step with the floor.
+ */
+export function stridePhase(px) {
+  return (px * STRIDE) / NOMINAL_SPEED;
+}
+
+/**
+ * Did a foot come down between stride phase `prev` and `now`?
  *
  * Contacts are the zeroes of the swing above, one every half turn, so the
- * question is whether `t * STRIDE` crossed a multiple of π in that interval —
+ * question is whether the phase crossed a multiple of π in that interval —
  * which is frame-rate independent: a long frame that steps over a whole contact
  * still reports it, and a short one cannot report the same contact twice.
+ *
+ * Both arguments are *stride phase*, not seconds (`stridePhase(px)`), so the
+ * dust comes up every 71px of ground rather than every 0.29s. The two were the
+ * same thing while the cadence was a wall-clock rhythm; they are not once a
+ * slowed player takes 2.2 steps in the time an unslowed one takes 1.
  */
 export function footfall(prev, now) {
-  const beat = Math.PI / STRIDE;
-  return Math.floor(now / beat) > Math.floor(prev / beat);
+  return Math.floor(now / Math.PI) > Math.floor(prev / Math.PI);
 }
 
 /**
@@ -358,10 +390,9 @@ function blendAmount(blend, state) {
  * `tilt` rotates about the feet rather than the hip, which is what a whole
  * body does; the rig's `lean` rotates the torso against stationary legs.
  */
-function frameMotion(state, t) {
+function frameMotion(state, t, stride) {
   switch (state) {
     case "run": {
-      const stride = t * STRIDE;
       const air = Math.abs(Math.sin(stride)); // 0 at contact, 1 at full stretch
       return {
         lift: air * 0.05,
@@ -411,19 +442,28 @@ const POSE_FALLBACK = { float: "jump" };
  * it or it has not arrived yet — in which case the caller uses the rig.
  *
  * One render per state, and it does not cycle. This used to step through the
- * list at 12fps, which was cycling code that could never run: the wiki holds
- * exactly one action render of each character (I listed all 462 files under
- * their names to be sure), so every state ships a single frame and the modulo
- * was always 0. Worse than dead — the two candidates for a second Bluey run
- * frame are `Bluey-Running` (three-quarter view, facing right) and
- * `Bluey-Leaping` (front-on, legs splayed); alternating those twelve times a
- * second is a strobe between two different drawings, not a run cycle. A still
- * that bobs and squashes to `STRIDE` reads better than that, and the dust at
- * its feet does the rest.
+ * list at 12fps, which was cycling code that could never run: every state
+ * ships a single frame, so the modulo was always 0.
  *
- * `poses.json` still stores a list, so real frames are data if a set ever
- * exists — but the code that walks it will be written against artwork that
- * actually cycles, not kept warm in the hope of it.
+ * The frames do exist and they are not usable. Listing all 13,961 files on the
+ * wiki turns up 379 animated GIFs, two of which are the thing this wants —
+ * `BlueyRun.gif` (31 frames) and `BingoRun.gif` (42), each holding a real
+ * side-on run cycle a few frames long. Both are capture from the show, and the
+ * show frames a run as a close-up: keyed out and trimmed, Bluey's cycle is cut
+ * across the shins and Bingo's below the knee. A sprite whose feet are outside
+ * its own artwork cannot stand on the floor, and `drawPose` anchors on the
+ * bottom of the image, so the cut edge would *become* the contact point.
+ *
+ * The still ones are no better as a pair: the two candidates for a second Bluey
+ * run frame are `Bluey-Running` (three-quarter view, facing right) and
+ * `Bluey-Leaping` (front-on, legs splayed), and alternating those twelve times
+ * a second is a strobe between two drawings, not a run cycle.
+ *
+ * So the cycle here has to be made, not found — the render cut at the hip and
+ * swung, which is the rig's trick applied to a side-on drawing rather than a
+ * standing one. Until then a still that bobs and squashes to the stride reads
+ * better than any of the above, and the dust at its feet does the rest.
+ * `poses.json` still stores a list, so real frames stay data.
  *
  * Where a state has no artwork, POSE_FALLBACK may name one that is the same
  * drawing before the rig is reached; anything not there falls to the rig.
@@ -688,7 +728,11 @@ function crossfade(ctx, x, y, size, fade, before, after) {
  * leave it out and get exactly what they got before.
  */
 export function drawCharacter(ctx, id, x, y, size, pal, t, state = "run", facing = 1,
-                              blend = null) {
+                              blend = null, phase) {
+  // A caller that does not move gets the old wall-clock rhythm: the menu family,
+  // the gallery row and the cameo are cheering on the spot, and there is no
+  // distance for their cadence to come from.
+  const step = phase === undefined ? t * STRIDE : phase;
   const fade = blendAmount(blend, state);
   const from = fade < 1 ? blend.from : null;
   // Same artwork either side (or none either side) means one drawing covers the
@@ -698,10 +742,10 @@ export function drawCharacter(ctx, id, x, y, size, pal, t, state = "run", facing
   if (from && fade > 0.002 && fade < 0.998
       && poseFrame(id, from) !== poseFrame(id, state)) {
     return crossfade(ctx, x, y, size, fade,
-                     (c) => draw(c, id, x, y, size, pal, t, state, facing, from, fade, from),
-                     (c) => draw(c, id, x, y, size, pal, t, state, facing, from, fade));
+                     (c) => draw(c, id, x, y, size, pal, t, step, state, facing, from, fade, from),
+                     (c) => draw(c, id, x, y, size, pal, t, step, state, facing, from, fade));
   }
-  return draw(ctx, id, x, y, size, pal, t, state, facing, from, fade,
+  return draw(ctx, id, x, y, size, pal, t, step, state, facing, from, fade,
               fade <= 0.002 ? from : state);
 }
 
@@ -712,15 +756,15 @@ export function drawCharacter(ctx, id, x, y, size, pal, t, state = "run", facing
  * being entered, so the two drawings sit in the same place and the fade reads as
  * one character changing rather than two overlaid.
  */
-function draw(ctx, id, x, y, size, pal, t, state, facing, from, fade, art = state) {
+function draw(ctx, id, x, y, size, pal, t, step, state, facing, from, fade, art = state) {
   const airborne = state === "jump" || state === "float";
 
   // the artist's own drawing of this pose, if there is one — preferred over
   // anything the rig can assemble out of a standing render
   const frame = poseFrame(id, art);
   if (frame) {
-    const m = from ? mix(frameMotion(from, t), frameMotion(state, t), fade)
-                   : frameMotion(state, t);
+    const m = from ? mix(frameMotion(from, t, step), frameMotion(state, t, step), fade)
+                   : frameMotion(state, t, step);
     drawn.set(id, "pose");
     shadow(ctx, x, y, size, m.lift, airborne);
     ctx.save();
@@ -742,7 +786,8 @@ function draw(ctx, id, x, y, size, pal, t, state, facing, from, fade, art = stat
   }
   drawn.set(id, "rig");
 
-  const p = from ? mix(poseFor(from, t), poseFor(state, t), fade) : poseFor(state, t);
+  const p = from ? mix(poseFor(from, t, step), poseFor(state, t, step), fade)
+                 : poseFor(state, t, step);
 
   shadow(ctx, x, y, size, p.lift, airborne);
 

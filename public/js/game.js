@@ -11,7 +11,7 @@ import {
   drawTree, drawGumTree, drawHouse, drawCloud, drawBalloon,
   drawToken, drawObstacle, roundRect, star,
 } from "./art.js";
-import { drawCharacter, footfall, BLEND } from "./sprites.js";
+import { drawCharacter, footfall, stridePhase, BLEND } from "./sprites.js";
 import { sound } from "./audio.js";
 import { CHAPTERS, buildLevel, starsFor, GROUND_Y, WORLD_W, WORLD_H } from "./chapters.js";
 
@@ -103,6 +103,10 @@ export class Game {
       // the state being left, and when the change happened: the drawing crosses
       // from one to the other over BLEND rather than on a single frame
       was: "run", changedAt: this.t,
+      // Ground covered on foot, which is what the legs are paid for. Not p.x:
+      // a chapter is partly crossed in the air, and counting that distance
+      // would put the feet back out of step with the floor.
+      strode: 0,
     };
     this.camSlack = 0;
     this.balloon = ch.hasBalloon
@@ -177,8 +181,11 @@ export class Game {
       speed = dir === 0 ? 0 : ch.speed * dir * (p.slow > 0 ? 0.45 : 1);
       if (dir !== 0) p.facing = dir;
     }
+    const before = p.x;
     p.x += speed * dt;
     if (p.x < 40) p.x = 40;
+    const strodeBefore = p.strode;
+    if (p.onGround) p.strode += Math.abs(p.x - before);
 
     // jump
     if (this.jumpBuffer > 0 && (p.onGround || p.coyote > 0)) {
@@ -227,11 +234,14 @@ export class Game {
       p.state = state;
     }
 
-    // Dust where the feet land. The run pose is a single drawing — the legs
-    // never move within it — so the footfalls are what stops it reading as a
-    // dog sliding along the ground. `footfall` answers from the same cadence
-    // the bob swings to, so the puffs land on the beat at any frame rate.
-    if (p.state === "run" && footfall(this.t - dt, this.t)) this.scuff(p.x, p.y, p.facing);
+    // Dust where the feet land. `footfall` answers from the same cadence the
+    // legs and the bob swing to, so the puffs land on the beat at any frame
+    // rate — and, since that cadence is now distance, at any speed: a slowed
+    // player scuffs every 71px of beach, not every 0.29s.
+    if (p.state === "run"
+        && footfall(stridePhase(strodeBefore), stridePhase(p.strode))) {
+      this.scuff(p.x, p.y, p.facing);
+    }
 
     // fell in the water / off the edge — a splash and a friendly lift back up
     if (p.y > WORLD_H + 40) {
@@ -662,7 +672,8 @@ export class Game {
 
     const p = this.player;
     drawCharacter(ctx, ch.hero, p.x, p.y, 92, this.palette(ch.hero), this.t, p.state, p.facing,
-                  { from: p.was, k: (this.t - p.changedAt) / BLEND });
+                  { from: p.was, k: (this.t - p.changedAt) / BLEND },
+                  stridePhase(p.strode));
   }
 
   renderGoal(ctx, left, right) {

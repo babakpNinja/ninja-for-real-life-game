@@ -822,7 +822,7 @@ async ({ id, steps }) => {
       }
     }
     frames.push({ t, up: floor - bottom, tall: bottom - top, wide: right - left,
-                  contact: s.footfall(t - eps, t + eps) });
+                  contact: s.footfall((t - eps) * s.STRIDE, (t + eps) * s.STRIDE) });
   }
   if (heldPoses) art.poses[id] = heldPoses;
   return { frames, size, drawn: s.artState().drawn[id] };
@@ -1106,7 +1106,9 @@ FOOTFALL = """
 async ({ steps }) => {
   const s = await import('/js/sprites.js');
   let t = 0, hits = 0;
-  for (const dt of steps) { if (s.footfall(t, t + dt)) hits++; t += dt; }
+  // seconds in, phase out: `footfall` is asked about ground covered, and a
+  // caller standing still covers it at the nominal speed (see stridePhase).
+  for (const dt of steps) { if (s.footfall(t * s.STRIDE, (t + dt) * s.STRIDE)) hits++; t += dt; }
   return { hits, stride: s.STRIDE, t };
 }
 """
@@ -1115,7 +1117,8 @@ async ({ steps }) => {
 @pytest.mark.parametrize("dt,ids", [(1 / 240, "240fps"), (1 / 60, "60fps"), (1 / 12, "12fps")],
                          ids=["240fps", "60fps", "12fps"])
 def test_the_same_footfalls_are_reported_at_every_frame_rate(desktop, dt, ids):
-    """Contacts are a property of the clock, not of how often it is read. A
+    """Contacts are a property of the ground covered, not of how often it is
+    read — this probe covers it at a steady speed, so its phase is a clock. A
     frame long enough to step over a whole contact must still report it, and a
     very short one must not report the same contact twice — otherwise the dust
     thins out on a fast machine and doubles up on a slow one."""
@@ -1152,7 +1155,7 @@ def test_running_kicks_up_dust_under_the_feet(own_page):
     """
     r = own_page.evaluate(
         """async () => {
-            const { STRIDE } = await import('/js/sprites.js');
+            const { stridePhase } = await import('/js/sprites.js');
             const g = window.game;
             document.getElementById('overlay').classList.add('hidden');
             g.start(0);
@@ -1160,7 +1163,10 @@ def test_running_kicks_up_dust_under_the_feet(own_page):
             g.level.secret.taken = true;
             g.balloon = null;
             g.particles.length = 0;
-            const from = g.t;
+            // phase, not seconds: the cadence is paid for in ground covered on
+            // foot, so the count this test wants is a count of half turns of the
+            // stride, and the stride only turns while the player is moving.
+            const from = stridePhase(g.player.strode);
             let bursts = 0;
             const dt = 1 / 120;
             // count particles that are new, not a longer array: a burst landing
@@ -1174,18 +1180,70 @@ def test_running_kicks_up_dust_under_the_feet(own_page):
                 for (const q of g.particles) if (!known.has(q)) { known.add(q); fresh++; }
                 if (fresh) bursts++;
             }
-            const out = { bursts, from, to: g.t, stride: STRIDE, state: g.player.state };
+            const out = { bursts, from, to: stridePhase(g.player.strode),
+                          secs: g.t, state: g.player.state };
             g.stop();   // `start()` left the loop painting this chapter (#182)
             return out;
         }"""
     )
     assert r["state"] == "run", f"the player was not running: {r}"
-    beat = math.pi / r["stride"]
-    want = math.floor(r["to"] / beat) - math.floor(r["from"] / beat)
+    want = math.floor(r["to"] / math.pi) - math.floor(r["from"] / math.pi)
     assert r["bursts"] == want, (
-        f"{r['bursts']} dust puffs over {r['to'] - r['from']:.2f}s of running, expected "
-        f"{want} — one per footfall, and no step may claim a contact its neighbour "
-        "already reported")
+        f"{r['bursts']} dust puffs over {r['to'] - r['from']:.2f} rad of stride "
+        f"({r['secs']:.2f}s of running), expected {want} — one per footfall, and no "
+        "step may claim a contact its neighbour already reported")
+
+
+def test_the_cadence_is_paid_for_in_ground_not_in_seconds(own_page):
+    """A slowed player takes the same number of steps to cross the same ground.
+
+    This is the footskate: the chapters run at 220-292 px/s and a bumped player
+    keeps 45% of that, so one wall-clock rhythm has the feet paddling at up to
+    three times the speed of the floor under them. Driving the same *distance*
+    at two speeds is the reading that tells the two apart — a clock-driven
+    cadence spends far more steps on the slow lap, and it is only wrong by a
+    ratio, so a same-speed test sees nothing.
+    """
+    laps = own_page.evaluate(
+        """async ({ far }) => {
+            const { stridePhase } = await import('/js/sprites.js');
+            const g = window.game;
+            document.getElementById('overlay').classList.add('hidden');
+            const out = [];
+            for (const slowed of [false, true]) {
+                g.start(0);
+                g.level.tokens = [];
+                g.level.secret.taken = true;
+                g.balloon = null;
+                g.particles.length = 0;
+                const known = new WeakSet();
+                let bursts = 0, secs = 0;
+                const dt = 1 / 120;
+                while (g.player.strode < far) {
+                    g.player.onGround = true; g.player.vy = 0;
+                    if (slowed) g.player.slow = 1;   // topped up: it decays by dt
+                    g.step(dt);
+                    secs += dt;
+                    let fresh = 0;
+                    for (const q of g.particles) if (!known.has(q)) { known.add(q); fresh++; }
+                    if (fresh) bursts++;
+                }
+                out.push({ slowed, bursts, secs, phase: stridePhase(g.player.strode) });
+            }
+            g.stop();
+            return out;
+        }""",
+        {"far": 900},
+    )
+    fast, slow = laps
+    # the two laps must really have differed, or they are the same reading twice
+    assert slow["secs"] > fast["secs"] * 1.5, (
+        f"the slowed lap took {slow['secs']:.2f}s against {fast['secs']:.2f}s — the "
+        "slow was not applied, so this test is comparing a run with itself")
+    assert fast["bursts"] == slow["bursts"], (
+        f"{fast['bursts']} footfalls crossing 900px at speed against "
+        f"{slow['bursts']} crossing the same 900px slowed — the feet are keeping "
+        "time with the clock instead of with the floor")
 
 
 # A particle in the array is not a particle on the screen. The running dust was
