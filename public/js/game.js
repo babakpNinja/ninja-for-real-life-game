@@ -21,7 +21,7 @@ const FLOAT_GRAVITY = 0.34;   // gravity multiplier while the finger stays down
 const COYOTE = 0.14;          // grace period after walking off an edge
 const BUFFER = 0.18;          // tap slightly early and it still counts
 const RECOVERY_IN = 90;       // px in from the edge a splash lifts him onto
-const PLAYER_W = 46;
+export const PLAYER_W = 46;     // exported for the ground-ahead sweep in the suite
 const PLAYER_H = 74;
 const CAM_X = 300;
 // A respawn teleports the player to `recoverySpot`, and the camera follows the
@@ -104,7 +104,6 @@ export class Game {
       // from one to the other over BLEND rather than on a single frame
       was: "run", changedAt: this.t,
     };
-    this.lastSafe = { x: 120, y: GROUND_Y };
     this.camSlack = 0;
     this.balloon = ch.hasBalloon
       ? { x: 300, y: GROUND_Y - 300, vy: 0, vx: 0, hue: 0 }
@@ -208,7 +207,6 @@ export class Game {
         landed = true;
         if (!p.onGround) this.puff(p.x, p.y, 4);
         p.onGround = true;
-        this.lastSafe = { x: Math.max(s.x + 60, p.x - 40), y: s.y };
         break;
       }
     }
@@ -322,6 +320,15 @@ export class Game {
   // — a game left alone drowned at the first pit for as long as you watched it.
   // The landing spot is RECOVERY_IN past the edge he arrives on, or the middle
   // of a stone too small for that, so there is room to stand before the next one.
+  //
+  // There is always one: every chapter's ground runs several hundred px past its
+  // finish line and `step()` ends the chapter at `p.x >= ch.length`, so no fall
+  // the game can produce lands beyond the last ledge. That used to be a `if
+  // (!next) return this.lastSafe` — a branch no chapter could reach, which kept a
+  // `lastSafe` field updated on every landing to feed it, and which would have
+  // put him down *behind* the water he fell into: the #176 bug it was written
+  // before. The sweep in test_game.py holds the invariant instead, over every x
+  // of every chapter rather than the handful of pits one play happens to find.
   recoverySpot(fellAt) {
     let next = null;
     for (const s of this.level.plats) {
@@ -329,7 +336,6 @@ export class Game {
       if (s.x + s.w < fellAt + PLAYER_W) continue;
       if (!next || s.x < next.x) next = s;
     }
-    if (!next) return this.lastSafe;    // nothing ahead: the last place he stood
     return { x: next.x + Math.min(RECOVERY_IN, next.w / 2), y: next.y };
   }
 

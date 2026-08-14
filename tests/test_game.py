@@ -1563,6 +1563,69 @@ def test_a_game_left_alone_does_not_drown_at_the_same_pit(own_page):
             f"{r['length']}, having splashed {len(at)} times at {at}")
 
 
+# Every x a chapter can drop him at, asked of the real `recoverySpot`. A play
+# finds five or six pits; this walks the whole course a pixel at a time, which is
+# what it takes to say the answer is never "there is no ground ahead" — the case
+# `recoverySpot` used to carry a `lastSafe` field for (#184).
+GROUND_AHEAD_SWEEP = """
+async ({ step }) => {
+  const c = await import('/js/chapters.js');
+  const m = await import('/js/game.js');
+  const g = window.game;
+  const out = [];
+  for (let i = 0; i < c.CHAPTERS.length; i++) {
+    g.start(i);
+    const ch = c.CHAPTERS[i], plats = g.level.plats;
+    // from where start() puts him to the line step() ends the chapter on: every
+    // x he can be at, so every x a fall can be reported from
+    const from = g.player.x;
+    let checked = 0, bad = null;
+    for (let x = from; x <= ch.length && !bad; x += step) {
+      checked++;
+      let spot = null, err = null;
+      try { spot = g.recoverySpot(x); } catch (e) { err = String(e); }
+      // ground he can stand on, that reaches far enough past the fall to hold him
+      const on = spot && plats.find((s) => s.y === spot.y && spot.x >= s.x &&
+                                    spot.x <= s.x + s.w && s.x + s.w >= x + m.PLAYER_W);
+      if (!on) bad = { x, spot, err };
+    }
+    out.push({ id: ch.id, length: ch.length, plats: plats.length, from, checked, bad,
+               end: Math.max(...plats.map((s) => s.x + s.w)) });
+  }
+  return out;
+}
+"""
+
+
+def test_every_fall_a_chapter_can_produce_has_ground_ahead_of_it(own_page):
+    """`recoverySpot` always answers with a ledge, at every x of every chapter.
+
+    It used to have a `if (!next) return this.lastSafe` fallback for "nothing
+    ahead", and a `lastSafe` field updated on every single landing to feed it.
+    Nothing could reach it — and had anything reached it, it would have put him
+    down behind the water he fell into, which is the drown-forever bug of #176.
+    So it is gone, and this is what holds it up: the invariant is that a chapter's
+    ground outruns its finish line, checked over the whole course rather than
+    over the handful of pits a play happens to find.
+
+    Its own page: it restarts the engine on each chapter in turn.
+    """
+    step = 1
+    rows = own_page.evaluate(GROUND_AHEAD_SWEEP, {"step": step})
+    assert len(rows) == 5, f"only {len(rows)} chapters were swept"
+    for r in rows:
+        assert r["bad"] is None, (
+            f"{r['id']}: a fall at x={r['bad'] and r['bad']['x']} of {r['length']} has "
+            f"no ground ahead of it — recoverySpot answered {r['bad'] and r['bad']['spot']}"
+            f"{' / ' + r['bad']['err'] if r['bad'] and r['bad']['err'] else ''}")
+        want = (r["length"] - r["from"]) // step + 1
+        assert r["checked"] == want, (
+            f"{r['id']}: {r['checked']} of {want} positions were tried")
+        assert r["end"] > r["length"], (
+            f"{r['id']}: its ground stops at {r['end']}, short of the {r['length']} "
+            "finish line — a fall near the end would have nowhere to be put down")
+
+
 # Drown the player and watch the whole screen, frame by frame: the camera
 # follows the player exactly, so the teleport to `recoverySpot` moves the sky and
 # both parallax layers at once.
@@ -1601,7 +1664,7 @@ async ({ dt, chapter, before, after, tail, hunt, hurl }) => {
     g.puff = () => {};
     // a fall further than any chapter really produces, for the cap: the game's
     // own recovery is a short hop forward, so the long throw has to be asked for
-    if (hurl) g.recoverySpot = (x) => ({ x: x - hurl, y: g.lastSafe.y });
+    if (hurl) g.recoverySpot = (x) => ({ x: x - hurl, y: g.level.plats[0].y });
   };
   // The splash itself, rather than a guess from the player's x: `splashes` is
   // incremented by the water and by nothing else, so a stumble into a bush
@@ -1670,7 +1733,7 @@ async ({ dt, chapter, before, after, tail, hunt, hurl }) => {
 
 
 def test_the_camera_catches_up_after_a_respawn_instead_of_cutting(own_page):
-    """A splash teleports the player back to the last safe ledge. The camera
+    """A splash teleports the player onto the ledge past the water. The camera
     follows the player exactly, so the whole background — sky, far layer, mid
     layer and the world itself — used to move a hundred-odd pixels between two
     frames: a cut, in the one moment of the game that is meant to be a friendly
