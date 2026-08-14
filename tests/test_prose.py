@@ -590,15 +590,22 @@ def test_the_blanket_idle_line_dies_when_it_stops_being_true(fetch_assets, tmp_p
 
 def test_a_state_drawn_by_another_states_art_counts_as_covered(fetch_assets, monkeypatch):
     """float has no artwork of its own anywhere and never will: it is the jump
-    held down, drawn by the jump render (POSE_FALLBACK in sprites.js). Bluey and
-    Bingo therefore have no float gap, and no RIG_OK line for one. Take the
-    fallback away and they do — which is what pins this to the JS rather than to
-    a second opinion about it kept here."""
+    held down, drawn by the jump render — or, for a character with no jump of
+    her own, by whatever that falls to in turn (POSE_FALLBACK in sprites.js).
+    Nobody with any artwork at all therefore has a float gap, or a RIG_OK line
+    for one. Take the fallback away and they all do — which is what pins this to
+    the JS rather than to a second opinion about it kept here.
+
+    Who that is comes from the shipped artwork rather than a list typed here, so
+    the day someone is drawn for the first time she joins the expectation
+    instead of turning this red."""
     mod = fetch_assets
     assert not [p for p in mod.coverage_problems() if "float" in p]
+    frames = json.loads(mod.POSES_JSON.read_text())["frames"]
+    drawn = {c["id"] for c in mod.load_chars() if c.get("playable")} & set(frames)
     monkeypatch.setattr(mod, "pose_fallbacks", dict)
     floats = [p for p in mod.coverage_problems() if "'float'" in p]
-    assert {p.split()[0] for p in floats} == {"bluey", "bingo"}, floats
+    assert {p.split()[0] for p in floats} == drawn, floats
 
 
 def test_the_command_itself_exits_non_zero_on_an_undeclared_gap(fetch_assets, monkeypatch):

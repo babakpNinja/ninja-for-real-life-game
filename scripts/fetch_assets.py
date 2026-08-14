@@ -209,14 +209,14 @@ def pose_fallbacks() -> dict[str, str]:
 # reason is about the state rather than about the character.
 RIG_OK = {
     ("*", "idle"): "a standing render is what idle wants; the rig only breathes and blinks",
-    ("bandit", "jump"): "no drawing of Bandit off the ground on the wiki — the "
-                        "obstacle-course render is the only action pose of him",
-    ("bandit", "cheer"): "no celebrating render of Bandit; the nearest are episode "
-                         "screenshots, which have a background and fail the cutout floor",
-    ("bandit", "float"): "float borrows the jump drawing, and there is no jump "
-                         "drawing of Bandit to borrow",
-    ("chilli", "jump"): "no drawing of Chilli off the ground on the wiki",
-    ("chilli", "float"): "as above — nothing for float to borrow",
+    # Bandit's jump/cheer/float and Chilli's jump/float used to be excused here:
+    # there is still no such drawing on the wiki, but the rig is no longer what
+    # the player sees. They borrow their own run render through POSE_FALLBACK
+    # and move on it, because the rig's front-facing source made them read as a
+    # different character the moment they left the ground (#215). Their absence
+    # from this table is what keeps that true — `draws` follows the same chain
+    # sprites.js does, so if the fallback were removed these five would come
+    # back as undeclared gaps rather than quietly returning to the rig.
     ("muffin", "run"): "Muffin has no action render at all: her 43 files are the "
                        "standing render, unboxing screenshots and group shots",
     ("muffin", "jump"): "as above — nothing of Muffin off the ground exists",
@@ -615,13 +615,24 @@ def pose_problems() -> list[str]:
 def draws(cid: str, state: str, frames: dict, fallbacks: dict[str, str]) -> str | None:
     """The state whose artwork would be drawn for `cid` in `state`, or None.
 
-    `sprites.js` asks for the state's own frames first and then the one state
-    it will substitute for it, and this answers the same question about the
-    data — so a gap here is a gap the player can see.
+    `sprites.js` asks for the state's own frames first and then walks
+    POSE_FALLBACK until it reaches a state that has some, and this answers the
+    same question about the data — so a gap here is a gap the player can see.
+
+    A chain and not a single hop, because `poseFile` is: float borrows the jump,
+    and a jump nobody drew borrows the run, so a held jump by Bandit is two
+    links from artwork. Stopping at one would report a gap that is drawn, which
+    would then have to be excused in RIG_OK — a comment claiming the rig draws
+    something the player never sees it draw. `seen` guards a fallback that ever
+    points in a circle, exactly as the loop in `poseFile` does.
     """
-    for want in (state, fallbacks.get(state)):
-        if want and (frames.get(cid) or {}).get(want):
+    seen: set[str] = set()
+    want = state
+    while want and want not in seen:
+        seen.add(want)
+        if (frames.get(cid) or {}).get(want):
             return want
+        want = fallbacks.get(want)
     return None
 
 

@@ -55,6 +55,34 @@ EARED = sorted(cid for cid, r in RIGS.items() if r.get("ears"))
 POSES = json.loads((APP / "public" / "data" / "poses.json").read_text())["frames"]
 POSED = sorted((cid, state) for cid, by in POSES.items() for state in by)
 
+# Which state a character borrows from when the wiki never drew it (#215).
+# Read out of sprites.js because that table is the author of the behaviour;
+# restating it here would let the two drift and still agree with themselves.
+POSE_FALLBACK = dict(re.findall(
+    r'(\w+): "(\w+)"',
+    re.search(r"const POSE_FALLBACK = \{(.*?)\};",
+              (APP / "public" / "js" / "sprites.js").read_text(), re.S).group(1)))
+
+
+def resolved_pose(cid, state):
+    """The file `poseFile` ends up at, walking the fallback chain. None when
+    the chain runs out, which is the character the rig still has to carry."""
+    seen = set()
+    want = state
+    while want and want not in seen:
+        seen.add(want)
+        frames = POSES.get(cid, {}).get(want)
+        if frames:
+            return frames[0]
+        want = POSE_FALLBACK.get(want)
+    return None
+
+
+# The states a hero is drawn in while the game is running. `idle` is left out
+# on purpose: nobody has an idle render, so every character is the rig there
+# and fetch_assets.py declares that correct.
+ACTION = ("run", "jump", "float", "cheer")
+
 # The stride renders, which are the ones cut at the hip so their legs can swing
 # (#212). Read from the shipped joints for the same reason: a frame that stops
 # being cut loses its motion test instead of keeping a passing one.
@@ -82,6 +110,13 @@ PLAYABLE = [c["id"] for c in
             json.loads((APP / "public" / "data" / "characters.json").read_text())["characters"]
             if c.get("playable")]
 RIGGED_RUN = sorted(cid for cid in PLAYABLE if "run" not in POSES.get(cid, {}))
+
+# The states with no drawing of their own that reach one anyway. This is where
+# #215 lived: Bandit had a run render and nothing else, so the moment he jumped
+# he turned into a front-facing standing dog. Empty the day every character is
+# drawn in every state, and these tests disappear with the subject.
+BORROWED = sorted((cid, state) for cid in PLAYABLE for state in ACTION
+                  if state not in POSES.get(cid, {}) and resolved_pose(cid, state))
 
 
 @pytest.fixture(scope="module")
@@ -1068,6 +1103,102 @@ def test_a_pose_never_advances_past_its_first_frame(desktop):
             "one render per state; see poseFrame in sprites.js")
 
 
+FAMILY = """
+async ({ id, states }) => {
+  const s = await import('/js/sprites.js');
+  const art = await s.loadArt();
+  s.preload([id]);
+  const want = Object.values(art.poses[id] || {}).flat();
+  for (let i = 0; i < 100; i++) {
+    const have = s.artState().poseFrames;
+    if (want.every((f) => have.includes(f))) break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  const size = 320;
+  const out = {};
+  for (const state of states) {
+    const c = document.createElement('canvas');
+    c.width = size; c.height = size + 4;
+    const ctx = c.getContext('2d');
+    s.drawCharacter(ctx, id, size / 2, size, size * 0.9, null, 0.31, state, 1);
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    let opaque = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > 8) opaque++;
+    out[state] = { drawn: s.artState().drawn[id], opaque };
+  }
+  return out;
+}
+"""
+
+
+@pytest.mark.parametrize("cid", PLAYABLE)
+def test_a_hero_is_the_same_kind_of_drawing_all_the_way_through(desktop, cid):
+    """#215: Bandit ran as the artist's Bandit and landed as a different dog.
+
+    What changed was not the pose but the *source* — a hand-drawn render for
+    run, a rig assembled out of shapes for jump — and swapping between two
+    drawing styles mid-leap reads as the character being replaced.
+
+    The issue proposed measuring the silhouette instead, failing when the
+    width/height ratio jumps too far between states. Measured, that cannot
+    separate this: Bluey's run to her own hand-drawn cheer moves the ratio by
+    0.252, more than any of the three defects (0.170, 0.218, 0.230). A bound
+    loose enough for the real artwork passes every costume change. So the thing
+    asserted is the thing that was actually wrong: one family, all four states.
+
+    Muffin has no artwork at all and is the rig throughout, which is uniform and
+    correct — the `opaque` floor is what stops "uniformly nothing" passing.
+    """
+    got = desktop.evaluate(FAMILY, {"id": cid, "states": list(ACTION)})
+    for state, r in got.items():
+        assert r["opaque"] > 1000, f"{cid} in {state} drew almost nothing: {got}"
+    families = {r["drawn"] for r in got.values()}
+    assert len(families) == 1, (
+        f"{cid} changes what kind of drawing it is mid-play: "
+        + ", ".join(f"{s}={r['drawn']}" for s, r in sorted(got.items())))
+
+
+@pytest.mark.parametrize("cid,state", BORROWED, ids=[f"{c}-{s}" for c, s in BORROWED])
+def test_a_state_with_no_render_of_its_own_borrows_one(desktop, cid, state):
+    """The half of #215 the uniformity check above cannot see: it would also be
+    satisfied by giving up and drawing everyone as the rig.
+
+    So, for each state that has no drawing of its own, the picture is a pose and
+    it is not the rig's version of the same moment.
+    """
+    r = pose_diff(desktop,
+                  {"id": cid, "state": state, "t": 0.31},
+                  {"id": cid, "state": state, "t": 0.31, "frames": {}})
+    assert r["a"] == "pose", f"{cid} in {state} drew as {r['a']} — no fallback reached"
+    assert r["b"] == "rig", f"with no pose frames at all {cid} drew as {r['b']}"
+    assert r["opaqueA"] > 1000, f"the borrowed frame painted almost nothing: {r}"
+    assert r["changed"] > r["opaqueA"] * 0.1, (
+        f"the borrowed render is the same picture as the rig's: {r}")
+
+
+@pytest.mark.parametrize("cid,state", BORROWED, ids=[f"{c}-{s}" for c, s in BORROWED])
+def test_a_borrowed_state_draws_the_frame_the_chain_lands_on(desktop, cid, state):
+    """Borrowing *a* drawing is not the same as borrowing the right one: with a
+    chain (float falls to jump falls to run) an off-by-one hop still shows a dog.
+
+    The frame the chain says it ends at is replaced with a different character's
+    render and the two draws compared. If the picture does not change, the state
+    that was overridden is not the one being drawn from.
+    """
+    landed = resolved_pose(cid, state)
+    owner = next(s for s, f in POSES[cid].items() if f[0] == landed)
+    other = "assets/poses/bluey-cheer-0.png" if cid != "bluey" else "assets/poses/bingo-cheer-0.png"
+    r = pose_diff(desktop,
+                  {"id": cid, "state": state, "t": 0.31},
+                  {"id": cid, "state": state, "t": 0.31,
+                   "frames": dict(POSES[cid], **{owner: [other]})})
+    assert r["a"] == "pose" and r["b"] == "pose", r
+    assert r["opaqueA"] > 1000 and r["opaqueB"] > 1000, f"one of them is blank: {r}"
+    assert r["changed"] > r["opaqueA"] * 0.2, (
+        f"{cid}/{state} did not change when {owner} was repointed — it is not "
+        f"drawing through {landed}: {r}")
+
+
 SWING_PROBE = """
 async ({ id, state, size, t, half, noise }) => {
   const s = await import('/js/sprites.js');
@@ -1664,12 +1795,15 @@ async ({ id, dt, steps, changeAt, from_, to, hard }) => {
 """
 
 
-@pytest.mark.parametrize("cid,how", [("bluey", "pose"), ("bandit", "rig")],
+@pytest.mark.parametrize("cid,to,how,share",
+                         [("bluey", "jump", "pose", 0.35), ("bandit", "idle", "rig", 0.5)],
                          ids=["one drawing to another", "a drawing to the rig"])
-def test_a_state_change_is_spread_over_several_frames(desktop, cid, how):
+def test_a_state_change_is_spread_over_several_frames(desktop, cid, to, how, share):
     """Landing used to be one frame: the drawing of a jump on one, the drawing of
-    a run on the next, and for everyone but Bluey — who is the only one with a
-    jump of her own — a swap from a pose render to the cut-out rig as well.
+    a run on the next, and — before #215 gave every state a render to fall back
+    on — a swap from a pose to the cut-out rig as well. That swap is now only
+    where nobody has artwork at all, which is standing still, so that is the
+    second case here: a hand-drawn Bandit running to a rigged Bandit stopped.
 
     This is a bound on the picture rather than on `BLEND`: the same run is
     measured twice, once blended and once with the blend switched off, and the
@@ -1685,7 +1819,7 @@ def test_a_state_change_is_spread_over_several_frames(desktop, cid, how):
     for hard in (False, True):
         runs[hard] = desktop.evaluate(BLEND_PROBE, {
             "id": cid, "dt": dt, "steps": steps, "changeAt": at,
-            "from_": "run", "to": "jump", "hard": hard})
+            "from_": "run", "to": to, "hard": hard})
     blend, snap = runs[False], runs[True]
     assert blend["drawn"] == how, f"{cid} was not drawn as a {how}: {blend['drawn']}"
 
@@ -1700,11 +1834,16 @@ def test_a_state_change_is_spread_over_several_frames(desktop, cid, how):
     # vacuity: the two states have to *look* different, or there is nothing here
     # to spread out and any blend would pass
     assert max(snapped) > 2.5 * steady, (
-        f"snapping from run to jump changed {max(snapped)} against {steady} for an "
+        f"snapping from run to {to} changed {max(snapped)} against {steady} for an "
         f"ordinary frame — too little for this test to be measuring anything")
     spike = max(moved) - steady
     worst = max(snapped) - steady
-    assert spike < 0.35 * worst, (
+    # `share` is per case because the two fades are not the same shape. Between
+    # two stills the change per frame is flat (measured 0.13 of a snap); fading
+    # into the rig, which is animating underneath, it ramps and peaks on the last
+    # frame of the fade (0.36). A snap is 1.0 by construction and halving BLEND
+    # would put the ramping case around 0.7, so both bounds still separate.
+    assert spike < share * worst, (
         f"the worst frame of the blend moved {spike} over an ordinary frame, "
         f"{spike / worst:.0%} of the {worst} a snap moves — the change is still "
         "landing on one frame")

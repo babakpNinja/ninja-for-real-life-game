@@ -398,6 +398,25 @@ function blendAmount(blend, state) {
 const LEG_SWING = 0.22;
 
 /**
+ * How far a borrowed run render's legs are swung to read as a leap, in radians.
+ *
+ * Only a *borrowed* one moves: this is applied to whatever `poseJoint` names a
+ * hip in, and the only frames with a hip are the four run renders
+ * (`pose-joints.json`), so a character with its own jump drawing — Bluey's
+ * `Bluey-Leaping`, Bingo's crop of `Jump_bluey_bingo` — is drawn exactly as
+ * before, whole. The data decides who this touches, not a list of names here.
+ *
+ * Same magnitude as `LEG_SWING` on purpose rather than by coincidence: that is
+ * the largest angle `build_pose_joints.py --sheet` shows all four renders still
+ * reading as one dog at, and a jump has no reason to be the one place that
+ * bound is exceeded. It is negative because the artwork's own jumps are
+ * *stretched*, not tucked — in both drawings the legs trail behind a body
+ * pitched forward — and a negative swing carries the run's leg mass back the
+ * same way (#215).
+ */
+const JUMP_SWING = -LEG_SWING;
+
+/**
  * Motion applied to a pose render: a bob, a squash on contact, a lean about the
  * feet, and — for a stride — how far the legs are swung from where they were
  * drawn.
@@ -425,10 +444,11 @@ function frameMotion(state, t, stride) {
       };
     }
     case "jump":
-      return { lift: 0, sx: 0.97, sy: 1.05, tilt: -0.07, swing: 0 };
+      return { lift: 0, sx: 0.97, sy: 1.05, tilt: -0.07, swing: JUMP_SWING };
     case "float": {
       const sway = Math.sin(t * 5);
-      return { lift: 0, sx: 1, sy: 1, tilt: -0.05 + sway * 0.06, swing: 0 };
+      return { lift: 0, sx: 1, sy: 1, tilt: -0.05 + sway * 0.06,
+               swing: JUMP_SWING };
     }
     case "cheer": {
       const hop = Math.abs(Math.sin(t * 6));
@@ -449,17 +469,38 @@ function frameMotion(state, t, stride) {
 }
 
 /**
- * A state drawn by another state's artwork, where it is the same drawing.
+ * A state drawn by another state's artwork, where that is the better drawing.
+ *
+ * Read as a *chain*: float borrows the jump, and a jump nobody has drawn
+ * borrows the run. `poseFile` walks it until a state has frames.
  *
  * `float` is the jump held down — the player keeps a finger on the screen and
  * the fall slows — so it is the same body in the air, and nobody has ever drawn
  * a separate one. Without this line a jump that is held swaps the artist's
  * leaping render for the rig half-way up and back again on the way down, which
  * is the sliced-limbs look reappearing mid-jump on the one character who has
- * the artwork to avoid it. fetch_assets.py reads this object (`pose_fallbacks`)
- * so its coverage check counts a fallback as covered.
+ * the artwork to avoid it.
+ *
+ * `jump` and `cheer` fall back to the run for the opposite reason: not because
+ * it is the same drawing, but because the alternative is a *different
+ * character*. Bandit has no jump or cheer render on the wiki and Chilli has no
+ * jump — all 13,961 files were listed for #206/#207 — so both used to drop to
+ * the rig the instant they left the ground, and the rig's source is a
+ * front-facing standing render. The dog you were running with became a
+ * front-on dog at a different scale, standing upright with his arms down: not
+ * mangled, but read as the wrong character entirely (#215).
+ *
+ * Their run render is the same side-on cutout family, it is the same size, and
+ * `pose-joints.json` names a hip in it — so `frameMotion` can tuck the legs
+ * under and pitch the body, which is a leap. A borrowed pose in motion beats a
+ * costume change.
+ *
+ * This is a floor and not an override: `poseFile` asks for the state's own
+ * frames first, so the day somebody draws a real leaping Bandit, that drawing
+ * is what leaps. fetch_assets.py reads this object (`pose_fallbacks`) so its
+ * coverage check follows the same chain.
  */
-const POSE_FALLBACK = { float: "jump" };
+const POSE_FALLBACK = { float: "jump", jump: "run", cheer: "run" };
 
 /**
  * The pose to draw for `id` in `state`, or null if there is no pose artwork for
@@ -498,11 +539,24 @@ function poseFrame(id, state) {
   return img && img.width ? img : null;
 }
 
-/** The file `id` in `state` is drawn from, before it has loaded. */
+/**
+ * The file `id` in `state` is drawn from, before it has loaded.
+ *
+ * Walks POSE_FALLBACK for as long as the state it lands on has no frames, so
+ * a held jump by a character with no jump drawing reaches the run render
+ * (float -> jump -> run) rather than stopping one link short and falling to the
+ * rig. Bounded by the number of states in the chain and `seen`, because a
+ * fallback that ever pointed in a circle would otherwise hang the frame.
+ */
 function poseFile(id, state) {
   const set = poses[id] || {};
-  const frames = set[state] || set[POSE_FALLBACK[state]];
-  return frames && frames.length ? frames[0] : null;
+  const seen = new Set();
+  for (let want = state; want && !seen.has(want); want = POSE_FALLBACK[want]) {
+    seen.add(want);
+    const frames = set[want];
+    if (frames && frames.length) return frames[0];
+  }
+  return null;
 }
 
 /**
