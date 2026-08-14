@@ -2307,6 +2307,142 @@ def test_every_prop_stands_on_the_surface_its_chapter_paints(own_page):
             f"{why!r} — this check no longer catches the thing it is here for")
 
 
+# --- the beach: sand with the sea on one side -------------------------------
+
+# Chapter 4 was built like the creek — 430-650px slabs of sand with a 440px gap
+# between them — and `renderLevel` fills every gap with the chapter's water down
+# to the bottom of the world. At 440px, nearly half the 960-wide view, the water
+# was the picture and the sand was stepping stones in it (#214).
+#
+# So this reads the foreground strip itself. The level is drawn into an offscreen
+# canvas one view at a time, camera stepping by exactly WORLD_W so the columns
+# stitch into one continuous row of the world, and each column below the ground
+# line is sand, water, or nothing. Two numbers come out: how much of the beach is
+# sand, and the widest unbroken water — a pool you can see across, or a channel.
+#
+# One row is enough because the strip is uniform: everything below GROUND_Y+6 is
+# either the water fill or a platform that runs to the bottom of the world. The
+# probe returns the same numbers at +20, +40 and +70; +40 is clear of the
+# platforms' lighter top lip and of the water's surface sparkle.
+BEACH_PROBE = r"""
+async ({ row }) => {
+  const c = await import('/js/chapters.js');
+  const g = window.game;
+  const W = c.WORLD_W;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = c.WORLD_H;
+  const ctx = cv.getContext('2d');
+  const hex = (s) => [parseInt(s.slice(1, 3), 16), parseInt(s.slice(3, 5), 16),
+                      parseInt(s.slice(5, 7), 16)];
+  const near = (d, i, c3) => Math.abs(d[i] - c3[0]) <= 26 && Math.abs(d[i + 1] - c3[1]) <= 26
+                          && Math.abs(d[i + 2] - c3[2]) <= 26;
+  // the level as #214 found it, so the same verdict can be asked about it
+  const asFound = (ch) => {
+    const rng = c.makeRng(1000 + 3 * 7919);
+    const plats = [{ x: -200, w: 1200, y: c.GROUND_Y }];
+    let x = 980;
+    while (x < ch.length - 400) {
+      const w = 430 + Math.floor(rng() * 220);
+      plats.push({ x, w, y: c.GROUND_Y });
+      plats.push({ x: x + w + 120, w: 210, y: c.GROUND_Y - 120 });
+      x += w + 120 + 210 + 110;
+    }
+    plats.push({ x, w: 700, y: c.GROUND_Y });
+    return { plats, tokens: [], obstacles: [], secret: { x: -9999, y: 0, taken: true } };
+  };
+  const scan = (ch, level) => {
+    const water = hex(ch.water);
+    const held = [g.ch, g.level, g.t];
+    g.ch = ch; g.level = level; g.t = 0;
+    let sand = 0, cols = 0, run = 0, worst = 0;
+    for (let camX = 0; camX < ch.length; camX += W) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, W, c.WORLD_H);
+      ctx.save(); ctx.translate(-camX, 0); g.renderLevel(ctx, camX); ctx.restore();
+      const d = ctx.getImageData(0, row, W, 1).data;
+      for (let x = 0; x < W; x++) {
+        const i = x * 4;
+        cols++;
+        if (d[i + 3] >= 20 && !near(d, i, water)) { sand++; run = 0; }
+        else { run++; if (run > worst) worst = run; }
+      }
+    }
+    [g.ch, g.level, g.t] = held;
+    return { cols, sand, share: sand / cols, worst };
+  };
+  // the engine draws the player and its particles into this layer, so they are
+  // taken out of the way rather than counted as scenery
+  g.start(3); g.stop();
+  g.player.x = -99999; g.particles.length = 0; g.toasts.length = 0; g.balloon = null;
+  const of = (id) => c.CHAPTERS.find((x) => x.id === id);
+  return {
+    poolMin: c.POOL_MIN,
+    view: W,
+    beach: scan(of('beach'), c.buildLevel(3)),
+    creek: scan(of('creek'), c.buildLevel(1)),
+    asFound: scan(of('beach'), asFound(of('beach'))),
+  };
+}
+"""
+# Measured: the beach is 85.5% sand with a widest pool of 171px; as #214 found it
+# it was 60.7% and 440px. The floor sits between the two and nearer the defect,
+# because the numbers that matter are the ones a level change would drift toward.
+BEACH_SAND = 0.75
+# and a gap stays a pool: POOL_MIN plus the 40px of jitter build() adds, plus
+# room for the roundRect corners the fill eats into at either side.
+POOL_SLACK = 60
+
+
+def beach_complaint(m, pool_max, view):
+    """Why this foreground does not read as a beach, or None if it does.
+
+    One function for the shipped level and for the level #214 was filed about,
+    so a rule that has stopped meaning anything fails on the defect first.
+    """
+    if m["share"] < BEACH_SAND:
+        return (f"only {m['share']:.0%} of the ground line is sand (want "
+                f"{BEACH_SAND:.0%}) — that is water with sand in it")
+    if m["worst"] > pool_max:
+        return (f"its widest unbroken water is {m['worst']}px of a {view}px view "
+                f"(want {pool_max}) — that is a channel, not a rock pool")
+    return None
+
+
+def test_the_beach_is_sand_with_the_sea_on_one_side(own_page):
+    """Chapter 4's sand was a handful of slabs with water filling every gap, so
+    the player crossed it like stepping stones in a lake (#214). The sea belongs
+    behind the beach — that is the far shoreline at SEA_TOP, which #210 put the
+    palms on — and the gaps in front of it are rock pools.
+
+    Its own page: it borrows the engine to draw levels off screen.
+    """
+    r = own_page.evaluate(BEACH_PROBE, {"row": 492})
+    pool_max, view = r["poolMin"] + POOL_SLACK, r["view"]
+    beach = r["beach"]
+
+    assert beach["cols"] >= 6000, (
+        f"only {beach['cols']} columns were read — the whole 6200px beach should have "
+        f"been walked, so this measured a corner of it, not the chapter")
+    why = beach_complaint(beach, pool_max, view)
+    assert why is None, f"ch4 does not read as a beach: {why}"
+
+    # the same rule against the level #214 was filed about, which has to come
+    # back as a complaint about both halves of it
+    was = beach_complaint(r["asFound"], pool_max, view)
+    assert was and "water with sand in it" in was, (
+        f"the level as #214 found it came back as {was!r} — this check no longer "
+        f"catches the thing it is here for")
+    assert r["asFound"]["worst"] > pool_max, (
+        f"#214's 440px gaps measured {r['asFound']['worst']}px here, which this "
+        f"check would now allow")
+
+    # and it is a rule about a beach, not about water: the creek is stepping
+    # stones on purpose and must not be quietly held to it
+    assert beach_complaint(r["creek"], pool_max, view), (
+        f"the creek passes the beach's own rule ({r['creek']['share']:.0%} sand, "
+        f"widest water {r['creek']['worst']}px) — then the rule says nothing about "
+        f"the difference between a beach and a creek, which is all it is for")
+
+
 def test_no_console_errors_on_desktop(desktop):
     """Last, so it covers everything the tests above did."""
     assert not desktop.errors, str(desktop.errors[:3])

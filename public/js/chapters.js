@@ -20,6 +20,16 @@ export const WORLD_W = 960;
  */
 export const SEA_TOP = GROUND_Y - 120;
 
+/**
+ * The narrowest gap the beach parts its sand by — a rock pool, not a channel.
+ *
+ * Exported so the test that says "ch4 reads as a beach" can measure against the
+ * chapter's own number rather than a copy of it. The old build's gaps were 440,
+ * which is 46% of the 960-wide view: at that width the water is the picture and
+ * the sand is stepping stones in it (#214).
+ */
+export const POOL_MIN = 150;
+
 /** Tiny deterministic RNG (mulberry32). */
 export function makeRng(seed) {
   let a = seed >>> 0;
@@ -207,20 +217,36 @@ export const CHAPTERS = [
     ],
     joke: "There is sand in the sandwiches. There is always sand in the sandwiches.",
     outro: "There he is — Floppy! A bit sandy, a bit damp, and very pleased to be found.",
+    /**
+     * Long runs of sand, parted by rock pools you can see across.
+     *
+     * This used to be built like the creek: 430-650px slabs with a 440px gap
+     * between them and the rock ledge floating in the middle of it. The near
+     * water fills every gap to the bottom of the world, so at 440px — nearly
+     * half the 960-wide view — the sand read as stepping stones in a lake and
+     * the ledge as a raft (#214). A beach is sand with the sea on *one* side,
+     * and that side is the far shoreline at SEA_TOP, which is already there.
+     *
+     * So the sand runs long, the gaps are pools rather than channels, and the
+     * ledge is a rock standing on the sand at the end of a run instead of over
+     * open water. Same jumps, same shell arcs; the gap is now the small part of
+     * the picture.
+     */
     build(rng) {
       const plats = [plat(-200, 1200)];
       const tokens = [];
       const obstacles = [];
       let x = 980;
       while (x < this.length - 400) {
-        const w = 430 + Math.floor(rng() * 220);
+        const w = 620 + Math.floor(rng() * 260);
         plats.push(plat(x, w));
         tokens.push(...arc(x + 90, 4, 80, GROUND_Y - 205));
-        if (rng() > 0.4) obstacles.push({ x: x + w - 170, y: GROUND_Y - 60, w: 82, h: 60, kind: "sandcastle" });
-        // a rock ledge over a rock pool
-        plats.push(plat(x + w + 120, 210, GROUND_Y - 120));
-        tokens.push(...arc(x + w + 160, 3, 62, GROUND_Y - 220, GROUND_Y - 170));
-        x += w + 120 + 210 + 110;
+        if (rng() > 0.4) obstacles.push({ x: x + w - 420, y: GROUND_Y - 60, w: 82, h: 60, kind: "sandcastle" });
+        // a rock ledge up on the dry sand, with the pool just past its far edge
+        const ledge = x + w - 270;
+        plats.push(plat(ledge, 210, GROUND_Y - 120));
+        tokens.push(...arc(ledge + 40, 3, 62, GROUND_Y - 220, GROUND_Y - 170));
+        x += w + POOL_MIN + Math.floor(rng() * 40);
       }
       plats.push(plat(x, 700));
       return { plats, tokens, obstacles };
