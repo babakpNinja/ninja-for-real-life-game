@@ -454,6 +454,24 @@ function frameMotion(state, t, stride) {
       return { lift: 0, sx: 1, sy: 1, tilt: -0.05 + sway * 0.06,
                swing: JUMP_SWING };
     }
+    // The cheer keeps `swing: 0` on a borrowed drawing on purpose (#231), which
+    // is worth writing down because it is the one state where a zero reads as a
+    // shrug. Bandit has no cheer render, so he celebrates in his running one —
+    // legs mid-stride — and the only lever here is a rotation of the whole band
+    // below the hip: it can point that spread somewhere else, which is what the
+    // jump does, but one rigid band cannot bring the legs together, so there is
+    // no angle at which a stride stands still. The alternative is letting a
+    // borrowed cheer fall to the rig, and that is the upright dog you would want
+    // — measured, 13% taller than the stride at the same nominal size, standing
+    // where this one leans. It also makes him a hand-drawn dog while he runs and
+    // an assembled one the instant he stops, crossfading between the two at the
+    // finish line: #215 moved rather than fixed, and
+    // `test_a_hero_is_the_same_kind_of_drawing_all_the_way_through` holds that
+    // line. So the stride stays and the hop, squash and tilt carry the
+    // celebration. The price is the gallery card, where Bandit is the one dog
+    // leaning into a run among 24 standing ones. It was looked at before it was
+    // kept, and `test_a_borrowed_cheer_keeps_the_legs_the_artist_drew` is where
+    // the decision is asserted rather than assumed.
     case "cheer": {
       const hop = Math.abs(Math.sin(t * 6));
       return { lift: hop * 0.08, sx: 1 - hop * 0.04, sy: 1 + hop * 0.05,

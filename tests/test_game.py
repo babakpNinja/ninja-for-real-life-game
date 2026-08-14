@@ -121,8 +121,15 @@ BORROWED = sorted((cid, state) for cid in PLAYABLE for state in ACTION
 # The states `frameMotion` turns the other way, read out of its switch for the
 # same reason as POSE_FALLBACK above: a third one adopting JUMP_SWING arrives
 # with a test rather than without one.
-_MOTION_CASES = re.split(r'case "(\w+)":',
-                         re.search(r"function frameMotion\(.*?\n\}", SPRITES_SRC, re.S).group(0))
+# Comments stripped before the split, because a case body runs to the next
+# `case` and so picks up whatever is written above it: the reasoning for the
+# cheer's swing is a comment between two cases (#231), and it quotes the very
+# thing this looks for. A parse that reads the prose is answering about the
+# prose — it put `float` in the list below until this line existed.
+_MOTION_CASES = re.split(
+    r'case "(\w+)":',
+    re.sub(r"//[^\n]*", "",
+           re.search(r"function frameMotion\(.*?\n\}", SPRITES_SRC, re.S).group(0)))
 JUMP_SWUNG = tuple(state for state, body in zip(_MOTION_CASES[1::2], _MOTION_CASES[2::2])
                    if "swing: JUMP_SWING" in body)
 # ...and the borrowed states that land on a render cut at the hip, which are the
@@ -131,6 +138,16 @@ JUMP_SWUNG = tuple(state for state, body in zip(_MOTION_CASES[1::2], _MOTION_CAS
 # go with the subject.
 BORROWED_STRIDE = sorted((cid, state) for cid, state in BORROWED
                          if state in JUMP_SWUNG and resolved_pose(cid, state) in POSE_JOINTS)
+
+# The other arm of the same switch: the states that leave a borrowed drawing's
+# legs alone. `cheer` is the one that matters and it is a decision rather than an
+# omission — see the comment on the case itself (#231) — so it is read from the
+# source for the same reason as the two above: the day somebody swings a cheer,
+# it changes here too instead of quietly losing the test that says it does not.
+STILL_SWUNG = tuple(state for state, body in zip(_MOTION_CASES[1::2], _MOTION_CASES[2::2])
+                    if "swing: 0" in body)
+BORROWED_STILL = sorted((cid, state) for cid, state in BORROWED
+                        if state in STILL_SWUNG and resolved_pose(cid, state) in POSE_JOINTS)
 
 
 @pytest.fixture(scope="module")
@@ -1450,6 +1467,13 @@ async ({ id, state, path, size, t, phase }) => {
 # they land on the near extreme, which is all of it.
 MIN_TRAVEL = 0.008
 MIN_SHARE = 0.5
+# ...and how little of that far stretch a state whose swing is 0 may move, for
+# the opposite question (#231). Off the same probe and the same instant: the
+# borrowed cheer moves its legs 0.0px, and the mutation that puts the jump's
+# swing on the cheer moves them 7.76px — 0.96 of Bandit's 8.07px far stretch,
+# read off that mutation's own run. A tenth of the stretch is 0.81px: room for a
+# rasteriser, none for a limb.
+STILL_SHARE = 0.1
 
 
 def test_there_is_a_borrowed_jump_to_measure():
@@ -1513,6 +1537,58 @@ def test_a_borrowed_jump_swings_the_legs_the_other_way(desktop, cid, state):
         f"{cid}/{state}: the legs sit {near:.1f}px from where this stride phase puts them "
         f"and {far:.1f}px from where the other one does — a leap has to read as the far "
         f"stretch, and this reads as the near one: that is the running drawing, airborne: {r}")
+
+
+def test_there_is_a_borrowed_still_to_measure():
+    """The same guard for the opposite decision. Both halves can empty honestly
+    — `frameMotion` could stop leaving any state's legs where they were drawn,
+    and Bandit could be drawn a cheer of his own — but neither may happen
+    quietly: delete the test and its mutation with the subject.
+    """
+    assert STILL_SWUNG, (
+        "no state in frameMotion carries `swing: 0` — either nothing leaves a borrowed "
+        "drawing's legs alone any more, or the parse above stopped reading it")
+    assert BORROWED_STILL, (
+        f"no borrowed {'/'.join(STILL_SWUNG)} lands on a render with a hip in "
+        "pose-joints.json, so there is nothing a swing could have moved and nothing "
+        "to say it was left alone on purpose (#231)")
+
+
+@pytest.mark.parametrize("cid,state", BORROWED_STILL,
+                         ids=[f"{c}-{s}" for c, s in BORROWED_STILL])
+def test_a_borrowed_cheer_keeps_the_legs_the_artist_drew(desktop, cid, state):
+    """#231: Bandit celebrates in his running drawing, and stays in it.
+
+    A cheer on a borrowed stride is the one place `swing: 0` reads as an unasked
+    question rather than an answer, because the picture is a dog frozen
+    mid-stride bobbing on the spot. It was asked: `swing` rotates the whole band
+    below the hip, so it can point that spread somewhere else — which is what the
+    jump above does — but it cannot close it, and the only other way out is the
+    rig, which is #215 moved to the finish line. The comment on the case carries
+    the reasoning; this is the half of it a future edit trips over.
+
+    Measured the same way as the jump, against the same reference: the state's
+    own drawing at the same instant with the joint taken out. Zero here means the
+    legs are exactly where the artist put them, and the run's own two extremes
+    are measured alongside so that "it did not move" cannot be satisfied by a
+    probe that moves nothing.
+    """
+    r = desktop.evaluate(SWING_SIGN_PROBE,
+                         {"id": cid, "state": state, "path": resolved_pose(cid, state),
+                          "size": 320, "t": 0.31, "phase": math.pi / 2})
+    still, run, back = r["air"], r["run"], r["back"]
+    assert run["n"] > 300 and still["n"] > 300, f"{cid}: almost no leg was drawn — {r}"
+    assert None not in (still["dx"], run["dx"], back["dx"]), f"{cid}: nothing below the hip — {r}"
+
+    travel = abs(run["dx"] - back["dx"])
+    assert travel > MIN_TRAVEL * run["body"], (
+        f"{cid}: between its two extremes the run moved its legs {travel:.1f}px of a "
+        f"{run['body']}px body — the reference this is measured against is not moving: {r}")
+    assert abs(still["dx"]) < STILL_SHARE * abs(back["dx"]), (
+        f"{cid}/{state}: the legs sit {still['dx']:.1f}px from where the artist drew "
+        f"them, against {back['dx']:.1f}px at the run's own far stretch — a borrowed "
+        f"cheer is not swung anywhere (#231): a stride cannot be brought to a stand by "
+        f"rotating it, so the hop carries the celebration and the drawing is left alone")
 
 
 def test_a_held_jump_keeps_the_leaping_drawing(desktop):
