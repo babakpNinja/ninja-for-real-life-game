@@ -20,10 +20,11 @@ const JUMP_V = -790;
 const FLOAT_GRAVITY = 0.34;   // gravity multiplier while the finger stays down
 const COYOTE = 0.14;          // grace period after walking off an edge
 const BUFFER = 0.18;          // tap slightly early and it still counts
+const RECOVERY_IN = 90;       // px in from the edge a splash lifts him onto
 const PLAYER_W = 46;
 const PLAYER_H = 74;
 const CAM_X = 300;
-// A respawn teleports the player back to `lastSafe`, and the camera follows the
+// A respawn teleports the player to `recoverySpot`, and the camera follows the
 // player exactly — so the whole background used to pan a few hundred pixels on
 // one frame, which reads as a cut rather than a lift back up. The camera keeps
 // its exact follow and carries the teleport as *slack*: the gap the jump left
@@ -93,6 +94,7 @@ export class Game {
     this.collected = 0;
     this.bops = 0;
     this.stumbles = 0;
+    this.splashes = 0;
     this.secretFound = false;
     this.toasts = [];
     this.particles = [];
@@ -235,11 +237,13 @@ export class Game {
 
     // fell in the water / off the edge — a splash and a friendly lift back up
     if (p.y > WORLD_H + 40) {
+      this.splashes++;
       sound.splash();
       this.toast("Splash! 💦");
       const before = this.camAt();
-      p.x = this.lastSafe.x;
-      p.y = this.lastSafe.y - 10;
+      const spot = this.recoverySpot(p.x);
+      p.x = spot.x;
+      p.y = spot.y - 10;
       p.vy = -260;
       p.slow = 0.35;
       // hold the camera where it was and let it travel back over CAM_BLEND,
@@ -310,6 +314,23 @@ export class Game {
     this.toasts = this.toasts.filter((x) => this.t - x.t < 1.5);
 
     if (p.x >= this.ch.length && !this.finished) this.finish();
+  }
+
+  // Where a splash puts him down: the far side of the water he went into, not
+  // the ledge he walked off. He runs forward on his own and only jumps when a
+  // finger says so, so a lift back *behind* the gap is a lift into the same gap
+  // — a game left alone drowned at the first pit for as long as you watched it.
+  // The landing spot is RECOVERY_IN past the edge he arrives on, or the middle
+  // of a stone too small for that, so there is room to stand before the next one.
+  recoverySpot(fellAt) {
+    let next = null;
+    for (const s of this.level.plats) {
+      // room to stand *ahead* of him, so the ledge he just left is not "next"
+      if (s.x + s.w < fellAt + PLAYER_W) continue;
+      if (!next || s.x < next.x) next = s;
+    }
+    if (!next) return this.lastSafe;    // nothing ahead: the last place he stood
+    return { x: next.x + Math.min(RECOVERY_IN, next.w / 2), y: next.y };
   }
 
   stepBalloon(dt) {

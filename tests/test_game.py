@@ -1380,16 +1380,91 @@ def test_a_character_does_not_go_see_through_while_it_changes(desktop, cid):
         "background half way through the change — the character is translucent")
 
 
-# Drown the player and watch the whole screen, frame by frame: the camera
-# follows the player exactly, so the teleport back to `lastSafe` moves the sky
-# and both parallax layers at once.
+# A game nobody is playing. The player runs on his own and only jumps when a
+# finger says so, so with no input he walks into every gap the chapter has. What
+# happens after that is the whole question: a lift back onto the ledge he just
+# left is a lift into the same water, and the game used to splash at the first
+# pit for as long as anyone watched it (#176).
 #
-# Nobody decides here how far the player is thrown back — the probe lets the
-# chapter drown him on its own and then goes looking at the frames either side of
-# it, so the distance under test is one the game really produces (~130px in every
-# chapter) rather than one chosen to suit the answer. The fall is found first
-# without drawing, since the frame it happens on is what says which frames are
-# worth the cost of reading back.
+# Nothing is drawn — this is about where he ends up, not how it looks — so a full
+# minute of a chapter costs about as much as a single frame does above. The pits
+# are counted off the level itself rather than written down here: the horizontal
+# projection of the platforms, whose holes are the water he can fall in.
+NO_INPUT_RUN = """
+({ chapter, seconds, dt }) => {
+  const g = window.game;
+  document.getElementById('overlay').classList.add('hidden');
+  g.start(chapter);
+  g.toast = () => {};
+  const at = [];
+  let seen = g.splashes;
+  for (let i = 0; i < Math.round(seconds / dt) && g.mode === 'playing'; i++) {
+    g.step(dt);
+    if (g.splashes > seen) { seen = g.splashes; at.push(Math.round(g.player.x)); }
+  }
+  const out = { at, splashes: g.splashes, mode: g.mode,
+                x: Math.round(g.player.x), length: g.ch.length };
+  g.stop();   // five chapters played to the end otherwise leaves five results
+              // screens animating on this page, and every other page slows down
+  const spans = g.level.plats.map((s) => [s.x, s.x + s.w]).sort((a, b) => a[0] - b[0]);
+  let reach = null, pits = 0;
+  for (const [a, b] of spans) {
+    if (reach !== null && a > reach) pits++;
+    reach = reach === null ? b : Math.max(reach, b);
+  }
+  return { ...out, pits };
+}
+"""
+
+
+def test_a_game_left_alone_does_not_drown_at_the_same_pit(own_page):
+    """One splash per pit at most, and never the same pit twice.
+
+    Where a splash puts him down is the only thing that decides this, and it is
+    checked by playing rather than by reading `recoverySpot`: each splash has to
+    be further along the chapter than the last, which is only true if he was
+    lifted past the water instead of back behind it. Before #176 chapter 2
+    answered with the same handful of pixels over and over.
+
+    All five chapters on one page rather than a page each: a minute of physics
+    costs about a second here, and every extra browser context slows the pages
+    the rest of the file is sharing. Its own page all the same, because it
+    leaves the engine wherever the last level ended.
+    """
+    runs = {c: own_page.evaluate(NO_INPUT_RUN, {"chapter": c, "seconds": 60, "dt": 1 / 60})
+            for c in range(5)}
+    assert len(runs) == 5, f"only {len(runs)} chapters were driven"
+    for chapter, r in sorted(runs.items()):
+        at, pits = r["at"], r["pits"]
+        assert r["splashes"] == len(at), (
+            f"chapter {chapter}: {r['splashes']} splashes but {len(at)} were seen "
+            "— the run missed some")
+        assert at, (
+            f"chapter {chapter} never dropped an untouched player in the water in "
+            f"60s ({pits} pits, ended at x={r['x']}) — nothing here was measured")
+        apart = [b - a for a, b in zip(at, at[1:])]
+        assert all(d > 100 for d in apart), (
+            f"chapter {chapter} splashed at {at}: a splash within 100px of the one "
+            "before it is the same pit again, which no waiting ever gets past")
+        assert len(at) <= pits, (
+            f"chapter {chapter} splashed {len(at)} times over {pits} pits")
+        # and the whole point of the lift: left alone, it gets to the end
+        assert r["mode"] == "finished", (
+            f"chapter {chapter} was still playing after 60s at x={r['x']} of "
+            f"{r['length']}, having splashed {len(at)} times at {at}")
+
+
+# Drown the player and watch the whole screen, frame by frame: the camera
+# follows the player exactly, so the teleport to `recoverySpot` moves the sky and
+# both parallax layers at once.
+#
+# Nobody decides here how far the player is moved — the probe lets the chapter
+# drown him on its own and then goes looking at the frames either side of it, so
+# the distance under test is one the game really produces rather than one chosen
+# to suit the answer. It is a lift *forward* over the water since #176, which is
+# why the measurements below are on the size of the jump and not its direction.
+# The fall is found first without drawing, since the frame it happens on is what
+# says which frames are worth the cost of reading back.
 #
 # The same fall is then played twice — once eased, once with the slack thrown
 # away every step, which is the cut this is here to catch — with every random
@@ -1415,14 +1490,17 @@ async ({ dt, chapter, before, after, tail, hunt, hurl }) => {
     g.toast = () => {};          // the banner is screen-space, and not the subject
     g.scuff = () => {};          // dust is random: it would differ between the runs
     g.puff = () => {};
+    // a fall further than any chapter really produces, for the cap: the game's
+    // own recovery is a short hop forward, so the long throw has to be asked for
+    if (hurl) g.recoverySpot = (x) => ({ x: x - hurl, y: g.lastSafe.y });
   };
-  // The teleport, told apart from the other thing that moves x backwards: a
-  // stumble into an obstacle knocks the player back a few pixels, and the run
-  // asserts below that what it found is the size of a real fall, not a bump.
+  // The splash itself, rather than a guess from the player's x: `splashes` is
+  // incremented by the water and by nothing else, so a stumble into a bush
+  // cannot be mistaken for one and the direction of the lift does not matter.
   const fall = (i) => {
-    const wasX = g.player.x;
+    const was = g.splashes;
     g.step(dt);
-    return g.player.x < wasX - 50 ? i : -1;
+    return g.splashes > was ? i : -1;
   };
 
   begin();                       // no drawing: just find the frame he goes in on
@@ -1441,8 +1519,6 @@ async ({ dt, chapter, before, after, tail, hunt, hurl }) => {
       // one dunk only: this chapter walks the player straight back into the same
       // pit, and the camera has to be watched until it has spent all its slack
       if (i > at) { g.player.onGround = true; g.player.vy = 0; }
-      // a fall further back than any chapter really produces, for the cap
-      if (hurl && i === at) g.lastSafe = { x: g.player.x - hurl, y: g.lastSafe.y };
       const target = g.camTarget();
       if (fall(i) >= 0) gaps.push(Math.round(target - g.camTarget()));
       if (hard) g.camSlack = 0;
@@ -1469,12 +1545,16 @@ async ({ dt, chapter, before, after, tail, hunt, hurl }) => {
 
   const eased = play(false), snap = play(true);
   const m = await import('/js/game.js');
+  const c = await import('/js/chapters.js');
+  // the stubs are instance properties: they shadow the prototype and would
+  // outlive this probe, `start()` included
+  delete g.toast; delete g.scuff; delete g.puff; delete g.recoverySpot;
   return {
     moved: frameToFrame(eased), snapped: frameToFrame(snap),
     apart: eased.shots.map((s, i) => ink(s, snap.shots[i])),
     fellOn: before, gaps: eased.gaps, sameGaps: `${eased.gaps}` === `${snap.gaps}`,
     cams: eased.cams, hardCams: snap.cams, onScreen: eased.onScreen,
-    blend: m.CAM_BLEND, slack: m.CAM_SLACK,
+    blend: m.CAM_BLEND, slack: m.CAM_SLACK, world: c.WORLD_W,
   };
 }
 """
@@ -1502,10 +1582,10 @@ def test_the_camera_catches_up_after_a_respawn_instead_of_cutting(own_page):
     assert r["apart"][cut - 1] == 0, (
         "the two runs had already drawn different pictures before the splash, so "
         "nothing below is about the camera")
-    assert max(r["gaps"]) < r["slack"], (
-        f"the chapter threw the player {max(r['gaps'])}px back, past the "
-        f"{r['slack']}px cap on the slack — the cap, not the ease, is what this run "
-        "would be measuring")
+    thrown = max(abs(g) for g in r["gaps"])
+    assert thrown < r["slack"], (
+        f"the chapter moved the player {thrown}px, past the {r['slack']}px cap on "
+        "the slack — the cap, not the ease, is what this run would be measuring")
 
     # the frames the player spent falling move the picture as much as anything
     # here, so "ordinary" is taken from the running before he ever left the ledge
@@ -1542,10 +1622,14 @@ def test_the_camera_catches_up_after_a_respawn_instead_of_cutting(own_page):
         f"the two pictures were still {lag[-1]} apart at the end of the window "
         f"against {max(lag)} at the splash — the camera is holding its lag, not "
         "spending it")
-    # and while it is catching up the player it is lagging behind stays visible
+    # and while it is catching up the player it is lagging behind stays visible.
+    # Both edges: the lift is forward now, so the camera trails him to the right.
     assert min(r["onScreen"]) > 40, (
         f"the player was drawn at x={min(r['onScreen'])} while the camera caught "
         f"up — CAM_SLACK ({r['slack']}) has to keep them on screen")
+    assert max(r["onScreen"]) < r["world"] - 60, (
+        f"the player was drawn at x={max(r['onScreen'])} of {r['world']} while the "
+        "camera caught up with a lift forward over the water")
 
 
 def test_a_camera_catching_up_never_leaves_the_player_off_the_screen(own_page):
@@ -1553,9 +1637,10 @@ def test_a_camera_catching_up_never_leaves_the_player_off_the_screen(own_page):
     *is* the lag — so a long enough teleport would slide him off the left edge
     and hold him there for a third of a second, which is worse than the cut.
 
-    No chapter throws him back more than about 130px today, which is well inside
+    No chapter moves him more than a couple of hundred pixels today, well inside
     the cap, so this drives a teleport far past anything the game produces: the
-    protection is otherwise the one piece of this that never runs.
+    protection is otherwise the one piece of this that never runs. Backwards,
+    because that is the direction that can strand him off the left edge.
     """
     hurl = 700
     r = own_page.evaluate(RESPAWN_PROBE, {"dt": 1 / 60, "chapter": 0, "before": 4,
@@ -1595,11 +1680,21 @@ def test_it_plays_on_touch(phone):
 
 
 def test_a_tap_jumps_on_touch(phone):
+    """A tap gets him off the ground within the height of a jump.
+
+    The state around it is reported because "y did not change" has more than one
+    cause and only one of them is a broken jump: a page the browser has decided
+    is hidden pauses the game, and then nothing moves at all.
+    """
     vp = phone.viewport_size
     before = phone.evaluate("window.game.player.y")
     phone.touchscreen.tap(vp["width"] / 2, vp["height"] * 0.7)
     phone.wait_for_timeout(220)
-    assert phone.evaluate("window.game.player.y") < before
+    after = phone.evaluate(
+        "({ y: window.game.player.y, mode: window.game.mode, "
+        " paused: window.game.paused, hidden: document.hidden, "
+        " x: Math.round(window.game.player.x), t: window.game.t.toFixed(2) })")
+    assert after["y"] < before, f"tapped at y={before}, then {after}"
 
 
 def test_the_canvas_fills_the_viewport(phone):
