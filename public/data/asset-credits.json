@@ -364,7 +364,10 @@
       "h": 512,
       "bytes": 89927,
       "cutout": 0.502,
-      "shadow_px": 8893
+      "shadow_px": 8893,
+      "webp": "assets/poses/bandit-run-0.webp",
+      "webp_bytes": 29056,
+      "webp_from": "3adacff1c78f"
     },
     "bingo:cheer:0": {
       "file": "assets/poses/bingo-cheer-0.png",
@@ -375,7 +378,10 @@
       "h": 482,
       "bytes": 51814,
       "cutout": 0.451,
-      "shadow_px": 3156
+      "shadow_px": 3156,
+      "webp": "assets/poses/bingo-cheer-0.webp",
+      "webp_bytes": 22164,
+      "webp_from": "81b65376188e"
     },
     "bingo:jump:0": {
       "file": "assets/poses/bingo-jump-0.png",
@@ -393,7 +399,10 @@
         0.4759,
         1.0
       ],
-      "stray_px": 1899
+      "stray_px": 1899,
+      "webp": "assets/poses/bingo-jump-0.webp",
+      "webp_bytes": 31630,
+      "webp_from": "57e85de8332b"
     },
     "bingo:run:0": {
       "file": "assets/poses/bingo-run-0.png",
@@ -404,7 +413,10 @@
       "h": 470,
       "bytes": 98233,
       "cutout": 0.486,
-      "shadow_px": 3683
+      "shadow_px": 3683,
+      "webp": "assets/poses/bingo-run-0.webp",
+      "webp_bytes": 20330,
+      "webp_from": "87a048398e59"
     },
     "bluey:cheer:0": {
       "file": "assets/poses/bluey-cheer-0.png",
@@ -415,7 +427,10 @@
       "h": 512,
       "bytes": 91297,
       "cutout": 0.513,
-      "shadow_px": 15245
+      "shadow_px": 15245,
+      "webp": "assets/poses/bluey-cheer-0.webp",
+      "webp_bytes": 26710,
+      "webp_from": "b646f3838be9"
     },
     "bluey:jump:0": {
       "file": "assets/poses/bluey-jump-0.png",
@@ -426,7 +441,10 @@
       "h": 512,
       "bytes": 115658,
       "cutout": 0.523,
-      "shadow_px": 829
+      "shadow_px": 829,
+      "webp": "assets/poses/bluey-jump-0.webp",
+      "webp_bytes": 31074,
+      "webp_from": "0dc3c77d4de3"
     },
     "bluey:run:0": {
       "file": "assets/poses/bluey-run-0.png",
@@ -437,7 +455,10 @@
       "h": 512,
       "bytes": 119965,
       "cutout": 0.524,
-      "shadow_px": 12933
+      "shadow_px": 12933,
+      "webp": "assets/poses/bluey-run-0.webp",
+      "webp_bytes": 30290,
+      "webp_from": "214ab2b27aef"
     },
     "chilli:cheer:0": {
       "file": "assets/poses/chilli-cheer-0.png",
@@ -448,7 +469,10 @@
       "h": 512,
       "bytes": 75365,
       "cutout": 0.519,
-      "shadow_px": 12389
+      "shadow_px": 12389,
+      "webp": "assets/poses/chilli-cheer-0.webp",
+      "webp_bytes": 28076,
+      "webp_from": "5b5de67f3f25"
     },
     "chilli:run:0": {
       "file": "assets/poses/chilli-run-0.png",
@@ -459,7 +483,10 @@
       "h": 512,
       "bytes": 89556,
       "cutout": 0.505,
-      "shadow_px": 5764
+      "shadow_px": 5764,
+      "webp": "assets/poses/chilli-run-0.webp",
+      "webp_bytes": 31350,
+      "webp_from": "2c1aaeecad29"
     }
   }
 }

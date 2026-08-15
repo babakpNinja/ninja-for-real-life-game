@@ -317,6 +317,85 @@ def test_the_gallery_stays_inside_its_transfer_budget(own_page):
         f"{sorted(got, key=lambda e: -e['size'])[:5]}")
 
 
+def test_every_pose_frame_ships_a_smaller_copy_too(base_url, art_credits):
+    """The same three ways as the characters, over the other block of credits.
+
+    Separate entries, separate directory, separate encode: a deploy can ship all
+    25 character WebPs and none of the nine pose ones, and every test above still
+    passes (#238).
+    """
+    bad = []
+    for key, entry in sorted(art_credits["poses"].items()):
+        small = entry.get("webp")
+        if not small:
+            bad.append(f"{key}: no webp credited")
+            continue
+        try:
+            with urllib.request.urlopen(f"{base_url}/{small}", timeout=15) as resp:
+                body = resp.read()
+                if resp.status != 200:
+                    bad.append(f"{key}:{resp.status}")
+                elif resp.headers.get("content-type") != "image/webp":
+                    bad.append(f"{key}: served as {resp.headers.get('content-type')}")
+                elif len(body) != entry.get("webp_bytes"):
+                    bad.append(f"{key}: {len(body)} bytes, "
+                               f"credited as {entry.get('webp_bytes')}")
+                elif not body.startswith(b"RIFF") or body[8:12] != b"WEBP":
+                    bad.append(f"{key}: served {body[:12]!r}, which is not a webp")
+        except Exception as exc:
+            bad.append(f"{key}:{exc}")
+    assert not bad, f"small copies not served: {bad}"
+
+
+# What playing a chapter is allowed to pull down. Measured the same way as the
+# gallery's: the nine pose renders are 860KB of PNG against 245KB of WebP (run
+# `scripts/fetch_assets.py --webp` for both totals), so ~258KB with headers. A
+# frame that regressed to its PNG adds 60-115KB, so this trips once about two of
+# them have, and leaves room for three or four more poses being drawn.
+#
+# This budget is the one a player waits through. The gallery's is spent when a
+# menu is opened, and can be spent while somebody reads a screen; these nine are
+# fetched at boot for the cast that is about to race, so the cost lands between
+# pressing play and seeing a dog that is really Bluey.
+RACE_BUDGET = 450_000
+
+
+def test_the_race_stays_inside_its_transfer_budget(own_page):
+    """The gallery budget covers a third of the artwork and reads as covering
+    the artwork (#238). This is the other two thirds, and the ones that arrive
+    while a chapter is starting rather than while a menu is open."""
+    page = own_page
+    page.click("#btn-chapters")
+    page.wait_for_selector(".chapter-card")
+    page.click(".chapter-card[data-ch='0']")
+    page.wait_for_selector("#btn-go")
+    page.click("#btn-go")
+    # Everything the run needs, arrived: `posePending` empties whether a frame
+    # loaded or gave up, so this is "the fetching has stopped", and the count
+    # below is what says the fetching happened at all.
+    page.wait_for_function("() => window.__art().posePending.length === 0", timeout=30000)
+    got = page.evaluate(
+        """() => performance.getEntriesByType('resource')
+             .filter((e) => e.name.includes('/assets/poses/'))
+             .map((e) => ({ name: e.name.split('/').pop(), size: e.transferSize }))"""
+    )
+    art = page.evaluate("window.__art()")
+    page.evaluate("() => window.game.stop()")   # #btn-go started the render loop
+    assert len(got) >= 9, f"only {len(got)} pose frames were fetched at all: {got}"
+    # A page whose cache served everything reports transferSize 0 and would pass
+    # an empty budget for free; this page is opened for this test and has none.
+    assert all(e["size"] > 0 for e in got), (
+        f"transferSize is not being reported: {[e for e in got if not e['size']][:3]}")
+    assert len(art["poseFrames"]) >= 9, (
+        f"only {len(art['poseFrames'])} of the nine frames decoded, so this measured "
+        f"a race drawn from the rig: {sorted(art['poseFrames'])}")
+    total = sum(e["size"] for e in got)
+    assert total <= RACE_BUDGET, (
+        f"the race pulled {total // 1024}KB over {RACE_BUDGET // 1024}KB in "
+        f"{len(got)} files; the biggest are "
+        f"{sorted(got, key=lambda e: -e['size'])[:5]}")
+
+
 def test_the_rigs_cover_every_character(base_url, art_credits):
     with urllib.request.urlopen(f"{base_url}/data/rigs.json", timeout=15) as resp:
         rigs = json.loads(resp.read())["rigs"]
@@ -649,8 +728,9 @@ def test_a_browser_that_cannot_read_webp_gets_the_pngs(own_page):
     """The fallback is the whole reason the PNGs are still shipped, and it is
     the branch this suite's own browser can never take."""
     page = own_page
-    asked = []
+    asked, asked_poses = [], []
     page.on("request", lambda r: asked.append(r.url) if "/assets/characters/" in r.url else None)
+    page.on("request", lambda r: asked_poses.append(r.url) if "/assets/poses/" in r.url else None)
     page.add_init_script(NO_WEBP)
     page.reload(wait_until="domcontentloaded")
     page.wait_for_function("window.__ready === true", timeout=20000)
@@ -666,6 +746,12 @@ def test_a_browser_that_cannot_read_webp_gets_the_pngs(own_page):
     webp = [u for u in asked if u.endswith(".webp")]
     assert not webp, f"asked for {len(webp)} files it cannot decode: {webp[:3]}"
     assert len(asked) >= 25, f"only {len(asked)} character files were asked for"
+    # ...and the pose frames, which boot fetches for the racing cast off the same
+    # switch. A browser sent nine files it cannot decode has no artwork to run in.
+    poses = page.evaluate("window.__art()")["poseFrames"]
+    assert len(poses) >= 9, f"only {len(poses)} pose frames decoded: {sorted(poses)}"
+    bad = [u for u in asked_poses if u.endswith(".webp")]
+    assert not bad, f"asked for {len(bad)} pose webps it cannot decode: {bad[:3]}"
 
 
 def test_a_missing_small_copy_falls_back_to_the_png(own_page):
@@ -701,6 +787,79 @@ def test_a_missing_small_copy_falls_back_to_the_png(own_page):
     assert not art["failed"], f"still showing nothing: {art['failed']}"
     fell_back = [k for k, v in art["drawn"].items() if v != "rig"]
     assert not fell_back, f"drawn without artwork: {fell_back}"
+
+
+# Keeping a pose frame asked for, the way the game keeps it asked for.
+#
+# The retries and the give-up live in `load()`, which only runs when something
+# calls for the picture: a character is drawn 60 times a second, so five tries
+# take about five seconds. `preload` calls once, at boot, so a pose frame that
+# fails there stays failed until a chapter draws that state — which is the whole
+# reason this is done through `drawCharacter` rather than by waiting on the menu.
+# It is the call `game.js` makes for the hero on every frame of a race.
+POSE_RECOVERY = """
+async ({ frame, seconds }) => {
+  const s = await import('/js/sprites.js');
+  await s.loadArt();
+  const ctx = document.createElement('canvas').getContext('2d');
+  const until = performance.now() + seconds * 1000;
+  while (performance.now() < until
+         && !(s.artState().poseWebpFellBack.includes(frame)
+              && s.artState().poseFrames.includes(frame))) {
+    s.drawCharacter(ctx, 'bluey', 60, 110, 90, null, performance.now() / 1000, 'run');
+    await new Promise((r) => requestAnimationFrame(r));
+  }
+  // One more, after: the loop leaves the moment the png is *there*, and how the
+  // character is drawn is only recorded by a draw that had it.
+  s.drawCharacter(ctx, 'bluey', 60, 110, 90, null, performance.now() / 1000, 'run');
+  return s.artState();
+}
+"""
+BLUEY_RUN = "assets/poses/bluey-run-0.png"
+
+
+def test_a_missing_small_pose_copy_falls_back_to_the_png(own_page):
+    """The same give-up, one directory over, and the one that would be noticed
+    last: a chapter whose pose frames never arrive still runs — every character
+    drops to the rig — so the game looks fine and quietly stops being drawn the
+    way it is meant to be drawn.
+    """
+    page = own_page
+    # every attempt, including the retries `load()` asks for as `<file>?retry=N`
+    page.route("**/assets/poses/*.webp*", lambda route: route.abort())
+    page.reload(wait_until="domcontentloaded")
+    page.wait_for_function("window.__ready === true", timeout=20000)
+    art = page.evaluate(POSE_RECOVERY, {"frame": BLUEY_RUN, "seconds": 15})
+    assert art["webp"] is True, "this browser never asked for a webp; test proves nothing"
+    assert BLUEY_RUN in art["poseWebpFellBack"], (
+        f"the run frame never moved to its png when the webp would not come: "
+        f"{art['poseWebpFellBack']}")
+    assert BLUEY_RUN in art["poseFrames"], (
+        f"it gave up on the webp and the png did not arrive either: "
+        f"{sorted(art['poseFrames'])}")
+    assert art["drawn"].get("bluey") == "pose", (
+        f"bluey is being drawn as {art['drawn'].get('bluey')!r} — the fallback got the "
+        "bytes and the race is still not drawn from the artwork")
+    assert not art["webpFellBack"], (
+        f"the characters gave up on their small copies too ({art['webpFellBack'][:3]}), "
+        "so the give-up is per directory rather than per file")
+
+
+def test_one_missing_pose_webp_does_not_move_the_others(own_page):
+    """The failure the per-file give-up exists to prevent, stated on its own: a
+    deploy that drops one frame must cost that frame's PNG, not all nine — which
+    is 800KB spent to recover from 30KB going missing."""
+    page = own_page
+    page.route(f"**/{BLUEY_RUN[:-4]}.webp*", lambda route: route.abort())
+    page.reload(wait_until="domcontentloaded")
+    page.wait_for_function("window.__ready === true", timeout=20000)
+    art = page.evaluate(POSE_RECOVERY, {"frame": BLUEY_RUN, "seconds": 15})
+    assert art["poseWebpFellBack"] == [BLUEY_RUN], (
+        f"blocking one frame moved {len(art['poseWebpFellBack'])} of them: "
+        f"{sorted(art['poseWebpFellBack'])}")
+    assert len(art["poseFrames"]) >= 9, (
+        f"only {len(art['poseFrames'])} frames are showing, so the other eight are "
+        f"not the proof they look like: {sorted(art['poseFrames'])}")
 
 
 # --- when the pictures never arrive -----------------------------------------

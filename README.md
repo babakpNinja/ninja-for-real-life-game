@@ -135,14 +135,28 @@ is sent. If a small copy is missing, the retries are spent on it and then that
 character quietly moves to its PNG, because a WebP that fails to ship takes the
 artwork away from nearly everyone while the file beside it is fine.
 
+**So do the pose frames**, and there it matters more: the nine side-on renders
+are asked for at *boot*, for the cast that is about to race, not when a menu is
+opened — so 0.86 MB of PNG was being spent on the picture a player is looking at
+while the chapter starts. The same encoder writes them (0.24 MB), the same
+`asset-credits.json` credits them, and the same give-up is per *file*: one pose
+frame whose small copy 404s falls back on its own and the other eight stay small.
+The PNG path stays the identity throughout — it is what `poses.json` names, what
+`pose-joints.json` measured its hips off, and what the cache is keyed by; only
+the URL asked for changes.
+
 The encoding is lossy at quality 90, which is a decision about this artwork and
 not a habit: WebP stores alpha losslessly, so the silhouette every rig, cutout
 score and blink box was measured off comes back byte-identical — `--check`
-asserts that per character rather than trusting it — and what moves is colour,
+asserts that per character *and* per pose frame rather than trusting it, and
+says out loud how many pairs it opened — and what moves is colour,
 inside the shape, by more than 8/255 on 0.35% of the pixels of the worst
 character. Lossless WebP was measured too and only reaches 1.5 MB. The gallery's
 share of it is a test: `test_the_gallery_stays_inside_its_transfer_budget` opens
 the screen on a cold page and sums `transferSize` over the character files.
+`test_the_race_stays_inside_its_transfer_budget` does the same for a chapter,
+over the pose frames, because a race that quietly went back to shipping nine
+PNGs is invisible to a budget measured on the gallery.
 
 ```bash
 python3 scripts/fetch_assets.py --check   # credited, a cut-out, and the notice above unchanged
@@ -236,7 +250,7 @@ public/js/sprites.js    pose frames + the cut-out rig: loads the artwork and ani
 public/js/audio.js      WebAudio music + SFX
 public/js/main.js       screens, HUD, gallery, credits, save data
 public/assets/characters/  25 characters, twice: PNG (~2.2 MB) + WebP (~0.6 MB)
-public/assets/poses/       the side-on action renders, one per character/state
+public/assets/poses/       9 side-on action renders, twice: PNG (~0.8 MB) + WebP (~0.2 MB)
 public/data/characters.json      25 character bios
 public/data/asset-credits.json   where each image came from, and when
 public/data/poses.json           which frames a character uses for which state

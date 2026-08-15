@@ -962,6 +962,94 @@ def test_a_small_copy_that_lost_the_silhouette_is_a_problem(one_character):
     assert "alpha" in problem, problem
 
 
+# ------------------------------------ ...and of the pose frames (#238)
+# The nine action renders got the second encoding a release later, and they are
+# the ones a phone pulls at boot, for the cast about to race. Everything above
+# walks `credits["assets"]`; these are the same guarantees over `credits["poses"]`,
+# which is a separate block with separate entries — a checker that only ever knew
+# about characters would report "alpha checked against each png" while 860KB of
+# pose PNG shipped unencoded, which is exactly the state #238 was filed in.
+
+@pytest.fixture
+def one_pose(fetch_assets, tmp_path, monkeypatch):
+    """The same tree, with a pose frame instead of a character render."""
+    from PIL import Image
+
+    mod = fetch_assets
+    out = tmp_path / "public" / "assets" / "poses"
+    out.mkdir(parents=True)
+    png = out / "bluey-run-0.png"
+    im = Image.new("RGBA", (16, 16), (30, 120, 200, 255))
+    for x in range(8):
+        im.putpixel((x, 0), (0, 0, 0, 0))      # the hip in pose-joints.json is
+    im.save(png, "PNG")                        # a fraction of this silhouette
+    monkeypatch.setattr(mod, "APP", tmp_path)
+    return mod, png, {"poses": {"bluey:run:0": {"file": "assets/poses/bluey-run-0.png",
+                                                **mod.encode_webp(png)}}}
+
+
+def test_a_pose_frame_is_encoded_next_to_itself(one_pose):
+    """Not into the characters directory, which is where the path used to be
+    built from: a pose credited as `assets/characters/bluey-run-0.webp` 404s for
+    every browser that prefers it, and the fallback is five failed tries away."""
+    mod, png, credits = one_pose
+    entry = credits["poses"]["bluey:run:0"]
+    assert entry["webp"] == "assets/poses/bluey-run-0.webp", entry["webp"]
+    assert png.with_suffix(".webp").exists()
+    assert mod.webp_problems(credits) == [], "the healthy pair is already a problem"
+
+
+def test_a_pose_frame_with_a_stale_small_copy_is_a_problem(one_pose):
+    """A re-fetched or re-cropped pose rewrites the PNG — `bingo-jump-0` and
+    `chilli-run-0` both were — and the WebP beside it goes on showing the frame
+    from before to nearly every browser, with the joints still measured off the
+    PNG nobody is sent."""
+    from PIL import Image
+
+    mod, png, credits = one_pose
+    Image.new("RGBA", (16, 16), (200, 30, 30, 255)).save(png, "PNG")
+    problem, = mod.webp_problems(credits)
+    assert "stale" in problem, problem
+    assert "bluey:run:0" in problem, problem
+
+
+def test_a_pose_frame_that_lost_the_silhouette_is_a_problem(one_pose):
+    """The pose equivalent of the rig argument, and the reason the alpha is
+    compared per frame rather than assumed from 'WebP stores alpha losslessly':
+    `pose-joints.json` cuts each run render at a hip measured off this channel,
+    so an encoder that touched it would swing the legs from the wrong place."""
+    from PIL import Image
+
+    mod, png, credits = one_pose
+    small = png.with_suffix(".webp")
+    Image.new("RGBA", (16, 16), (30, 120, 200, 255)).save(  # no transparent pixels
+        small, "WEBP", quality=mod.WEBP_QUALITY, method=mod.WEBP_METHOD)
+    entry = credits["poses"]["bluey:run:0"]
+    entry["webp_bytes"] = small.stat().st_size            # so only the alpha is wrong
+    problem, = mod.webp_problems(credits)
+    assert "alpha" in problem, problem
+
+
+def test_the_check_counts_the_pairs_it_compared_not_the_files_on_disk(one_pose):
+    """What `check()` prints is a report of what the loop did.
+
+    `compared` is appended to at the end of the comparison, so a frame that fell
+    out at any guard before it is absent from the count as well as named in a
+    problem — otherwise the line says nine frames were checked while one of them
+    was never opened.
+    """
+    mod, png, credits = one_pose
+    compared = []
+    assert mod.webp_problems(credits, compared) == []
+    assert [(b, label) for b, label, _ in compared] == [("poses", "bluey:run:0")]
+    assert compared[0][2] == png.with_suffix(".webp").stat().st_size
+
+    png.with_suffix(".webp").unlink()
+    compared = []
+    assert mod.webp_problems(credits, compared), "a missing webp is not a problem"
+    assert compared == [], "counted a pair it never opened"
+
+
 def test_a_stale_small_copy_makes_the_command_itself_exit_non_zero(
         fetch_assets, tmp_path, monkeypatch, capsys):
     """`check()` has to actually call it, on the real 25.
@@ -982,11 +1070,21 @@ def test_a_stale_small_copy_makes_the_command_itself_exit_non_zero(
 
 def test_the_check_says_it_looked_at_the_small_copies(fetch_assets, capsys):
     """Not-checked must not read as checked-and-clean: a run that says nothing
-    about the WebPs is indistinguishable from one that never looked."""
+    about the WebPs is indistinguishable from one that never looked.
+
+    Both kinds of artwork, and the counts are asserted against the credits
+    rather than against 25 and 9 typed here — the point is that the line reports
+    every pair the checker walked, so a block it silently stopped walking shows
+    up as a number that no longer matches (#238).
+    """
     mod = fetch_assets
+    credits = json.loads(mod.CREDITS.read_text())
     assert mod.check() == 0
     out = capsys.readouterr().out
-    assert re.search(r"\+ \d+ webp, \d+KB, alpha checked against each png", out), out
+    assert re.search(rf"\+ {len(credits['assets'])} webp, \d+KB, alpha checked "
+                     r"against each png", out), out
+    assert re.search(rf"\d+ pose frames of which {len(credits['poses'])} ship a webp "
+                     r"too \(\d+KB, alpha checked the same way\)", out), out
 
 
 def test_a_readme_that_misstates_what_the_artwork_costs_is_a_problem(
@@ -994,24 +1092,48 @@ def test_a_readme_that_misstates_what_the_artwork_costs_is_a_problem(
     """The two numbers in the layout line are the whole reason for shipping two
     encodings, and nothing else in the repo would ever correct them: they were
     typed once, off a measurement, and every later character makes them wronger.
+
+    Every directory that ships two encodings, one line at a time (#238): the
+    pose frames' line arrived long after the characters' one, and a check that
+    only ever proved the first would have let the second in unmeasured. The
+    line being broken is taken out of the real README, not retyped here.
     """
     mod = fetch_assets
-    fake = tmp_path / "README.md"
-    fake.write_text(mod.README.read_text().replace("PNG (~2.2 MB)", "PNG (~9.9 MB)"))
-    monkeypatch.setattr(mod, "README", fake)
+    real = mod.README.read_text()
     credits = json.loads(mod.CREDITS.read_text())
-    problem, = [p for p in mod.prose_problems(credits, 25) if "MB" in p]
-    assert "9.9" in problem and "pngs" in problem, problem
+    fake = tmp_path / "README.md"
+    monkeypatch.setattr(mod, "README", fake)
+    checked = []
+    for directory, pattern in mod.README_SIZES:
+        line = pattern.search(real).group(0)
+        broken = re.sub(r"PNG \(~[\d.]+ MB\)", "PNG (~9.9 MB)", line)
+        assert broken != line, f"nothing to break in {line!r}"
+        fake.write_text(real.replace(line, broken))
+        problem, = [p for p in mod.prose_problems(credits, 25) if "MB" in p]
+        assert "9.9" in problem and "pngs" in problem, problem
+        assert str(directory.relative_to(mod.APP)) in problem, problem
+        checked.append(directory.name)
+    assert checked == ["characters", "poses"], checked
 
 
 def test_a_layout_line_that_stopped_naming_the_two_encodings_is_a_problem(
         fetch_assets, tmp_path, monkeypatch):
     """Not-stated must not read as correct. A README rewritten around the line
-    would otherwise take the measurement with it and leave a passing check."""
+    would otherwise take the measurement with it and leave a passing check.
+
+    Once per directory, and the problem has to name which line went missing:
+    two silences that read the same are one silence (#238)."""
     mod = fetch_assets
-    fake = tmp_path / "README.md"
-    fake.write_text(mod.README.read_text().replace("PNG (~2.2 MB) + WebP (~0.6 MB)",
-                                                   "the character artwork"))
-    monkeypatch.setattr(mod, "README", fake)
+    real = mod.README.read_text()
     credits = json.loads(mod.CREDITS.read_text())
-    assert [p for p in mod.prose_problems(credits, 25) if "no longer says" in p]
+    fake = tmp_path / "README.md"
+    monkeypatch.setattr(mod, "README", fake)
+    checked = []
+    for directory, pattern in mod.README_SIZES:
+        line = pattern.search(real).group(0)
+        fake.write_text(real.replace(line, line.split("PNG")[0] + "the artwork"))
+        where = str(directory.relative_to(mod.APP))
+        assert [p for p in mod.prose_problems(credits, 25)
+                if "no longer says" in p and where in p], where
+        checked.append(directory.name)
+    assert checked == ["characters", "poses"], checked

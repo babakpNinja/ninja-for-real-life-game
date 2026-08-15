@@ -72,17 +72,23 @@ if (typeof window !== "undefined" && window.addEventListener) {
   window.addEventListener("online", () => {
     art.failed.clear();
     poseArt.failed.clear();
-    // ...including the characters that gave up on their small copy. Five
-    // failures in a tunnel are not evidence that the .webp is missing.
+    // ...including the characters and pose frames that gave up on their small
+    // copy. Five failures in a tunnel are not evidence that the .webp is missing.
     webpGaveUp.clear();
+    poseGaveUp.clear();
   });
 }
 
 /*
- * Each character ships twice: the PNG `normalise` wrote, and a WebP of the same
- * picture beside it (see scripts/fetch_assets.py). All 25 are asked for at once
- * when the gallery opens, which is 2.2 MB of PNG against 0.6 MB of WebP, on a
- * phone, in a car. So ask for the small one where the browser can read it.
+ * Every drawing ships twice: the PNG `normalise` wrote, and a WebP of the same
+ * picture beside it (see scripts/fetch_assets.py). All 25 characters are asked
+ * for at once when the gallery opens, which is 2.2 MB of PNG against 0.6 MB of
+ * WebP, on a phone, in a car. So ask for the small one where the browser can
+ * read it.
+ *
+ * The nine pose frames are the same trade in a worse place (#238): 860KB of PNG
+ * against 244KB, pulled at boot for the cast that is about to race rather than
+ * when a menu is opened, so the wait lands on the chapter starting.
  *
  * Support is asked of the encoder, not of the user agent string: a canvas that
  * cannot encode WebP hands back a PNG data URL. Asked once — this is called
@@ -90,6 +96,7 @@ if (typeof window !== "undefined" && window.addEventListener) {
  */
 let webpOk = null;
 const webpGaveUp = new Set(); // ids whose small copy never arrived; ask for the PNG
+const poseGaveUp = new Set(); // ...and pose frames, keyed by their png path
 
 function webpSupported() {
   if (webpOk === null) {
@@ -104,20 +111,44 @@ function webpSupported() {
   return webpOk;
 }
 
-/** Which of a character's two files to ask for. */
-function artUrl(id, entry) {
-  if (!entry.webp || webpGaveUp.has(id) || !webpSupported()) return entry.file;
-  const gone = art.failed.get(id);
+/**
+ * Which of one picture's two files to ask for, given the cache it lives in.
+ *
+ * Shared by the characters and the pose frames rather than written twice: the
+ * give-up is the part that goes subtly wrong, and a give-up that turned out to
+ * be per-directory instead of per-file would take the artwork away from every
+ * browser at once, which is the failure both copies exist to prevent.
+ */
+function smallOr(store, key, file, webp, gaveUp) {
+  if (!webp || gaveUp.has(key) || !webpSupported()) return file;
+  const gone = store.failed.get(key);
   if (gone && gone.tries >= TRIES) {
     // The small copy is the one nearly every browser asks for, so if that is
-    // the file that is missing, nearly everyone loses the character while a
+    // the file that is missing, nearly everyone loses the picture while a
     // perfectly good PNG sits beside it. Spend the retries on the WebP, then
     // stop asking for it and start asking for the other one.
-    webpGaveUp.add(id);
-    art.failed.delete(id);
-    return entry.file;
+    gaveUp.add(key);
+    store.failed.delete(key);
+    return file;
   }
-  return entry.webp;
+  return webp;
+}
+
+/** Which of a character's two files to ask for. */
+function artUrl(id, entry) {
+  return smallOr(art, id, entry.file, entry.webp, webpGaveUp);
+}
+
+/*
+ * ...and which of a pose frame's two. The key stays the PNG path everywhere it
+ * is a name rather than a URL — poses.json lists it, pose-joints.json is keyed
+ * on it, `poseFrames` reports it — so only the bytes on the wire change and a
+ * frame is still the same frame whichever copy of it arrived.
+ */
+const poseWebp = new Map(); // pose png path -> its webp, credited in asset-credits.json
+
+function poseUrl(path) {
+  return smallOr(poseArt, path, path, poseWebp.get(path), poseGaveUp);
 }
 
 export function artState() {
@@ -150,6 +181,11 @@ export function artState() {
     // never needed one.
     webp: webpSupported(),
     webpFellBack: [...webpGaveUp],
+    // The same two facts for the pose frames, which are a different set of
+    // files with their own give-up: 25 characters back on their PNGs and 9
+    // pose frames back on theirs are separate failures, and the second one is
+    // the one that happens while a chapter is being played.
+    poseWebpFellBack: [...poseGaveUp],
     credits,
   };
 }
@@ -165,6 +201,14 @@ export async function loadArt() {
   credits = c;
   rigs = (r && r.rigs) || {};
   poses = (p && p.frames) || {};
+  // The second encoding of each pose frame, credited beside the first. Indexed
+  // by path because that is how a frame is named everywhere else here; a frame
+  // with no `webp` credited is simply asked for as the PNG, which is what all
+  // nine of them were before #238.
+  poseWebp.clear();
+  Object.values((c && c.poses) || {}).forEach((e) => {
+    if (e.file && e.webp) poseWebp.set(e.file, e.webp);
+  });
   // a frame with no joint — or a page that never got this file — is drawn
   // whole, which is exactly what every pose did before the hip existed
   poseJoints = (j && j.joints) || {};
@@ -225,7 +269,7 @@ export function preload(ids) {
     // ...and their action poses. A frame that arrives mid-chapter would pop
     // the character from the rig to the pose render in the middle of a run.
     Object.values(poses[id] || {}).forEach((frames) =>
-      frames.forEach((f) => load(poseArt, f, f)));
+      frames.forEach((f) => load(poseArt, f, poseUrl(f))));
   });
 }
 
@@ -609,7 +653,7 @@ const POSE_FALLBACK = { float: "jump", jump: "run", cheer: "run" };
 function poseFrame(id, state) {
   const path = poseFile(id, state);
   if (!path) return null;
-  const img = load(poseArt, path, path);
+  const img = load(poseArt, path, poseUrl(path));
   return img && img.width ? img : null;
 }
 
