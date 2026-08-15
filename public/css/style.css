@@ -70,8 +70,10 @@ canvas#game {
 
 .icon-btn {
   pointer-events: auto;
-  width: clamp(42px, 8vw, 56px);
-  height: clamp(42px, 8vw, 56px);
+  /* 44px is the floor on purpose: the tap target in Apple's HIG and WCAG
+     2.5.5, and 8vw is under it on any phone narrower than 550px (#258) */
+  width: clamp(44px, 8vw, 56px);
+  height: clamp(44px, 8vw, 56px);
   border-radius: 50%;
   border: none;
   background: rgba(255, 255, 255, 0.9);

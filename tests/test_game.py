@@ -19,6 +19,7 @@ place their state belongs.
 
 import collections
 import contextlib
+import itertools
 import json
 import math
 import re
@@ -3954,9 +3955,13 @@ BOTTOM_OF_THE_SCREEN = """
 
 
 def overlap(a, b):
-    """Area the two rects share, in CSS pixels — 0 if either is off the screen."""
-    if not (a["shown"] and b["shown"]):
-        return 0
+    """Area two rects share, in CSS pixels.
+
+    Pure geometry. A caller holding a node that might not be on the screen has
+    to ask ``shown`` itself: a ``display:none`` node's rect is all zeros, and
+    zeros overlap nothing — a pass, for a reason that has nothing to do with
+    what was being checked.
+    """
     wide = min(a["right"], b["right"]) - max(a["left"], b["left"])
     tall = min(a["bottom"], b["bottom"]) - max(a["top"], b["top"])
     return max(0, wide) * max(0, tall)
@@ -3993,11 +3998,146 @@ def test_the_rotate_pill_never_covers_the_progress_bar(make_page):
         assert seen["bar"]["shown"] and seen["dog"]["shown"], (
             f"the progress bar is not on screen during a chapter: {seen}")
         for part in ("bar", "dog"):
-            assert overlap(seen["hint"], seen[part]) == 0, (
-                f"the pill covers {overlap(seen['hint'], seen[part]):.0f}px2 of "
+            covered = overlap(seen["hint"], seen[part]) if seen["hint"]["shown"] else 0
+            assert covered == 0, (
+                f"the pill covers {covered:.0f}px2 of "
                 f"#hud-progress{'' if part == 'bar' else '-dog'}: pill "
                 f"y {seen['hint']['top']:.0f}..{seen['hint']['bottom']:.0f}, "
                 f"it y {seen[part]['top']:.0f}..{seen[part]['bottom']:.0f}")
+    finally:
+        page.evaluate("() => window.game && window.game.stop()")
+        page.context.close()
+
+
+# --- and the class it belongs to: nothing sits on anything else (#258) -------
+
+# Screens the check is run on. The two phones are the shapes it is really for;
+# the short-and-wide one is a laptop with the browser chrome taking half the
+# window, which is where a bottom-anchored thing and a top-anchored thing first
+# meet.
+SCREENS = [
+    (IPHONE, True, "phone upright"),
+    ({"width": 844, "height": 390}, True, "phone sideways"),
+    (DESKTOP, False, "laptop"),
+    ({"width": 1024, "height": 420}, False, "laptop, short window"),
+]
+
+# The longest thing the game ever says, taken from the engine rather than
+# retyped: a toast is furniture too, and the widest one is the one that would
+# reach the pills. The interpolated ones (`${c.name} says g'day!`) are not
+# collected — a name is not known here.
+TOASTS = re.findall(r'this\.toast\("([^"]+)"\)', (APP / "public" / "js" / "game.js").read_text())
+
+# What a player sees as one *thing*: something that paints its own background,
+# or a leaf with text in it. The walk stops at the first one, so a compound
+# widget is a single box — #hud-progress owns the fill and the paw marker
+# riding it, and a marker on its own bar is not two things on top of each
+# other. #game is the world (everything is over it, on purpose) and #overlay is
+# a full-screen screen (it is meant to cover the lot), so the walk skips both.
+FURNITURE = """
+() => {
+  const alphaOf = (colour) => {
+    const parts = colour.match(/[\\d.]+/g) || [];
+    return parts.length > 3 ? parseFloat(parts[3]) : 1;
+  };
+  const seen = [];
+  const walk = (node) => {
+    for (const kid of node.children) {
+      if (kid.id === 'game' || kid.id === 'overlay') continue;
+      const cs = getComputedStyle(kid);
+      if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+      if (parseFloat(cs.opacity) < 0.05) continue;
+      const b = kid.getBoundingClientRect();
+      if (b.width < 1 || b.height < 1) continue;
+      const paints = alphaOf(cs.backgroundColor) > 0.01;
+      const leafText = kid.children.length === 0 && kid.textContent.trim() !== '';
+      if (paints || leafText) {
+        seen.push({
+          what: kid.id || kid.className || kid.tagName.toLowerCase(),
+          text: kid.textContent.trim().slice(0, 20),
+          tappable: kid.tagName === 'BUTTON' || cs.cursor === 'pointer',
+          left: b.left, right: b.right, top: b.top, bottom: b.bottom,
+          width: b.width, height: b.height,
+        });
+      } else {
+        walk(kid);
+      }
+    }
+  };
+  walk(document.getElementById('stage'));
+  return { seen, view: { w: window.innerWidth, h: window.innerHeight } };
+}
+"""
+
+# 44 CSS px is the tap target in both Apple's HIG and WCAG 2.5.5 — a five year
+# old aiming at a pause button is exactly who that number is for.
+TAP_TARGET = 44
+
+# A pair that is allowed to overlap says why here, by the two names the walk
+# reports. Empty on purpose: today nothing on this screen is meant to cover
+# anything else, and an exemption added later should have to be argued for.
+ALLOWED_TO_OVERLAP: dict[frozenset, str] = {}
+
+
+@pytest.mark.parametrize("viewport,touch,screen", SCREENS, ids=[s[2] for s in SCREENS])
+def test_nothing_on_the_hud_sits_on_top_of_anything_else(make_page, viewport, touch, screen):
+    """The class #252 belongs to: chrome covering the thing it sits next to.
+
+    #252 was the rotate pill completely containing the progress bar on a phone
+    — every rect was there at runtime and nobody was subtracting them. So this
+    asks the page what is on it, rather than naming the parts: anything added
+    later is measured without someone remembering to come back here.
+
+    It runs mid-chapter, which is the crowded screen and the one #252 was
+    about. The menus are their own thing: an overlay is a screen, and covering
+    what is behind it is its whole job.
+    """
+    assert TOASTS, ("no toasts found in game.js — this measures a screen with "
+                    "the game's own words on it, so a rename there must not "
+                    "quietly turn that half off")
+    page = make_page(viewport, touch=touch)
+    try:
+        page.click("#btn-play")
+        page.wait_for_selector("#btn-go")
+        page.click("#btn-go")
+        page.wait_for_timeout(400)
+        assert page.evaluate("window.game.mode") == "playing", (
+            f"{screen}: never got into a chapter, so there is no HUD to measure")
+        page.evaluate("(text) => window.game.onEvent({ type: 'toast', text })",
+                      max(TOASTS, key=len))
+        page.wait_for_timeout(300)
+
+        found = page.evaluate(FURNITURE)
+        seen, view = found["seen"], found["view"]
+        names = sorted(item["what"] for item in seen)
+        assert len(seen) >= 5, (
+            f"{screen}: only {len(seen)} things found on a screen that has a "
+            f"score, a token count, mute, pause and a progress bar: {names}")
+
+        for a, b in itertools.combinations(seen, 2):
+            why = ALLOWED_TO_OVERLAP.get(frozenset((a["what"], b["what"])))
+            area = overlap(a, b)
+            assert area == 0 or why, (
+                f"{screen}: {a['what']} covers {area:.0f}px2 of {b['what']} — "
+                f"{a['what']} y {a['top']:.0f}..{a['bottom']:.0f} x "
+                f"{a['left']:.0f}..{a['right']:.0f}, {b['what']} y "
+                f"{b['top']:.0f}..{b['bottom']:.0f} x {b['left']:.0f}..{b['right']:.0f}")
+
+        for item in seen:
+            assert (item["left"] >= -0.5 and item["top"] >= -0.5
+                    and item["right"] <= view["w"] + 0.5
+                    and item["bottom"] <= view["h"] + 0.5), (
+                f"{screen}: {item['what']} runs off a {view['w']}x{view['h']} "
+                f"screen — x {item['left']:.0f}..{item['right']:.0f}, "
+                f"y {item['top']:.0f}..{item['bottom']:.0f}")
+
+        for item in seen:
+            if not item["tappable"]:
+                continue
+            assert min(item["width"], item["height"]) >= TAP_TARGET, (
+                f"{screen}: {item['what']} ({item['text']!r}) is "
+                f"{item['width']:.0f}x{item['height']:.0f} — under the "
+                f"{TAP_TARGET}px a small finger needs to hit it")
     finally:
         page.evaluate("() => window.game && window.game.stop()")
         page.context.close()
