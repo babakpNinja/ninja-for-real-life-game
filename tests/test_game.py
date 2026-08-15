@@ -4583,6 +4583,222 @@ def test_the_peephole_rule_notices_a_screen_squeezed_to_a_slot(make_page):
         page.context.close()
 
 
+# --- and the pill that talks over the way out (#277) --------------------------
+
+HINT = "#rotate-hint"
+
+# Rooted at the panel, so this is "a button pinned under this screen" rather than
+# "a button": the pill is allowed to be over the game, and during a chapter there
+# is no panel at all.
+FOOT_BUTTONS = "#overlay .panel > .panel-foot button"
+
+HINT_BOX = """
+(sels) => {
+  const hint = document.querySelector(sels.hint);
+  if (!hint) return null;
+  const cs = getComputedStyle(hint);
+  const box = (n) => {
+    const b = n.getBoundingClientRect();
+    return { what: n.id || n.className || n.tagName.toLowerCase(),
+             text: n.textContent.trim().slice(0, 24),
+             top: b.top, bottom: b.bottom, left: b.left, right: b.right,
+             width: b.width, height: b.height };
+  };
+  const panel = document.querySelector(sels.panel);
+  return {
+    // `hidden` is what takes it away, and a node with no box is not on the
+    // screen whatever its rect says (#252)
+    shown: cs.display !== 'none' && cs.visibility !== 'hidden'
+           && hint.getBoundingClientRect().width > 1,
+    // `closest` walks up: false means it is loose on the stage again, anchored
+    // to a window whose bottom now belongs to the panel
+    inTheFoot: hint.closest(sels.foot) !== null,
+    hint: box(hint),
+    buttons: [...document.querySelectorAll(sels.buttons)].map(box),
+    panel: panel ? box(panel) : null,
+    view: { w: window.innerWidth, h: window.innerHeight },
+  };
+}
+"""
+
+
+HINT_SELS = {"hint": HINT, "foot": f"{PANEL} > .panel-foot",
+             "buttons": FOOT_BUTTONS, "panel": PANEL}
+
+# Forced up rather than waited for: the pill takes itself away after six seconds,
+# and a check that waited would measure whichever screens it happened to reach
+# first. It says so if there is no pill to raise — `null.classList` is a stack
+# trace about the test, and the thing it would be saying is a real failure.
+SHOW_HINT = """
+(sel) => {
+  const n = document.querySelector(sel);
+  if (!n) throw new Error('nothing matched ' + sel + ', so there is no pill to raise');
+  n.classList.remove('hidden');
+}
+"""
+
+
+def hint_shows_itself(page, viewport) -> bool:
+    """Does the game put the pill up by itself, with nothing forced?
+
+    The pill takes itself away after `HINT_MS`, so simply looking would be
+    racing a six second timer that started when the page loaded. Instead this
+    asks for the state the game shows it in — a phone *arriving* in portrait —
+    by leaving the shape of the window and coming back to it, which is the
+    event the orientation watcher listens for. A window that is already
+    landscape leaves portrait on the way back and is told to put the pill away,
+    which is the other half of the same rule.
+    """
+    w, h = viewport["width"], viewport["height"]
+    for size in ({"width": h, "height": w}, {"width": w, "height": h}):
+        page.set_viewport_size(size)
+        # the window is the size it was asked for before the page has been told
+        # so — a fixed wait here reads the answer to the *previous* shape on a
+        # busy machine, and the pill is exactly what is mid-change
+        page.wait_for_function(f"() => window.innerWidth === {size['width']}")
+        # and `orientationchange` is answered 250ms late on purpose, so a window
+        # that has finished resizing still has one verdict about the pill to
+        # come — measure before it and the *next* thing this test does to the
+        # pill gets undone underneath it
+        page.wait_for_timeout(500)
+    return page.evaluate(HINT_BOX, HINT_SELS)["shown"]
+
+
+@pytest.mark.parametrize("viewport,touch,screen", SCREENS, ids=SCREEN_IDS)
+def test_the_rotate_pill_never_lands_on_the_way_out(make_page, viewport, touch, screen):
+    """#277: "Turn your phone sideways" drawn across "← Back".
+
+    The pill was `bottom: 8px` on the stage, from before #269 pinned the way out
+    to the bottom of the panel and the panel grew to the bottom of the window.
+    On a 390x844 phone the characters screen then had 32px of a 56px "← Back"
+    under a translucent black pill for the first six seconds — the six seconds a
+    player is looking for the way out.
+
+    So every screen is asked with the pill up, at every window: does it touch a
+    button pinned under this screen, and is all of it somewhere a player can
+    see? It is forced up rather than waited for, because the timer would decide
+    which screens got measured; that the game raises it on its own, and only on
+    a phone held upright, is the last two assertions.
+    """
+    page = make_page(viewport, touch=touch)
+    upright = viewport["height"] > viewport["width"] * 1.1
+    measured, by_itself = [], None
+    try:
+        for name in overlay_screens(page):
+            where = f"{screen}, {name}"
+            if by_itself is None:
+                by_itself = hint_shows_itself(page, viewport)
+            # is it there at all, before anything is done to it: every screen is
+            # built from scratch, and a pill thrown away by one of them cannot be
+            # taken off the screen it is covering either
+            assert page.evaluate(HINT_BOX, HINT_SELS), (
+                f"{where}: no {HINT} on the page at all — a pill left behind by a "
+                f"screen rebuild has no rect, and no rect reads here as covering "
+                f"nothing")
+            page.evaluate(SHOW_HINT, HINT)
+            page.wait_for_timeout(80)
+
+            found = page.evaluate(HINT_BOX, HINT_SELS)
+            assert found["shown"], (
+                f"{where}: the pill will not come up even with `hidden` taken off "
+                f"it, so nothing below is measuring a pill a player would see")
+            assert found["inTheFoot"], (
+                f"{where}: the pill is outside the block of pinned buttons, so it is "
+                f"placed against something other than what it can cover — that is "
+                f"#277's arrangement, whatever the rects happen to be on this screen")
+            hint, buttons = found["hint"], found["buttons"]
+            assert buttons, (
+                f"{where}: no buttons pinned under this screen, so the rule below is "
+                f"being asked about nothing")
+
+            for b in buttons:
+                area = overlap(hint, b)
+                assert area == 0, (
+                    f"{where}: the rotate pill covers {area:.0f}px2 of {b['what']} "
+                    f"({b['text']!r}) — pill y {hint['top']:.0f}..{hint['bottom']:.0f} "
+                    f"x {hint['left']:.0f}..{hint['right']:.0f}, it y "
+                    f"{b['top']:.0f}..{b['bottom']:.0f} x "
+                    f"{b['left']:.0f}..{b['right']:.0f}")
+
+            view, panel = found["view"], found["panel"]
+            assert (hint["left"] >= -0.5 and hint["top"] >= -0.5
+                    and hint["right"] <= view["w"] + 0.5
+                    and hint["bottom"] <= view["h"] + 0.5), (
+                f"{where}: the pill runs off a {view['w']}x{view['h']} screen — x "
+                f"{hint['left']:.0f}..{hint['right']:.0f}, y "
+                f"{hint['top']:.0f}..{hint['bottom']:.0f}")
+            # the panel hides its overflow, so a pill inside it that is outside
+            # its box is cut in half rather than merely somewhere odd
+            assert (hint["top"] >= panel["top"] - 0.5
+                    and hint["bottom"] <= panel["bottom"] + 0.5
+                    and hint["left"] >= panel["left"] - 0.5
+                    and hint["right"] <= panel["right"] + 0.5), (
+                f"{where}: the pill is at y {hint['top']:.0f}..{hint['bottom']:.0f} "
+                f"x {hint['left']:.0f}..{hint['right']:.0f} and the panel it is in "
+                f"runs y {panel['top']:.0f}..{panel['bottom']:.0f} x "
+                f"{panel['left']:.0f}..{panel['right']:.0f}, which hides what is "
+                f"outside it — the part of the pill over that edge is cut off")
+            measured.append(name)
+    finally:
+        page.evaluate("() => window.game && window.game.stop()")
+        page.context.close()
+    assert len(measured) == 9, f"only measured {measured}"
+    assert by_itself == upright, (
+        f"on {screen} the game "
+        f"{'never raised' if upright else 'raised'} the pill on its own after the "
+        f"window arrived at {viewport['width']}x{viewport['height']} — it is the "
+        f"nudge for a phone held upright and nothing else, and if it does not come "
+        f"up by itself here then the pill measured above is one only this test ever "
+        f"sees")
+
+
+def test_the_pill_rule_notices_the_pill_back_over_the_way_out(make_page):
+    """Prove the rule above catches #277's own geometry, not just a stray pill.
+
+    Put back where it was, the pill fails on the menu for the wrong reason: the
+    panel there is 476px of an 844px window, so a pill against the bottom of the
+    window is outside the panel and the clipping rule gets it first. #277 was
+    measured on the characters screen, where the panel does reach the bottom and
+    the pill lands squarely on "← Back" — so that is where the overlap rule has
+    to be shown going red, with the pill given back the two lines of CSS it had.
+    """
+    page = make_page(IPHONE, touch=True)
+    try:
+        page.click("#btn-gallery")
+        page.wait_for_selector(".char-card")
+        page.evaluate(SHOW_HINT, HINT)
+        page.wait_for_timeout(80)
+
+        before = page.evaluate(HINT_BOX, HINT_SELS)
+        assert before["buttons"], "no pinned buttons on the characters screen to be covered"
+        assert not any(overlap(before["hint"], b) for b in before["buttons"]), (
+            f"the drill starts from a screen where the pill is already on a button: "
+            f"{before['hint']}, {before['buttons']}")
+
+        page.evaluate("""(sel) => {
+          const n = document.querySelector(sel);
+          n.style.position = 'fixed';
+          n.style.bottom = '8px';
+          n.style.left = '50%';
+          n.style.transform = 'translateX(-50%)';
+        }""", HINT)
+        page.wait_for_timeout(80)
+
+        after = page.evaluate(HINT_BOX, HINT_SELS)
+        # by key, not by tupling the area with the button: two buttons equally
+        # covered would put a pair of dicts up against each other
+        worst = max(after["buttons"], key=lambda b: overlap(after["hint"], b))
+        assert overlap(after["hint"], worst) > 0, (
+            f"the pill was put back against the bottom of the window and covers none "
+            f"of the buttons pinned there — pill y {after['hint']['top']:.0f}.."
+            f"{after['hint']['bottom']:.0f}, buttons {after['buttons']}")
+        assert worst["text"].endswith("Back"), (
+            f"it landed on {worst['text']!r} rather than the way out, so this is "
+            f"not the arrangement #277 was measured on")
+    finally:
+        page.context.close()
+
+
 @pytest.mark.leaves_a_game_running(reason="test_a_tap_jumps_on_touch taps the player "
                                           "this starts, and stops it afterwards")
 def test_it_plays_on_touch(phone):

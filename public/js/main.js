@@ -26,8 +26,12 @@ const NOTICE_SHORT = "Fan-made, unofficial and non-commercial. Bluey © Ludo Stu
 
 const el = (id) => document.getElementById(id);
 const canvas = el("game");
+const stage = el("stage");
 const overlay = el("overlay");
 const hud = el("hud");
+// Held on to, not looked up: it rides along with the screen that is up, and
+// every `showOverlay` throws that screen's markup away (#277).
+const hint = el("rotate-hint");
 
 let characters = [];
 let game = null;
@@ -96,12 +100,34 @@ function showOverlay(html, { transparent = false } = {}) {
     foot.insertBefore(actions, foot.firstChild);
     body.after(foot);
   }
+  placeHint();
   overlay.classList.remove("hidden");
   overlay.scrollTop = 0;
 }
 
+/**
+ * Put the rotate pill at the top of the block of pinned buttons.
+ *
+ * It used to be `position: absolute; bottom: 8px` on the stage, from before the
+ * panel reached the bottom of the window. Once #269 pinned the way out down
+ * there, the pill was drawn on top of it: 32px of a 56px "← Back" under a
+ * translucent black pill for the first six seconds of the screen a player is
+ * looking for the way out on (#277). In the flow above those buttons it
+ * shortens the body it sits over instead of covering anything.
+ *
+ * The screen is rebuilt from scratch on every `showOverlay`, so the pill has to
+ * be moved back in each time, and parked on the stage while there is no screen
+ * up — a detached node has no rect, and "no rect" reads as "covers nothing".
+ */
+function placeHint() {
+  const foot = overlay.querySelector(".panel > .panel-foot");
+  if (foot) foot.insertBefore(hint, foot.firstChild);
+  else stage.appendChild(hint);
+}
+
 function hideOverlay() {
   overlay.classList.add("hidden");
+  stage.appendChild(hint);
   overlay.innerHTML = "";
 }
 
@@ -127,7 +153,7 @@ let hintTimer = null;
 function rotateHint(show) {
   clearTimeout(hintTimer);
   hintTimer = null;
-  el("rotate-hint").classList.toggle("hidden", !show);
+  hint.classList.toggle("hidden", !show);
   if (show) hintTimer = setTimeout(() => rotateHint(false), HINT_MS);
 }
 

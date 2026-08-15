@@ -294,11 +294,14 @@ table.stats { width: 100%; border-collapse: collapse; font-size: clamp(13px, 2.5
 table.stats td, table.stats th { padding: 7px 6px; border-bottom: 2px solid #EFE3CC; text-align: left; }
 table.stats td:last-child, table.stats th:last-child { text-align: right; }
 
+/* In the flow, at the top of the block of pinned buttons — `main.js` puts it
+ * there. Anchored to the bottom of the window it landed on "← Back", which is
+ * the one control on the screen that is pinned so it can never be missed
+ * (#277). `fit-content` and an auto margin are what centre a block that is only
+ * as wide as its sentence. */
 #rotate-hint {
-  position: absolute;
-  bottom: 8px;
-  left: 50%;
-  transform: translateX(-50%);
+  width: fit-content;
+  margin: 0 auto 8px;
   background: rgba(0, 0, 0, 0.55);
   color: #fff;
   font-size: 13px;
