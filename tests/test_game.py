@@ -755,6 +755,62 @@ def test_muting_mid_read_leaves_the_button_muted_not_broken(own_page):
     page.evaluate("() => document.getElementById('btn-mute').click()")
 
 
+def test_the_speaker_button_says_what_the_mixer_does_not_what_the_save_says(own_page):
+    """The two facts, driven apart on purpose (#294).
+
+    `readLabel()` used to decide "🔇 Sound is off" from `save.muted`, and the
+    thing that refuses to speak is `Sound.read()`, which refuses on
+    `sound.muted`. They agree only while every path keeps them in step — and one
+    already did not: before #290 nothing told the mixer about a saved mute until
+    a chapter started, so the card's label was right and its behaviour was wrong
+    for the whole of the menu. Here the mixer is muted without writing the save,
+    and then the save is left muted with the mixer on.
+    """
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.evaluate("() => window.__sound.setMuted(true)")   # save untouched
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-read")
+    assert page.evaluate("() => window.__said") == [], (
+        "the mixer was muted and the story was read out loud anyway — this test "
+        "is no longer driving the two apart")
+    assert story_button(page) == "🔇 Sound is off", (
+        f"the mixer will not speak and the button says {story_button(page)!r}, "
+        f"because the save has not caught up")
+
+    # the other way round: persisted as muted, mixer on. It speaks, so the
+    # button must not go on claiming the sound is off.
+    page.evaluate("() => document.getElementById('btn-mute').click()")  # save.muted = true
+    page.evaluate("() => window.__sound.setMuted(false)")
+    page.evaluate("() => { window.__said = []; }")
+    page.click("#btn-read")
+    assert page.evaluate("() => window.__said"), "nothing was read with the mixer on"
+    assert page.evaluate("() => window.__finish()") > 0
+    assert story_button(page) == "🔊 Read it again", (
+        f"the story was just read out loud and the button says "
+        f"{story_button(page)!r} — the save's opinion, not the mixer's")
+
+
+def test_a_browser_with_no_speech_at_all_says_so_rather_than_offering_a_replay(own_page):
+    """The third way a read never starts: no `speechSynthesis` on the window.
+
+    `read()` returns false and nothing is ever queued, so no `onerror` arrives to
+    say why — the button used to fall back to "🔊 Read it again", which is a
+    replay offer for a story this browser has never once read. The other two
+    silent cases (#290) say so; this one has to as well.
+    """
+    page = own_page
+    page.evaluate("() => Object.defineProperty(window, 'speechSynthesis',"
+                  " { get: () => undefined, configurable: true })")
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-read")
+    assert story_button(page) == "🔇 No voice here", (
+        f"a browser that cannot speak at all offers {story_button(page)!r}")
+    page.click("#btn-read")
+    assert story_button(page) == "🔇 No voice here", (
+        f"tapping it changed the answer to {story_button(page)!r}")
+
+
 def test_this_browser_cannot_speak(own_page):
     """The gap the tests above cannot cover, pinned so it stays visible (#289).
 

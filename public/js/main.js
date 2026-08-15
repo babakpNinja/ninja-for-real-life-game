@@ -347,14 +347,22 @@ function chapterSelect() {
  * (#290). Four states, all of them out loud:
  *
  *   reading  — the queue is being spoken
- *   novoice  — the browser answered 'synthesis-failed' (see audio.js)
+ *   novoice  — the browser has no voice, or answered 'synthesis-failed'
  *   muted    — the sound is off; the button says so instead of doing nothing
  *   idle     — tap it to hear the story again
+ *
+ * "Muted" is asked of `sound`, not of `save`: the thing that refuses to speak is
+ * `Sound.read()`, and it refuses on `sound.muted`. `save.muted` is what is
+ * *persisted* — the same fact only for as long as nothing mutes the mixer without
+ * writing the save, or writes the save without telling the mixer. That gap was a
+ * real bug once already (#290: a game saved muted read the story out loud after a
+ * reload, label and behaviour disagreeing), so the label asks whoever does the
+ * work (#294).
  */
 function readLabel(state) {
   if (state === "reading") return "🔊 Reading…";
   if (state === "novoice") return "🔇 No voice here";
-  return save.muted ? "🔇 Sound is off" : "🔊 Read it again";
+  return sound.muted ? "🔇 Sound is off" : "🔊 Read it again";
 }
 
 // looked up rather than held: the card is re-rendered whole for Auto-run, and
@@ -395,7 +403,10 @@ function storyCard(index, { speak = true } = {}) {
       onend: () => setReadLabel(),
       onerror: () => setReadLabel("novoice"),
     });
-    setReadLabel(queued ? "reading" : null);
+    // nothing queued and the sound is on means this browser has no
+    // `speechSynthesis` at all — "Read it again" would be a button that has
+    // never worked and never says so (#294)
+    setReadLabel(queued ? "reading" : sound.muted ? null : "novoice");
   };
   if (speak) readOut();
   on("btn-read", readOut);
@@ -732,6 +743,8 @@ async function boot() {
   window.game = game;                       // handy for tests and for curious dads
   window.__art = artState;                  // which sprites actually decoded
   window.__cast = CHAPTERS.map((c) => [c.hero, c.cameo]);  // who each chapter needs
+  window.__sound = sound;                   // the mixer, so a test can mute it
+                                            // *without* writing the save (#294)
   window.__ready = true;
 
   el("btn-mute").textContent = save.muted ? "🔇" : "🔊";
