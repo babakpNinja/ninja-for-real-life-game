@@ -93,6 +93,27 @@ function on(id, fn) {
   if (node) node.addEventListener("click", () => { sound.unlock(); sound.ui(); fn(); });
 }
 
+/* ----------------------------------------------------------- rotate hint -- */
+
+/**
+ * "Turn your phone sideways" is worth saying once, briefly.
+ *
+ * Left up, it sits at the bottom of the screen for the whole session — and the
+ * bottom of the screen during a chapter is the progress bar and the little dog
+ * running along it. Measured on a 390x844 phone the pill covered the bar
+ * completely (#252). So it is a message with a life: shown on the way into
+ * portrait, taken away after HINT_MS, and never while a chapter is on.
+ */
+export const HINT_MS = 6000;
+let hintTimer = null;
+
+function rotateHint(show) {
+  clearTimeout(hintTimer);
+  hintTimer = null;
+  el("rotate-hint").classList.toggle("hidden", !show);
+  if (show) hintTimer = setTimeout(() => rotateHint(false), HINT_MS);
+}
+
 /** A small looping portrait of a character, used all over the menus. */
 function portrait(node, ch, state = "idle", facing = 1) {
   const c = node.getContext("2d");
@@ -271,6 +292,7 @@ function storyCard(index) {
 
 function play(index) {
   hideOverlay();
+  rotateHint(false);        // the bottom of the screen belongs to the HUD now (#252)
   hud.classList.remove("hidden");
   sound.unlock();
   sound.setMuted(!!save.muted);
@@ -505,10 +527,15 @@ function wireInput() {
     el("btn-mute").textContent = save.muted ? "🔇" : "🔊";
   });
 
-  // a phone held upright still plays, it just gets a nudge
+  // a phone held upright still plays, it just gets a nudge — on the way *into*
+  // portrait, so turning back and forth is not answered with a pill that stays
+  let wasPortrait = false;
   const checkOrientation = () => {
     const portraitMode = window.innerHeight > window.innerWidth * 1.1;
-    el("rotate-hint").classList.toggle("hidden", !portraitMode);
+    const playing = game && game.mode === "playing";
+    if (portraitMode && !wasPortrait && !playing) rotateHint(true);
+    if (!portraitMode || playing) rotateHint(false);
+    wasPortrait = portraitMode;
   };
   window.addEventListener("resize", checkOrientation);
   window.addEventListener("orientationchange", () => setTimeout(checkOrientation, 250));

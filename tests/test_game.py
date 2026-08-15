@@ -3932,7 +3932,75 @@ def test_no_console_errors_on_desktop(desktop):
 
 def test_the_menu_fits_without_scrolling(phone):
     assert phone.evaluate("document.body.scrollHeight <= window.innerHeight + 2")
-    assert phone.locator("#rotate-hint").is_visible()
+
+
+# --- the rotate pill: said once, then out of the way (#252) ------------------
+
+# The three rects #252 was measured from. Read as the player sees them: a node
+# with `hidden` on it, or with no box, is not on the screen whatever its
+# geometry says — `getBoundingClientRect` on a `display:none` pill is all zeros,
+# which would otherwise read as "at the top-left corner, overlapping nothing".
+BOTTOM_OF_THE_SCREEN = """
+() => {
+  const r = (id) => {
+    const n = document.getElementById(id);
+    const b = n.getBoundingClientRect();
+    return { top: b.top, bottom: b.bottom, left: b.left, right: b.right,
+             shown: !n.closest('.hidden') && b.width > 0 && b.height > 0 };
+  };
+  return { hint: r('rotate-hint'), bar: r('hud-progress'), dog: r('hud-progress-dog') };
+}
+"""
+
+
+def overlap(a, b):
+    """Area the two rects share, in CSS pixels — 0 if either is off the screen."""
+    if not (a["shown"] and b["shown"]):
+        return 0
+    wide = min(a["right"], b["right"]) - max(a["left"], b["left"])
+    tall = min(a["bottom"], b["bottom"]) - max(a["top"], b["top"])
+    return max(0, wide) * max(0, tall)
+
+
+def test_the_rotate_pill_says_it_once_and_then_goes_away(make_page):
+    """It is a nudge, not a status bar. #252 found it up for the whole session."""
+    page = make_page(IPHONE, touch=True)
+    try:
+        ms = page.evaluate("() => import('/js/main.js').then((m) => m.HINT_MS)")
+        assert page.locator("#rotate-hint").is_visible(), (
+            "a phone held upright never gets told to turn it sideways")
+        page.wait_for_timeout(ms + 1000)
+        assert not page.locator("#rotate-hint").is_visible(), (
+            f"the pill is still up {(ms + 1000) / 1000:.0f}s after the page loaded")
+    finally:
+        page.context.close()
+
+
+def test_the_rotate_pill_never_covers_the_progress_bar(make_page):
+    """#252's measurement: hint y 779..836 *containing* bar y 820..832."""
+    page = make_page(IPHONE, touch=True)
+    try:
+        assert page.locator("#rotate-hint").is_visible(), (
+            "the pill is already gone before the chapter starts, so this test "
+            "would pass without the game doing anything about it")
+        page.click("#btn-play")
+        page.wait_for_selector("#btn-go")
+        page.click("#btn-go")
+        page.wait_for_timeout(400)
+        assert page.evaluate("window.game.mode") == "playing"
+
+        seen = page.evaluate(BOTTOM_OF_THE_SCREEN)
+        assert seen["bar"]["shown"] and seen["dog"]["shown"], (
+            f"the progress bar is not on screen during a chapter: {seen}")
+        for part in ("bar", "dog"):
+            assert overlap(seen["hint"], seen[part]) == 0, (
+                f"the pill covers {overlap(seen['hint'], seen[part]):.0f}px2 of "
+                f"#hud-progress{'' if part == 'bar' else '-dog'}: pill "
+                f"y {seen['hint']['top']:.0f}..{seen['hint']['bottom']:.0f}, "
+                f"it y {seen[part]['top']:.0f}..{seen[part]['bottom']:.0f}")
+    finally:
+        page.evaluate("() => window.game && window.game.stop()")
+        page.context.close()
 
 
 @pytest.mark.leaves_a_game_running(reason="test_a_tap_jumps_on_touch taps the player "
