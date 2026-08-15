@@ -26,6 +26,7 @@ import re
 import subprocess
 import sys
 import urllib.request
+import warnings
 from pathlib import Path
 
 import pytest
@@ -4611,6 +4612,66 @@ FRAME_RATE = """
 PLAYABLE_FPS = 20
 
 
+def blank_page_fps(page) -> int:
+    """What a page with *nothing on it* manages in this browser, right now.
+
+    The control for the floor below: it is the same browser, the same machine and
+    the same 700ms window, minus the game. A number under the floor here is a
+    statement about the host, since there is nothing else left for it to be about.
+    """
+    control = page.context.new_page()
+    try:
+        control.goto("about:blank")
+        return control.evaluate(FRAME_RATE)
+    finally:
+        control.close()
+
+
+def playability_verdict(measure, control, floor=PLAYABLE_FPS):
+    """Why a page is short of frames — itself, or the machine it is running on.
+
+    Both readings arrive as callables because the case that matters cannot be
+    produced to order: a starved *host* is what a 2-core box under load does to
+    every page at once (#275), and handing this decision fake readings is the only
+    way to run it for that case. The control is only paid for when it is needed.
+
+    `measure` is asked twice before anything is blamed. The window is 700ms, and
+    under `ship.py` — 942 tool tests just finished, a deploy is being polled — one
+    700ms window is a sample of one; two failures in a day were both single
+    samples that measured 59 and 60 when asked again.
+
+    Returns `(cause, said)`:
+
+    * `""` — the page has its frames.
+    * `"retaken"` — one sample under the floor and one over. Worth saying out
+      loud, not worth failing.
+    * `"host"` — a page with nothing on it cannot reach the floor either, so
+      there is nothing here about the game.
+    * `"leak"` — the frames are there and this page is not getting them. The
+      #182 case, and the only one that fails.
+    """
+    fps = measure()
+    if fps >= floor:
+        return "", ""
+    again = measure()
+    if again >= floor:
+        return "retaken", (f"{fps}fps, then {again}fps when asked again, against a "
+                           f"{floor}fps floor. One 700ms window is a sample of one on a "
+                           f"busy box — but a page that is marginal twice a week is worth "
+                           f"knowing about (#275)")
+    host = control()
+    if host < floor:
+        return "host", (f"{fps} and {again}fps, and a page with *nothing on it* in the same "
+                        f"browser manages {host}fps against a {floor}fps floor. This machine "
+                        f"is not giving frames to anything, so this reading says nothing "
+                        f"about the game (#275)")
+    return "leak", (f"{fps} and {again}fps against a {floor}fps floor, while a page with "
+                    f"nothing on it in the same browser gets {host}fps: the frames are there "
+                    f"and this page is not getting them. Something else in this run is "
+                    f"probably still animating — an `own_page` that walked away from a "
+                    f"running game loop is the one that has happened (#182).")
+
+
 @pytest.mark.leaves_a_game_running(reason="it measures the chapter test_it_plays_on_touch "
                                           "started, and hands it on to the tap test")
 def test_the_phone_gets_enough_frames_to_be_played(phone):
@@ -4625,13 +4686,141 @@ def test_the_phone_gets_enough_frames_to_be_played(phone):
     (the later tests took the foreground) and the browser throttles it on
     purpose, and it still measures 44-63 here — so 20 is what a *starved* page
     looks like, not what a busy machine does.
+
+    What it must not do is fail a *ship* for the machine's sake: this runs twice
+    under `ship.py`, after the tool suite and again while the deploy is polled,
+    and the answer there arrives after the push — so a false failure asks for a
+    revert of a commit that is fine (#275, #276). Hence the control page: a bad
+    reading with a healthy blank page beside it is the game's fault, and a bad
+    reading with a starved one is the box's.
     """
-    fps = phone.evaluate(FRAME_RATE)
-    assert fps >= PLAYABLE_FPS, (
-        f"{fps}fps on {phone.viewport_size['width']}px: this page is not getting "
-        f"frames. Something else in this run is probably still animating — an "
-        f"`own_page` that walked away from a running game loop is the one that has "
-        f"happened (#182).")
+    cause, said = playability_verdict(lambda: phone.evaluate(FRAME_RATE),
+                                      lambda: blank_page_fps(phone))
+    where = f"on {phone.viewport_size['width']}px"
+    if cause == "host":
+        pytest.skip(f"{where}: {said}")
+    if cause == "retaken":
+        warnings.warn(f"{where}: {said}")
+    assert cause != "leak", f"{where}: {said}"
+
+
+class Readings:
+    """The numbers a case wants `measure`/`control` to return, in order.
+
+    It counts the asking, because *when the control is paid for* is part of the
+    rule: measuring a blank page costs another 700ms, and a run where every page
+    is fine must not spend it.
+    """
+
+    def __init__(self, *values):
+        self.values = values
+        self.asked = 0
+
+    def __call__(self) -> int:
+        assert self.asked < len(self.values), (
+            f"asked for reading {self.asked + 1} of {len(self.values)}: this case did not "
+            f"expect the verdict to measure again")
+        self.asked += 1
+        return self.values[self.asked - 1]
+
+
+def test_the_control_page_measures_and_then_goes_away(browser):
+    """The one test that measures `blank_page_fps` — the cases below hand it in.
+
+    Two things, and the second is why this is not covered by the drill: a control
+    stuck at zero reads as a starved machine, which turns the floor *off* rather
+    than making anything red, and a control page left open would itself be the
+    kind of forgotten page the floor exists to notice (#182, #275).
+    """
+    ctx = browser.new_context(viewport=DESKTOP)
+    try:
+        page = ctx.new_page()
+        page.goto("about:blank")
+        open_pages = len(ctx.pages)
+        fps = blank_page_fps(page)
+        assert fps > 0, (
+            "the control page reported no frames at all: every low reading in this "
+            "session would now be excused as a starved machine")
+        assert len(ctx.pages) == open_pages, (
+            "the control page was left open in the session it was measuring")
+    finally:
+        ctx.close()
+
+
+def test_a_page_that_has_its_frames_is_asked_once_and_costs_no_control():
+    measure, control = Readings(60), Readings()
+    assert playability_verdict(measure, control) == ("", "")
+    assert (measure.asked, control.asked) == (1, 0), (
+        "the happy path paid for a re-take or a control page: that is 700ms per "
+        "measured page on every run, to answer a question nobody asked")
+
+
+def test_one_bad_sample_followed_by_a_good_one_is_reported_not_failed():
+    measure, control = Readings(19, 55), Readings()
+    cause, said = playability_verdict(measure, control)
+    assert cause == "retaken", f"a re-take over the floor was called {cause!r}: {said}"
+    assert control.asked == 0, "a page that turned out fine still paid for a control"
+    assert "19" in said and "55" in said, f"the two samples are not in the message: {said}"
+    assert "#182" not in said, (
+        f"a marginal sample was reported as the leak (#182): {said}")
+
+
+def test_a_machine_that_cannot_give_a_blank_page_frames_is_not_the_games_fault():
+    cause, said = playability_verdict(Readings(12, 13), Readings(14))
+    assert cause == "host", f"a starved box was called {cause!r}: {said}"
+    assert "14" in said, f"the control reading is not in the message: {said}"
+    assert "#182" not in said, (
+        f"a busy box was blamed on a leaked game loop (#182), which is the finding "
+        f"#275 was filed to stop: {said}")
+
+
+def test_a_page_short_of_frames_beside_a_healthy_blank_one_is_the_leak():
+    cause, said = playability_verdict(Readings(12, 13), Readings(58))
+    assert cause == "leak", f"a real starvation was called {cause!r}: {said}"
+    assert "#182" in said, f"the leak is not named as the thing to look for: {said}"
+
+
+# A page eating its own frames: the shape #182 arrived in, minus the intent. The
+# spin is what an abandoned results screen does — paint, ask for another frame,
+# paint — and 60ms of it per frame is enough to put a page under the floor while
+# the machine around it is fine.
+BURN_FRAMES = """
+(ms) => {
+  const spin = () => {
+    const t = performance.now();
+    while (performance.now() - t < ms) { /* the frame this page is not giving back */ }
+    requestAnimationFrame(spin);
+  };
+  requestAnimationFrame(spin);
+}
+"""
+
+
+def test_the_frame_floor_catches_a_page_that_is_really_not_getting_frames(browser):
+    """The #182 case for real, in its own browser context rather than by hand.
+
+    The three fake-reading cases above run the decision; this one runs the
+    measurement too — a page that really cannot get frames, a control page that
+    really can, and the verdict read off both. Its own context so nothing here is
+    on a page the rest of the session shares, which is the whole subject.
+    """
+    ctx = browser.new_context(viewport=DESKTOP)
+    try:
+        starved = ctx.new_page()
+        starved.goto("about:blank")
+        starved.evaluate(BURN_FRAMES, 60)
+        control = blank_page_fps(starved)
+        if control < PLAYABLE_FPS:
+            pytest.skip(f"a blank page gets {control}fps on this box, under the "
+                        f"{PLAYABLE_FPS}fps floor: with the machine itself starved there is "
+                        f"no difference here for the verdict to find")
+        cause, said = playability_verdict(lambda: starved.evaluate(FRAME_RATE), lambda: control)
+        assert cause == "leak", (
+            f"a page burning its own frames beside a {control}fps blank page was called "
+            f"{cause!r}: {said}")
+        assert "#182" in said, f"the leak is not named as the thing to look for: {said}"
+    finally:
+        ctx.close()
 
 
 def test_a_tap_jumps_on_touch(phone):
