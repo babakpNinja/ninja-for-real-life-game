@@ -270,6 +270,9 @@ export class Game {
           p.y > o.y + 6 && p.y - PLAYER_H < o.y + o.h) {
         o.hit = this.t;
         if (o.kind === "cloud") {          // dream clouds bounce you up instead
+          // and no `this.puff(` with it: the dust is what a foot kicks off the
+          // ground, and a cloud is not ground — it is also the one bounce the
+          // player triggers over and over, so dust here reads as a smoke trail
           p.vy = JUMP_V * 0.85;
           sound.bop();
           this.toast("Boing!");

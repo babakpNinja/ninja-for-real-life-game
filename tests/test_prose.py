@@ -10,6 +10,7 @@ It reads the working tree, not the deployed site, so it means the same thing
 under --base-url — the tree is what produced the deploy.
 """
 
+import collections
 import importlib.util
 import json
 import re
@@ -20,6 +21,10 @@ from pathlib import Path
 import pytest
 
 APP = Path(__file__).resolve().parent.parent
+
+sys.path.insert(0, str(APP / "scripts"))
+from js_source import code_only, function_body, object_literal  # noqa: E402
+
 SCRIPTS = [
     ("fetch_assets.py", "the artwork is credited and the notice has not drifted"),
     ("build_rigs.py", "the rigs still cut every render where they say they do"),
@@ -1137,3 +1142,156 @@ def test_a_layout_line_that_stopped_naming_the_two_encodings_is_a_problem(
                 if "no longer says" in p and where in p], where
         checked.append(directory.name)
     assert checked == ["characters", "poses"], checked
+
+
+# --------------------------------- reading the JS as code and not as prose (#233)
+#
+# Four checks in this app derive a fact from JavaScript with a regex — the
+# animation states, the fallback table, which states `frameMotion` swings, where
+# the engine makes particles — and #231 was one of them answering about a
+# comment. `scripts/js_source.py` is the one place that blanks comments and
+# bounds a region now; these are its own tests, plus the one that keeps the
+# four drills honest.
+
+SRC_WITH_PROSE = '''\
+const LINKS = ["https://example.com/a", 'not // a comment'];
+// case "gone": this line is prose
+const KEEP = { a: "b" };   /* and so is this: c: "d" */
+/*
+ * case "alsogone":
+ */
+const TAIL = "a \\" quote, // still a string";
+'''
+
+
+def test_a_comment_is_blanked_and_a_string_is_left_alone():
+    """Both comment styles, and the two ways a `//` is not a comment: inside a
+    string (main.js is a list of URLs) and after an escaped quote."""
+    out = code_only(SRC_WITH_PROSE)
+    assert "https://example.com/a" in out, "a URL in a string is not a comment"
+    assert "'not // a comment'" in out
+    assert '"a \\" quote, // still a string"' in out, "an escaped quote ended the string early"
+    assert 'const KEEP = { a: "b" };' in out
+    assert "gone" not in out and "prose" not in out and 'c: "d"' not in out
+
+
+def test_the_blanking_keeps_the_shape_of_the_file():
+    """Blanked, not deleted: a caller can search this and slice the original, and
+    a line number still means what it said."""
+    out = code_only(SRC_WITH_PROSE)
+    assert len(out) == len(SRC_WITH_PROSE)
+    assert out.splitlines(keepends=True).__len__() == \
+        SRC_WITH_PROSE.splitlines(keepends=True).__len__()
+    for i, (was, now) in enumerate(zip(SRC_WITH_PROSE.splitlines(), out.splitlines())):
+        assert len(was) == len(now), f"line {i + 1} changed length"
+
+
+def test_a_function_body_stops_at_its_own_closing_brace():
+    """The bug this bounding is for: `states()` split the file at
+    `function poseFor(` and kept everything after it — 777 lines of a 999-line
+    file, `frameMotion`'s switch included."""
+    src = (APP / "public" / "js" / "sprites.js").read_text()
+    body = function_body(src, "poseFor")
+    assert body.startswith("function poseFor(")
+    assert "function frameMotion(" not in body, "the read ran past poseFor's own brace"
+    assert len(body) < len(src) / 2, (
+        f"poseFor's body is {len(body)} of {len(src)} characters, which is not a "
+        "function — it is most of the file")
+
+
+def test_a_region_that_is_not_there_is_reported_rather_than_read_as_empty():
+    """An absent subject and an empty one must not print the same. Each of these
+    silently returned nothing before, which reads as "there are no states" /
+    "nothing falls back" — the answers that pass every check downstream."""
+    with pytest.raises(ValueError, match="poseFor"):
+        function_body("const x = 1;\n", "poseFor")
+    with pytest.raises(ValueError, match="nested"):
+        function_body("  function poseFor(a) {\n    return 1;\n  }\n", "poseFor")
+    with pytest.raises(ValueError, match="POSE_FALLBACK"):
+        object_literal("const OTHER = { a: \"b\" };\n", "POSE_FALLBACK")
+    with pytest.raises(ValueError, match="no entries at all"):
+        object_literal("const T = { /* a: \"b\" */ };\n", "T")
+
+
+# Each of the four sites: what it derives now, and the naive parse it replaced.
+# The point is not that the helper works — the tests above are that — but that
+# each *caller* uses it, on a source that still says something the naive parse
+# would fall for. Both halves have to hold for the drill to mean anything: a
+# site that goes back to reading prose fails here, and so does a source that
+# stopped containing any (at which point the mutation entry for it would score
+# CAUGHT for some other reason).
+def naive_states(src):
+    return set(re.findall(r'case "(\w+)":', src.split("function poseFor(", 1)[-1]))
+
+
+def naive_fallback(src):
+    inside = re.search(r"const POSE_FALLBACK = \{(.*?)\};", src, re.S).group(1)
+    return dict(re.findall(r'(\w+):\s*"(\w+)"', inside))
+
+
+def naive_still_swung(src):
+    cases = re.split(r'case "(\w+)":',
+                     re.search(r"function frameMotion\(.*?\n\}", src, re.S).group(0))
+    return tuple(s for s, body in zip(cases[1::2], cases[2::2]) if "swing: 0" in body)
+
+
+def naive_particle_sites(src):
+    return sorted(re.findall(r"this\.(puff|scuff|sparkle)\(", src))
+
+
+SPRITES = APP / "public" / "js" / "sprites.js"
+GAME = APP / "public" / "js" / "game.js"
+
+
+def game_and_scripts():
+    """(test_game, fetch_assets) as modules, for the collections they derive.
+
+    Imported rather than restated: what this checks is the very value the tests
+    over there are parametrised from and the value the coverage check counts.
+    Module-level work only — no browser, no server; pytest has imported
+    test_game already whenever the whole suite is running.
+    """
+    sys.path.insert(0, str(APP / "tests"))
+    import test_game
+    spec = importlib.util.spec_from_file_location(
+        "fetch_assets_for_parses", APP / "scripts" / "fetch_assets.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return test_game, mod
+
+
+PARSED_SITES = [
+    ("the animation states (fetch_assets.states)", SPRITES, naive_states,
+     lambda: {s for s in game_and_scripts()[1].states() if s != "idle"}),
+    ("the fallback table (fetch_assets.pose_fallbacks)", SPRITES, naive_fallback,
+     lambda: game_and_scripts()[1].pose_fallbacks()),
+    ("the states frameMotion leaves alone (test_game.STILL_SWUNG)", SPRITES,
+     naive_still_swung, lambda: game_and_scripts()[0].STILL_SWUNG),
+    ("the particle call sites (test_game.PARTICLE_SITES)", GAME,
+     lambda src: collections.Counter(naive_particle_sites(src)),
+     lambda: game_and_scripts()[0].PARTICLE_SITES),
+]
+
+
+@pytest.mark.parametrize("what,path,naive,live", PARSED_SITES,
+                         ids=[s[0].split(" (")[0] for s in PARSED_SITES])
+def test_a_site_that_reads_the_javascript_reads_its_code_and_not_its_prose(
+        what, path, naive, live):
+    """Every one of the four reads a file whose comments talk *about* the thing
+    it looks for: the typo warning in `poseFor`, the fallback `POSE_FALLBACK`
+    deliberately does not have, the reason the cheer's legs stay put (#231), the
+    dust a cloud bounce deliberately does not kick up.
+
+    So the naive answer and the real one differ, and that difference is the only
+    input a "this parse ignores prose" claim has. `states()` drops `idle` first:
+    that one is read off the `default:` arm rather than off a case, and is not
+    what either parse is being asked about here.
+    """
+    got, fooled = live(), naive(path.read_text())
+    assert got != fooled, (
+        f"{what}: what this site derives is now exactly what a parse that reads "
+        f"{path.name}'s comments would derive ({fooled}). Either the site went back to "
+        "reading prose — the #231 defect, and the mutation entry for it can no longer "
+        "fail — or the comment that told the two apart is gone. Put back a comment that "
+        "names what the code is not (see #233), or delete the site's mutation with the "
+        "drill.")

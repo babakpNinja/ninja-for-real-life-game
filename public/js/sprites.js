@@ -317,6 +317,11 @@ const BOUND = {
  * character that has no pose art without ever taking its legs apart.
  */
 function poseFor(state, t, step) {
+  // These case names are the animation states: fetch_assets.py reads them out
+  // of this switch (`states()`) and every pose in poses.json has to be one of
+  // them. So a typo is not a local mistake — a `case "jumping":` here would be
+  // artwork fetched, credited and never drawn, and it would look exactly like
+  // a state somebody meant to add.
   switch (state) {
     case "run": {
       const swing = Math.sin(step);
@@ -618,7 +623,14 @@ function frameMotion(state, t, stride) {
  * is what leaps. fetch_assets.py reads this object (`pose_fallbacks`) so its
  * coverage check follows the same chain.
  */
-const POSE_FALLBACK = { float: "jump", jump: "run", cheer: "run" };
+const POSE_FALLBACK = {
+  float: "jump",
+  jump: "run",
+  cheer: "run",
+  // and deliberately no `idle: "run"`: a character standing still would jog on
+  // the spot, and idle is the one state the rig is *better* at — it breathes
+  // and blinks a standing render rather than holding a stride still.
+};
 
 /**
  * The pose to draw for `id` in `state`, or null if there is no pose artwork for

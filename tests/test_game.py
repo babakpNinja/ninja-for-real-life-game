@@ -33,6 +33,11 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 APP = Path(__file__).resolve().parent.parent
 
+# How this file reads facts out of the game's JavaScript: comments blanked
+# first, regions bounded, one implementation shared with scripts/ (#233).
+sys.path.insert(0, str(APP / "scripts"))
+from js_source import code_only, function_body, object_literal  # noqa: E402
+
 # The game's name is authored once, in fetch_assets.py. `--check` proves the
 # static copies agree with it; this suite is the only thing that can say the
 # *rendered* page does, which is the copy anyone actually reads.
@@ -59,9 +64,7 @@ POSED = sorted((cid, state) for cid, by in POSES.items() for state in by)
 # Read out of sprites.js because that table is the author of the behaviour;
 # restating it here would let the two drift and still agree with themselves.
 SPRITES_SRC = (APP / "public" / "js" / "sprites.js").read_text()
-POSE_FALLBACK = dict(re.findall(
-    r'(\w+): "(\w+)"',
-    re.search(r"const POSE_FALLBACK = \{(.*?)\};", SPRITES_SRC, re.S).group(1)))
+POSE_FALLBACK = object_literal(SPRITES_SRC, "POSE_FALLBACK")
 
 
 def resolved_pose(cid, state):
@@ -121,15 +124,14 @@ BORROWED = sorted((cid, state) for cid in PLAYABLE for state in ACTION
 # The states `frameMotion` turns the other way, read out of its switch for the
 # same reason as POSE_FALLBACK above: a third one adopting JUMP_SWING arrives
 # with a test rather than without one.
-# Comments stripped before the split, because a case body runs to the next
+# Comments blanked before the split, because a case body runs to the next
 # `case` and so picks up whatever is written above it: the reasoning for the
 # cheer's swing is a comment between two cases (#231), and it quotes the very
 # thing this looks for. A parse that reads the prose is answering about the
-# prose — it put `float` in the list below until this line existed.
-_MOTION_CASES = re.split(
-    r'case "(\w+)":',
-    re.sub(r"//[^\n]*", "",
-           re.search(r"function frameMotion\(.*?\n\}", SPRITES_SRC, re.S).group(0)))
+# prose — it put `float` in the list below until this line existed. The
+# blanking and the bounding are `js_source`'s, shared with the three other
+# places that read this file with a regex (#233).
+_MOTION_CASES = re.split(r'case "(\w+)":', function_body(SPRITES_SRC, "frameMotion"))
 JUMP_SWUNG = tuple(state for state, body in zip(_MOTION_CASES[1::2], _MOTION_CASES[2::2])
                    if "swing: JUMP_SWING" in body)
 # ...and the borrowed states that land on a render cut at the hip, which are the
@@ -2534,13 +2536,27 @@ def test_the_visibility_probe_answers_the_same_on_a_page_still_loading(own_page)
         "failing on a burst nothing is wrong with (#222)")
 
 
+# The particle call sites in the engine. Code only: a call named in a comment,
+# or one commented out, is not a burst the player can see, and counting it would
+# demand a case for something that never happens — game.js says in as many words
+# that the cloud bounce makes no puff (#233). Module level so test_prose can
+# check this parse against the naive one that reads the prose.
+PARTICLE_SITES = collections.Counter(re.findall(
+    r"this\.(puff|scuff|sparkle)\(",
+    code_only((APP / "public" / "js" / "game.js").read_text())))
+
+
 def test_every_particle_call_site_is_covered_by_a_visibility_case():
     """The point of the table above is that a new burst cannot be added without
     someone asking whether it can be seen. That only holds if the table is
     checked against the code: this counts the calls to each factory in the
-    engine and fails when one of them has no case here."""
-    src = (APP / "public" / "js" / "game.js").read_text()
-    sites = collections.Counter(re.findall(r"this\.(puff|scuff|sparkle)\(", src))
+    engine and fails when one of them has no case here.
+    """
+    sites = PARTICLE_SITES
+    assert sites, (
+        "no `this.puff/scuff/sparkle(` call anywhere in game.js — either the engine "
+        "stopped making particles, or this parse stopped finding them, and an empty "
+        "count would agree with an empty table instead of saying so")
     cases = collections.Counter(s["factory"] for s in PARTICLE_SOURCES.values())
     assert sites == cases, (
         f"game.js calls {dict(sites)} but PARTICLE_SOURCES covers {dict(cases)} — every "

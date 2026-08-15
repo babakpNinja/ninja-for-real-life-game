@@ -25,6 +25,12 @@ from datetime import date
 from pathlib import Path
 from typing import NamedTuple
 
+# by path, not by package: this file is run as a script from anywhere and is
+# also imported by the suite through `spec_from_file_location`, and neither
+# route puts scripts/ on sys.path for us.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from js_source import code_only, function_body, object_literal  # noqa: E402
+
 APP = Path(__file__).resolve().parent.parent
 CHARS = APP / "public" / "data" / "characters.json"
 CREDITS = APP / "public" / "data" / "asset-credits.json"
@@ -194,11 +200,22 @@ def states() -> set[str]:
     fetched, credited and never drawn — and a typo ("jumping") looks exactly
     like a deliberate one. sprites.js is the author; this reads its switch
     rather than keeping a second list here to drift.
+
+    `poseFor`'s own body, and its code rather than its prose: this used to split
+    at `function poseFor(` and keep everything after it, which is 777 lines of a
+    999-line file — `frameMotion`'s switch included. It agreed with the truth
+    only because both switches happen to name the same four states, and a
+    `case "x":` written in a comment anywhere below counted too (#233).
     """
-    body = SPRITES_JS.read_text().split("function poseFor(", 1)[-1]
+    body = function_body(SPRITES_JS.read_text(), "poseFor")
     found = set(re.findall(r'case "(\w+)":', body))
     if "default:" in body:
         found.add("idle")  # poseFor's default arm; the caller's name for it
+    if not found:
+        raise ValueError(
+            "no animation states in `poseFor` — every coverage answer below is built on "
+            "this set, so an empty one is a check that passes over nothing rather than a "
+            "character with nothing to draw")
     return found
 
 
@@ -209,9 +226,12 @@ def pose_fallbacks() -> dict[str, str]:
     drawing (a float is a jump held longer). Coverage has to know about that or
     it reports a gap the player cannot see; sprites.js is the author here,
     exactly as it is for `states`.
+
+    A missing or empty table used to come back as `{}`, which reads as "nothing
+    falls back" — the answer that hides five characters' worth of borrowed
+    artwork. `object_literal` raises instead (#233).
     """
-    m = re.search(r"const POSE_FALLBACK = \{(.*?)\};", SPRITES_JS.read_text(), re.S)
-    return dict(re.findall(r'(\w+):\s*"(\w+)"', m.group(1))) if m else {}
+    return object_literal(SPRITES_JS.read_text(), "POSE_FALLBACK")
 
 
 # --- where the rig is allowed to draw a hero --------------------------------
@@ -1055,7 +1075,10 @@ def prose_problems(credits: dict, shipped: int) -> list[str]:
             f"\n      should: {short}"
         )
 
-    m = re.search(r'const NOTICE_SHORT = "(.*?)";', MAIN_JS.read_text())
+    # code, not prose: an old copy of this line left in a comment is not what the
+    # page falls back to, and reading one would pass a check the player fails
+    # (#233 — the same class as the four parses `js_source` was written for).
+    m = re.search(r'const NOTICE_SHORT = "(.*?)";', code_only(MAIN_JS.read_text()))
     if not m:
         problems.append("main.js has no NOTICE_SHORT constant to fall back on")
     elif m.group(1) != short:
