@@ -14,7 +14,7 @@ import {
   drawToken, drawObstacle, roundRect, star,
 } from "./art.js";
 import { drawCharacter, footfall, stridePhase, BLEND } from "./sprites.js";
-import { abilityFor, heroFor } from "./abilities.js";
+import { abilityFor, heroFor, PLAYABLE } from "./abilities.js";
 import { sound } from "./audio.js";
 import { CHAPTERS, buildLevel, sceneryFor, starsFor, GROUND_Y, SEA_TOP, CLOUD_TOP,
   WORLD_W, WORLD_H } from "./chapters.js";
@@ -56,6 +56,18 @@ export const GROUND_ON_SCREEN = 0.74;
 // this. Kept shorter than the shortest ability so there is always a middle where
 // the move is at full strength.
 const ABILITY_RAMP = 0.28;   // seconds, each end
+
+// Catching a friend (#306). They trail you by a fixed *distance along the path
+// you took*, not by a fixed time: the chapters run at 220–292 px/s, and a time
+// lag turns into a longer gap the faster the chapter until the last of them is
+// off the back of the screen. A gap of about a body and a half reads as a line
+// of them running together rather than as one dog wearing three coats.
+const FRIEND_GAP = 78;
+// How much path is worth keeping: the furthest follower, and a little slack so
+// the oldest sample is still *behind* them and there is something to interpolate
+// towards. Anything older can never be asked for again.
+const FRIEND_TRAIL = FRIEND_GAP * 4;
+const FRIEND_SCORE = 2;      // "double the scores when I hit the targets"
 
 export class Game {
   constructor(canvas, characters) {
@@ -175,6 +187,11 @@ export class Game {
       cool: 0,
     };
     this.abilityUses = 0;
+    // who is waiting to be caught, and the path they will follow once they are
+    this.friends = this.placeFriends(level, ch);
+    this.joined = 0;
+    this.path = [{ x: this.player.x, y: this.player.y, d: 0, state: "run", facing: 1, strode: 0 }];
+    this.pathD = 0;
     this.camSlack = 0;
     this.balloon = ch.hasBalloon
       ? { x: 300, y: GROUND_Y - 300, vy: 0, vx: 0, hue: 0 }
@@ -461,7 +478,7 @@ export class Game {
       if (Math.abs(tk.x - p.x) < 46 && Math.abs(tk.y - (p.y - PLAYER_H / 2)) < 62) {
         tk.taken = true;
         this.collected++;
-        this.score += 10;
+        this.award(10);
         sound.collect(this.collected);
         this.sparkle(tk.x, tk.y);
       }
@@ -470,7 +487,7 @@ export class Game {
     if (!sec.taken && Math.abs(sec.x - p.x) < 52 && Math.abs(sec.y - (p.y - PLAYER_H / 2)) < 66) {
       sec.taken = true;
       this.secretFound = true;
-      this.score += 250;
+      this.award(250);
       sound.treasure();
       this.sparkle(sec.x, sec.y, 26);
       this.toast("Dollarbucks! 💰 +250");
@@ -479,6 +496,8 @@ export class Game {
     if (power > 0) this.trail(power, dt);
 
     if (this.balloon) this.stepBalloon(dt);
+
+    this.stepFriends();
 
     // the cameo friend waves as you pass
     if (!this.cameoShown && p.x > this.cameoX) {
@@ -539,7 +558,7 @@ export class Game {
       b.vy = -430;
       b.vx += (b.x - p.x) * 1.2;
       this.bops++;
-      this.score += 15;
+      this.award(15);
       sound.bop();
       this.sparkle(b.x, b.y, 8);
       if (this.bops % 5 === 0) this.toast(`Keepy uppy! ×${this.bops}`);
@@ -552,13 +571,140 @@ export class Game {
     if (b.y < 40) { b.y = 40; b.vy = 60; }
   }
 
+  /* ------------------------------------------------------------- friends -- */
+
+  /**
+   * Who is out there to be caught in this chapter, and where they are standing.
+   *
+   * Everyone the artwork can draw *running*, minus whoever is being played as: a
+   * caught friend runs the rest of the chapter with you, and a character with no
+   * run frame would run it as the standing rig — the #215 defect on the move.
+   * That is why this is PLAYABLE and not the whole cast; the cameo gets away
+   * with the rig because the cameo never moves.
+   *
+   * They stand on a high ledge where the chapter has them, so catching one is a
+   * jump you decide to make rather than something that happens to you on the
+   * way past. The backyard has no high ledges at all and they wait on the grass,
+   * which is the right difficulty for chapter one anyway.
+   */
+  placeFriends(level, ch) {
+    const used = new Set();
+    return PLAYABLE.filter((id) => id !== this.hero).map((id, i) => {
+      const spot = this.standingSpot(level, ch.length * (0.28 + i * 0.25), used);
+      return { id, atX: spot.x, atY: spot.y, joined: false, gap: 0,
+               x: spot.x, y: spot.y, state: "idle", facing: -1, strode: 0 };
+    });
+  }
+
+  /** The free ledge nearest a point along the level, preferring a high one. */
+  standingSpot(level, want, used) {
+    const wide = level.plats.filter((s) => s.w >= 90 && !used.has(s));
+    const high = wide.filter((s) => s.y <= GROUND_Y - 80);
+    const from = high.length ? high : wide;
+    let best = from[0];
+    const mid = (s) => s.x + s.w / 2;
+    for (const s of from) if (Math.abs(mid(s) - want) < Math.abs(mid(best) - want)) best = s;
+    used.add(best);
+    // a wide ledge is mostly floor: stand them where they were aimed for, but
+    // never off the end of the thing they are standing on
+    const x = Math.max(best.x + 40, Math.min(best.x + best.w - 40, want));
+    return { x, y: best.y };
+  }
+
+  /**
+   * Catching a friend, and everyone who has joined following along.
+   *
+   * Followers do not simulate. They replay the path the player actually took, so
+   * they jump where you jumped and land where you landed — there is no second
+   * physics body that could disagree with the first about where the floor is.
+   * The path is measured in distance travelled rather than in time, so the line
+   * keeps its shape in a fast chapter and a slow one alike.
+   */
+  stepFriends() {
+    const p = this.player;
+    const last = this.path[this.path.length - 1];
+    const moved = Math.hypot(p.x - last.x, p.y - last.y);
+    if (moved > 0.5) {
+      this.pathD += moved;
+      this.path.push({ x: p.x, y: p.y, d: this.pathD,
+                       state: p.state, facing: p.facing, strode: p.strode });
+      let drop = 0;
+      while (this.path[drop + 1] && this.path[drop + 1].d < this.pathD - FRIEND_TRAIL) drop++;
+      if (drop) this.path.splice(0, drop);
+    }
+    for (const f of this.friends) {
+      if (!f.joined) {
+        if (Math.abs(f.atX - p.x) < 48 && Math.abs(f.atY - p.y) < 74) this.catchFriend(f);
+        continue;
+      }
+      const at = this.pathAt(this.pathD - f.gap);
+      f.x = at.x;
+      f.y = at.y;
+      f.state = at.state;
+      f.facing = at.facing;
+      f.strode = at.strode;
+    }
+  }
+
+  catchFriend(f) {
+    f.joined = true;
+    this.joined++;
+    f.gap = FRIEND_GAP * this.joined;   // in the order they were picked up
+    const c = this.characters.find((x) => x.id === f.id);
+    const name = c ? c.name : f.id;
+    sound.friend();
+    this.sparkle(f.atX, f.atY - 30, 18);
+    this.toast(`${name}'s with you! ×${FRIEND_SCORE} points 🐾`);
+    this.onEvent({ type: "friend", character: f.id, name, joined: this.joined });
+  }
+
+  /** Where the player was `d` px ago, between the two samples that bracket it. */
+  pathAt(d) {
+    const path = this.path;
+    if (d <= path[0].d) return path[0];
+    for (let i = path.length - 1; i > 0; i--) {
+      const a = path[i - 1];
+      if (a.d > d) continue;
+      const b = path[i];
+      const k = b.d === a.d ? 0 : (d - a.d) / (b.d - a.d);
+      // the state is the one being left rather than a mix of two: a follower is
+      // in the pose the player was in at that point, and poses do not average
+      return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k,
+               state: a.state, facing: a.facing, strode: a.strode + (b.strode - a.strode) * k };
+    }
+    return path[0];
+  }
+
+  /**
+   * What a point is worth right now: double while anybody is running with you.
+   *
+   * Doubled and not multiplied per friend — the ask was "double the scores", and
+   * a ×2/×3/×4 ladder makes the third friend worth more than the first and turns
+   * a gentle game into an optimisation. One number, so the HUD can say it.
+   */
+  scoreMultiplier() {
+    return this.friends && this.friends.some((f) => f.joined) ? FRIEND_SCORE : 1;
+  }
+
+  /**
+   * Every point this game gives out goes through here.
+   *
+   * The multiplier is a property of the run, not of the token: keeping the four
+   * places that score in agreement by hand is how a fifth one gets added later
+   * and quietly does not double.
+   */
+  award(points) {
+    const got = Math.round(points * this.scoreMultiplier());
+    this.score += got;
+    return got;
+  }
+
   finish() {
     this.finished = true;
     this.mode = "finished";
     const total = this.level.total;
     const stars = starsFor(this.collected, total);
-    const bonus = 100 + stars * 50;
-    this.score += bonus;
+    const bonus = this.award(100 + stars * 50);
     sound.cheer();
     this.player.state = "cheer";
     this.onEvent({
@@ -571,6 +717,7 @@ export class Game {
       bops: this.bops,
       secret: this.secretFound,
       bonus,
+      friends: this.friends.filter((f) => f.joined).map((f) => f.id),
     });
   }
 
@@ -904,6 +1051,34 @@ export class Game {
       drawCharacter(ctx, cam.id, this.cameoX, GROUND_Y, 74, cam.palette, this.t, "cheer", -1);
     }
 
+    // friends waiting to be caught. Drawn standing: "idle" has no artwork for
+    // anybody, so it falls through to the rig, which is a character standing
+    // still — which is exactly what they are doing (#306).
+    for (const f of this.friends) {
+      if (f.joined || f.atX < left - 120 || f.atX > right + 120) continue;
+      const bob = Math.sin(this.t * 2.2 + f.atX) * 3;
+      drawCharacter(ctx, f.id, f.atX, f.atY + bob, 78, this.palette(f.id), this.t, "idle", -1);
+      // "over here!" — a bubble drawn out of shapes rather than an emoji: a
+      // canvas has only the fonts the device has, and a headless Chromium draws
+      // 👋 as nothing at all. What is on the screen has to be in the drawing.
+      ctx.save();
+      ctx.globalAlpha = 0.7 + Math.sin(this.t * 4 + f.atX) * 0.3;
+      ctx.fillStyle = "#FFF7E6";
+      roundRect(ctx, f.atX - 14, f.atY - 108 + bob, 28, 26, 9);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(f.atX - 5, f.atY - 84 + bob);
+      ctx.lineTo(f.atX + 5, f.atY - 84 + bob);
+      ctx.lineTo(f.atX - 1, f.atY - 76 + bob);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#1D3557";
+      ctx.font = "bold 18px system-ui";
+      ctx.textAlign = "center";
+      ctx.fillText("!", f.atX, f.atY - 89 + bob);
+      ctx.restore();
+    }
+
     // the finish: Floppy the bunny / home
     this.renderGoal(ctx, left, right);
 
@@ -918,7 +1093,15 @@ export class Game {
     }
     ctx.globalAlpha = 1;
 
+    // the line of them, furthest back first so the nearest is in front, and all
+    // of them behind the player: it is the player's run they are following
     const p = this.player;
+    for (const f of [...this.friends].filter((f) => f.joined).sort((a, b) => b.gap - a.gap)) {
+      if (f.x < left - 120 || f.x > right + 120) continue;
+      drawCharacter(ctx, f.id, f.x, f.y, 86, this.palette(f.id), this.t, f.state, f.facing,
+                    null, stridePhase(f.strode));
+    }
+
     this.renderAura(ctx);
     drawCharacter(ctx, this.hero, p.x, p.y, 92, this.palette(this.hero), this.t, p.state, p.facing,
                   { from: p.was, k: (this.t - p.changedAt) / BLEND },

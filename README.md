@@ -45,9 +45,15 @@ search takes the family across Brisbane and back home again:
 | 4 | Treasure Beach | The beach | Chilli |
 | 5 | Sleepytime | A dream | Bingo |
 
-Each chapter has a story card you can read aloud, a playable Heeler, a cameo friend
-who says g'day as you run past, collectibles, one hidden "dollarbuck", and a star
-rating at the end. A **Character Gallery** holds bios for 25 characters, each with
+You pick who to play as the first time you press Play — Bluey, Bingo, Bandit or
+Chilli, each with their own special move — and the table above is then whose story
+each chapter is rather than who is on screen.
+
+Each chapter has a story card you can read aloud, a cameo friend who says g'day as
+you run past, collectibles, one hidden "dollarbuck", and a star rating at the end.
+The other three Heelers are out there too, waiting on a ledge with a "!" over their
+heads: run into one and they join the line behind you, following the path you took,
+and everything is worth **double** for the rest of the chapter. A **Character Gallery** holds bios for 25 characters, each with
 its own attribution.
 
 ### Toddler-friendly by design

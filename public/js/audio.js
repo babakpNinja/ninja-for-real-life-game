@@ -226,6 +226,9 @@ export class Sound {
   treasure()  { [0, 4, 7, 12].forEach((n, i) => this.blip(523.25 * Math.pow(2, n / 12), 0.3, "triangle", 0.26, i * 0.07)); }
   cheer()     { [0, 4, 7, 12, 16, 19].forEach((n, i) => this.blip(523.25 * Math.pow(2, n / 12), 0.45, "triangle", 0.24, i * 0.1)); }
   ui()        { this.blip(700, 0.08, "sine", 0.2); }
+  // a friend joining the run (#306): two voices arriving a beat apart, because
+  // what happened is that there are now two of you
+  friend()    { [0, 5, 9, 12].forEach((n, i) => this.blip(440 * Math.pow(2, n / 12), 0.28, "triangle", 0.24, i * 0.08)); }
   // the special move going off: a rising fifth, so it reads as something
   // starting rather than as one more collect
   ability()   { [0, 7, 12].forEach((n, i) => this.blip(392 * Math.pow(2, n / 12), 0.22, "triangle", 0.26, i * 0.06)); this.noise(0.14, 0.08, 0, 2600); }

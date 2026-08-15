@@ -2758,6 +2758,19 @@ PARTICLE_SOURCES = {
         if (!g.particles.length) return "the launch made no puff";
         return "";
     """},
+    "a caught friend's sparkle": {"factory": "sparkle", "make": """
+        g.puff = () => {}; g.scuff = () => {};
+        const f = g.friends.find((x) => !x.joined);
+        if (!f) return "nobody left to catch";
+        // brought to the player rather than the player walked across the level to
+        // them: what is measured is the burst, not the trip, and beside her rather
+        // than on her so the character is not drawn over it
+        f.atX = g.player.x + 40; f.atY = g.player.y;
+        g.particles = [];
+        g.step(1 / 120);
+        if (!g.particles.length) return "nobody was caught";
+        return "";
+    """},
     "the bopped balloon's sparkle": {"factory": "sparkle", "make": """
         g.puff = () => {}; g.scuff = () => {};
         if (!g.balloon) return NO_BALLOON;
@@ -3513,6 +3526,8 @@ async ({ dt, chapter, before, after, tail, hunt, hurl }) => {
     g.toast = () => {};          // the banner is screen-space, and not the subject
     g.scuff = () => {};          // dust is random: it would differ between the runs
     g.puff = () => {};
+    g.sparkle = () => {};        // and so is the burst for catching a friend (#306),
+                                 // who is stood on the path this walks along
     // a fall further than any chapter really produces, for the cap: the game's
     // own recovery is a short hop forward, so the long throw has to be asked for
     if (hurl) g.recoverySpot = (x) => ({ x: x - hurl, y: g.level.plats[0].y });
@@ -6377,3 +6392,306 @@ def test_there_is_no_move_button_until_there_is_a_chapter(own_page):
     assert playing["colour"] == "#FFC98A", (
         f"the ring is drawn in {playing['colour']!r} rather than the move's own colour, "
         f"so the button, the aura and the trail are three different colours")
+
+
+# --- catching the others, and running with them (#306) ----------------------
+# "if I catch any of the other characters during the run, they start running
+# with me and I get double the scores when I hit the targets". Two claims: they
+# follow, and everything doubles. The doubling is checked at every place the
+# game gives a point, because "everything" is the word that was used.
+
+FRIEND_RUN = """
+({ chapter, catchOne }) => {
+  const dt = 1 / 120;
+  const g = window.game;
+  document.getElementById('overlay').classList.add('hidden');
+  g.start(chapter, 'bluey');
+  g.running = false;                       // step it by hand, as the move tests do
+  const p = g.player;
+  const out = { waiting: g.friends.map((f) => ({ id: f.id, x: f.atX, y: f.atY })) };
+  if (catchOne) {
+    // walk onto the first one rather than setting `joined`: what is being asked
+    // is whether *catching* works, and a test that set the flag would pass with
+    // the catch wired to nothing
+    const f = g.friends[0];
+    p.x = f.atX;
+    p.y = f.atY;
+    p.vy = 0;
+    g.step(dt);
+  }
+  const seen = [];
+  for (let n = 0; n < 900; n++) {
+    if (p.onGround && n % 34 === 0) g.press();
+    if (n % 34 === 14) g.release();
+    g.step(dt);
+    if (n % 30 === 0) {
+      seen.push({
+        n,
+        px: p.x, py: p.y, pd: g.pathD,
+        cam: g.camAt(),
+        friends: g.friends.filter((f) => f.joined)
+                          .map((f) => ({ id: f.id, x: f.x, y: f.y, gap: f.gap, state: f.state })),
+      });
+    }
+  }
+  return { ...out, seen, joined: g.friends.filter((f) => f.joined).map((f) => f.id),
+           multiplier: g.scoreMultiplier(), samples: g.path.length };
+}
+"""
+
+
+def test_a_friend_is_caught_by_running_into_them_and_then_runs_your_path(own_page):
+    """The ask, both halves: they are catchable, and they come along.
+
+    The line is a replay of where the player actually went, so the check is that
+    a follower's position was a place the player *was*, a fixed distance back —
+    not a second dog with its own physics, which is the version that walks
+    through the floor when the two disagree about where the ground is.
+    """
+    page = own_page
+    got = page.evaluate(FRIEND_RUN, {"chapter": 1, "catchOne": True})
+    page.evaluate("() => window.game.stop()")
+
+    assert got["joined"], (
+        f"running onto {got['waiting'][0]['id']} at "
+        f"({got['waiting'][0]['x']:.0f}, {got['waiting'][0]['y']:.0f}) caught nobody")
+    assert got["multiplier"] == 2, (
+        f"somebody is running along and points are still worth ×{got['multiplier']}")
+
+    trailing = [row for row in got["seen"] if row["friends"]]
+    assert len(trailing) > 20, (
+        f"only {len(trailing)} of {len(got['seen'])} samples had anyone following — "
+        "they joined and then stopped being anywhere")
+    for row in trailing:
+        for f in row["friends"]:
+            behind = row["px"] - f["x"]
+            # along the path rather than along the ground: a gap of 78px of *path*
+            # is mostly height while the player is mid-jump, so the two are briefly
+            # close in x and far apart in y — which is what following somebody over
+            # a gap looks like. Never in front, and never further than the gap.
+            apart = math.hypot(row["px"] - f["x"], row["py"] - f["y"])
+            assert -6 < behind < 200, (
+                f"{f['id']} is {behind:.0f}px behind at step {row['n']} with a gap of "
+                f"{f['gap']}: a follower that far off is either in front of the player "
+                f"or lost off the back of the screen")
+            assert 20 < apart < f["gap"] + 12, (
+                f"{f['id']} is {apart:.0f}px from the player at step {row['n']} with a "
+                f"gap of {f['gap']}px of path: they are either on top of her or not "
+                f"on the path she took")
+            on_screen = f["x"] - row["cam"]
+            assert 0 < on_screen < 1600, (
+                f"{f['id']} is at {on_screen:.0f}px across a 1600px screen at step "
+                f"{row['n']} — caught, and then not visible")
+            assert abs(f["y"] - row["py"]) < 260, (
+                f"{f['id']} is {abs(f['y'] - row['py']):.0f}px away from the player "
+                f"vertically at step {row['n']}: that is not the path she took")
+
+
+def test_the_friends_wait_in_places_a_player_can_reach_and_can_miss(own_page):
+    """Catching one has to be something the player *does*.
+
+    So: a few of them per chapter, spread along it rather than bunched at the
+    start, and standing on something rather than in mid-air. Chapter one is the
+    exception on height by design — it has no raised ledges at all — and the
+    test says so rather than skipping it.
+    """
+    page = own_page
+    for chapter in range(5):
+        got = page.evaluate(
+            """({ chapter }) => {
+              const g = window.game;
+              document.getElementById('overlay').classList.add('hidden');
+              g.start(chapter, 'bluey');
+              g.running = false;
+              const spots = g.friends.map((f) => ({
+                id: f.id, x: f.atX, y: f.atY,
+                onPlat: g.level.plats.some((s) => f.atX >= s.x && f.atX <= s.x + s.w
+                                                  && Math.abs(s.y - f.atY) < 1),
+              }));
+              return { spots, length: g.ch.length, hero: g.hero,
+                       raised: g.level.plats.filter((s) => s.w >= 90 && s.y <= 452 - 80).length };
+            }""",
+            {"chapter": chapter},
+        )
+        spots = got["spots"]
+        assert len(spots) >= 3, f"chapter {chapter} has only {len(spots)} to catch"
+        assert got["hero"] not in [s["id"] for s in spots], (
+            f"chapter {chapter} offers to let the player catch themselves")
+        assert len({s["id"] for s in spots}) == len(spots), (
+            f"chapter {chapter} has the same character standing about twice: {spots}")
+        for s in spots:
+            assert s["onPlat"], f"{s['id']} is standing on nothing in chapter {chapter}: {s}"
+            assert 0.15 < s["x"] / got["length"] < 0.92, (
+                f"{s['id']} is {s['x'] / got['length']:.0%} through chapter {chapter} — "
+                "at the very start or past the finish")
+        xs = sorted(s["x"] for s in spots)
+        assert min(b - a for a, b in zip(xs, xs[1:])) > 300, (
+            f"chapter {chapter} bunches them together: {xs}")
+        if got["raised"]:
+            assert all(s["y"] <= 452 - 80 for s in spots), (
+                f"chapter {chapter} has {got['raised']} high ledges and puts them on the "
+                f"floor anyway, where they are caught by walking: {spots}")
+    page.evaluate("() => window.game.stop()")
+
+
+def test_nobody_joins_the_run_who_cannot_be_drawn_running(own_page):
+    """A joiner runs the rest of the chapter beside you.
+
+    That is the whole reason the catchable list is the playable four and not the
+    twenty-five in the gallery: a character with no run frame would run it as
+    the standing rig, which is #215 with the player's own choice for company.
+    The cameo is exempt because the cameo never moves.
+    """
+    page = own_page
+    for hero in CAN_BE_DRAWN_RUNNING:
+        got = page.evaluate(
+            """({ hero }) => {
+              const g = window.game;
+              document.getElementById('overlay').classList.add('hidden');
+              g.start(2, hero);
+              g.running = false;
+              return g.friends.map((f) => f.id);
+            }""",
+            {"hero": hero},
+        )
+        assert got, f"playing as {hero} there is nobody to catch"
+        for cid in got:
+            assert cid in CAN_BE_DRAWN_RUNNING, (
+                f"{cid} can be caught and would run the chapter with no run artwork")
+    page.evaluate("() => window.game.stop()")
+
+
+SCORE_SITES = """
+({ withFriend }) => {
+  const dt = 1 / 120;
+  const g = window.game;
+  document.getElementById('overlay').classList.add('hidden');
+  g.start(0, 'bluey');       // the chapter with a balloon in it: four sites, not three
+  g.running = false;
+  const p = g.player;
+  if (withFriend) {
+    const f = g.friends[0];
+    p.x = f.atX; p.y = f.atY; p.vy = 0;
+    g.step(dt);
+  }
+  // each site scored on its own, one step at a time, so a delta is one event
+  const delta = (fn) => { const before = g.score; fn(); return g.score - before; };
+  const out = { multiplier: g.scoreMultiplier(), joined: g.friends.filter((x) => x.joined).length };
+  const tk = g.level.tokens.find((t) => !t.taken);
+  out.token = delta(() => { p.x = tk.x; p.y = tk.y + 37; p.vy = 0; g.step(dt); });
+  const sec = g.level.secret;
+  out.secret = delta(() => { p.x = sec.x; p.y = sec.y + 37; p.vy = 0; g.step(dt); });
+  if (g.balloon) {
+    out.bop = delta(() => {
+      g.balloon.x = p.x; g.balloon.y = p.y - 74; g.balloon.vy = 0;
+      g.step(dt);
+    });
+  }
+  let bonus = null;
+  g.onEvent = (ev) => { if (ev.type === 'complete') bonus = ev.bonus; };
+  out.finish = delta(() => g.finish());
+  out.bonus = bonus;
+  return out;
+}
+"""
+
+
+def test_every_way_of_scoring_doubles_while_a_friend_is_running_with_you(own_page):
+    """"double the scores when I hit the targets" — all of them, not the tokens.
+
+    A chapter scores in four places: a token, the hidden dollarbucks, a keepy
+    uppy bop and the bonus at the end. Each is driven on its own here and the
+    two runs compared, because a doubling wired into the collect loop only would
+    pass any test that looked at the score and nothing else.
+    """
+    page = own_page
+    plain = page.evaluate(SCORE_SITES, {"withFriend": False})
+    withf = page.evaluate(SCORE_SITES, {"withFriend": True})
+    page.evaluate("() => window.game.stop()")
+
+    assert plain["joined"] == 0, f"the plain run caught somebody: {plain}"
+    assert plain["multiplier"] == 1, f"nobody joined the plain run and points still doubled: {plain}"
+    assert withf["joined"] == 1, f"nobody was caught in the run that was meant to: {withf}"
+    assert withf["multiplier"] == 2, (
+        f"somebody joined and a point is still worth ×{withf['multiplier']}: {withf}")
+    sites = [k for k in ("token", "secret", "bop", "finish") if plain.get(k)]
+    assert len(sites) == 4, (
+        f"only {sites} scored anything in the plain run, so this checked "
+        f"{len(sites)} of the four ways to score: {plain}")
+    for site in sites:
+        assert withf[site] == plain[site] * 2, (
+            f"{site} paid {plain[site]} alone and {withf[site]} with a friend — "
+            f"that is ×{withf[site] / plain[site]:.2f}, not double")
+    assert withf["bonus"] == plain["bonus"] * 2, (
+        f"the finish reported a bonus of {withf['bonus']} while adding "
+        f"{withf['finish']} to the score: the results screen would print a number "
+        "the score does not contain")
+
+
+def test_the_engine_has_exactly_one_place_that_adds_to_the_score():
+    """The mechanism behind the test above, so a *new* way to score cannot miss it.
+
+    Four sites had to be found and changed for #306; a fifth added later would
+    be written the way the first four were and would quietly not double. It
+    cannot: `award()` is the only thing in the engine that touches `this.score`,
+    and this fails on the line that skips it rather than on the behaviour, which
+    is the part a new feature's author will see.
+    """
+    src = code_only((APP / "public" / "js" / "game.js").read_text())
+    # `this.score = 0` in `start` is the reset, not a way of scoring: it is the one
+    # write that is allowed to be somewhere else, and naming it here is cheaper than
+    # a parse that has to know what a fresh chapter is.
+    scoring = re.compile(r"this\.score\s*(\+\+|[-+]?=(?!=))")
+    adds = [line.strip() for line in src.splitlines()
+            if scoring.search(line) and line.strip() != "this.score = 0;"]
+    assert adds, "nothing in the engine adds to the score at all — this parse is broken"
+    body = re.search(r"\n  award\(points\) \{.*?\n  \}", src, re.S)
+    assert body, "there is no `award(points)` method for the scoring to go through"
+    inside = [line.strip() for line in body.group(0).splitlines() if scoring.search(line)]
+    assert adds == inside, (
+        "these add to the score outside `award()`, so they do not double when a "
+        f"friend is running along: {[a for a in adds if a not in inside]}")
+
+
+def test_the_hud_and_the_results_both_say_who_is_running_with_you(own_page):
+    """Say it on screen, and say it out loud (#293).
+
+    The badge is the only thing telling a player mid-run that points are worth
+    double, and the results table is the answer to "what happened?" — which the
+    player this game is for cannot read, so the spoken lines have to carry the
+    same news.
+    """
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    tap_play(page, hero="bluey")
+    page.wait_for_function("() => window.game && window.game.mode === 'playing'")
+    assert page.locator("#hud-mult").is_hidden(), (
+        "the double-points badge is up before anybody has been caught")
+
+    page.evaluate("""() => {
+      const g = window.game;
+      const f = g.friends[0];
+      g.player.x = f.atX; g.player.y = f.atY; g.player.vy = 0;
+      g.step(1 / 120);
+    }""")
+    page.wait_for_timeout(120)
+    badge = page.locator("#hud-mult")
+    assert badge.is_visible(), "a friend joined and the HUD says nothing about double points"
+    assert "2" in badge.inner_text(), f"the badge reads {badge.inner_text()!r}"
+
+    got = page.evaluate("""() => {
+      const g = window.game;
+      const f = g.friends[0];
+      g.finish();
+      return { id: f.id, name: (window.__cast, g.characters.find((c) => c.id === f.id).name) };
+    }""")
+    page.wait_for_timeout(1200)
+    table = page.locator("table.stats").inner_text()
+    said = " ".join(page.evaluate("window.__said"))
+    page.evaluate("() => window.game.stop()")
+    assert got["name"] in table, (
+        f"the results do not say {got['name']} ran along: {table!r}")
+    assert got["name"] in said, (
+        f"the table says {got['name']} joined and the voice does not: {said!r}")
+    assert "double" in said.lower(), (
+        f"nothing read out says the points were doubled: {said!r}")

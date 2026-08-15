@@ -67,6 +67,20 @@ canvas#game {
   box-shadow: 0 3px 0 rgba(0, 0, 0, 0.14);
 }
 .pill.small { font-size: clamp(13px, 2.4vw, 19px); background: rgba(255, 255, 255, 0.72); }
+/* the double-points badge: its own colour, because it appears mid-run and has
+   to be noticed without a player having to read it */
+.pill.mult {
+  font-size: clamp(15px, 2.8vw, 22px);
+  background: #FFD166;
+  color: #1D3557;
+  font-weight: 800;
+  animation: mult-pop 0.4s ease-out;
+}
+@keyframes mult-pop {
+  from { transform: scale(0.5); }
+  60%  { transform: scale(1.15); }
+  to   { transform: scale(1); }
+}
 
 .icon-btn {
   pointer-events: auto;

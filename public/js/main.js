@@ -613,6 +613,11 @@ function updateHud() {
   if (!game || game.mode !== "playing") return;
   el("hud-score").textContent = game.score;
   el("hud-tokens").textContent = `${game.collected}/${game.level.total}`;
+  // double points, and who to thank for it: hidden until somebody has joined, so
+  // the badge appearing is itself the news (#306)
+  const mult = game.scoreMultiplier();
+  el("hud-mult").classList.toggle("hidden", mult === 1);
+  el("hud-mult").textContent = `×${mult} 🐾`;
   const pct = Math.max(0, Math.min(1, game.player.x / game.ch.length));
   el("hud-progress-fill").style.width = `${pct * 100}%`;
   el("hud-progress-dog").style.left = `${pct * 100}%`;
@@ -683,6 +688,7 @@ function results(r) {
       <tr><td>hidden dollarbucks</td><td>${r.secret ? "found! 💰" : "still hidden"}</td></tr>
       <tr><td>chapter bonus</td><td>+${r.bonus}</td></tr>
       <tr><th>score</th><th>${r.score}</th></tr>
+      ${friendRow(r)}
       <tr><td>your best here</td><td>${best}</td></tr>
     </table>
     ${next < CHAPTERS.length ? "" : `<p class="story"><b>You found Floppy and got everyone home. 🐾</b></p>`}
@@ -719,6 +725,33 @@ function results(r) {
  * in here, and a screen that grows a row nothing says is the state this issue
  * was filed about.
  */
+/**
+ * Who joined the run, as a sentence: "Bingo", "Bingo and Bandit".
+ *
+ * One place, because the table and the read-aloud both need it and they have to
+ * agree — the table is the answer to "what happened?" and the voice is the same
+ * answer for a player who cannot read it (#293).
+ */
+function friendsWord(r) {
+  const names = (r.friends || []).map((id) => {
+    const c = (characters || []).find((x) => x.id === id);
+    return c ? c.name : id;
+  });
+  if (!names.length) return "";
+  if (names.length === 1) return names[0];
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/**
+ * Under the score rather than above it: the panel body scrolls, and on a short
+ * window the fold lands about here — a row inserted higher up pushed the score,
+ * which is the headline, off the bottom of a screen that used to show it.
+ */
+function friendRow(r) {
+  const who = friendsWord(r);
+  return who ? `<tr><td>friends who joined</td><td>${who} — double points!</td></tr>` : "";
+}
+
 function resultLines(r) {
   const ch = CHAPTERS[r.chapter];
   const stars = ["no stars this time", "one star", "two stars", "three stars"][r.stars] || "";
@@ -729,6 +762,7 @@ function resultLines(r) {
     `You found ${r.collected} of ${r.total} ${ch.tokenName}.`,
     ch.hasBalloon ? `Keepy uppy bops: ${r.bops}.` : null,
     r.secret ? "You found the hidden dollarbucks!" : "The hidden dollarbucks is still hidden.",
+    friendsWord(r) ? `${friendsWord(r)} ran with you, so everything was worth double.` : null,
     `Chapter bonus, ${r.bonus}. Your score, ${r.score}.`,
     `Your best here is ${(save.chapters[r.chapter] || {}).best || 0}.`,
   ].filter(Boolean);
