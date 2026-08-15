@@ -4047,8 +4047,27 @@ FURNITURE = """
     const parts = colour.match(/[\\d.]+/g) || [];
     return parts.length > 3 ? parseFloat(parts[3]) : 1;
   };
+  // Every rect here is where the layout put the thing, which is not always
+  // where a player can see it: inside a scrolling box, what is past the edge of
+  // the box is not on the screen at all. So each item carries `vis` as well —
+  // its rect cut down to whatever its scrolling ancestors let through — and a
+  // rule about two things being in the same place has to use that one (#269).
+  const clipOf = (node, clip) => {
+    const cs = getComputedStyle(node);
+    if (!/hidden|auto|scroll|clip/.test(cs.overflowX + ' ' + cs.overflowY)) return clip;
+    const r = node.getBoundingClientRect();
+    return { left: Math.max(clip.left, r.left), right: Math.min(clip.right, r.right),
+             top: Math.max(clip.top, r.top), bottom: Math.min(clip.bottom, r.bottom) };
+  };
+  const cut = (b, clip) => {
+    const box = { left: Math.max(clip.left, b.left), right: Math.min(clip.right, b.right),
+                  top: Math.max(clip.top, b.top), bottom: Math.min(clip.bottom, b.bottom) };
+    box.width = Math.max(0, box.right - box.left);
+    box.height = Math.max(0, box.bottom - box.top);
+    return box;
+  };
   const seen = [];
-  const walk = (node) => {
+  const walk = (node, clip) => {
     for (const kid of node.children) {
       if (kid.id === 'game' || kid.id === 'overlay') continue;
       const cs = getComputedStyle(kid);
@@ -4067,18 +4086,30 @@ FURNITURE = """
           tappable: kid.tagName === 'BUTTON' || cs.cursor === 'pointer',
           left: b.left, right: b.right, top: b.top, bottom: b.bottom,
           width: b.width, height: b.height,
+          vis: cut(b, clip),
         });
       } else {
-        walk(kid);
+        walk(kid, clipOf(kid, clip));
       }
     }
   };
   const root = document.querySelector(rootSelector);
   if (!root) throw new Error('nothing matched ' + rootSelector + ', so there is nothing to measure');
-  walk(root);
+  const far = 1e6;
+  walk(root, clipOf(root, { left: -far, right: far, top: -far, bottom: far }));
   return { seen, view: { w: window.innerWidth, h: window.innerHeight } };
 }
 """
+
+def on_screen(seen):
+    """The things out of a walk that a player can actually see right now.
+
+    Something scrolled past the edge of a scrolling box still has a rect, and
+    that rect can sit exactly where a pinned button is — but it is not on the
+    screen, and two things are only on top of each other if both of them are.
+    """
+    return [item for item in seen if item["vis"]["width"] > 0.5 and item["vis"]["height"] > 0.5]
+
 
 # 44 CSS px is the tap target in both Apple's HIG and WCAG 2.5.5 — a five year
 # old aiming at a pause button is exactly who that number is for.
@@ -4125,9 +4156,9 @@ def test_nothing_on_the_hud_sits_on_top_of_anything_else(make_page, viewport, to
             f"{screen}: only {len(seen)} things found on a screen that has a "
             f"score, a token count, mute, pause and a progress bar: {names}")
 
-        for a, b in itertools.combinations(seen, 2):
+        for a, b in itertools.combinations(on_screen(seen), 2):
             why = ALLOWED_TO_OVERLAP.get(frozenset((a["what"], b["what"])))
-            area = overlap(a, b)
+            area = overlap(a["vis"], b["vis"])
             assert area == 0 or why, (
                 f"{screen}: {a['what']} covers {area:.0f}px2 of {b['what']} — "
                 f"{a['what']} y {a['top']:.0f}..{a['bottom']:.0f} x "
@@ -4263,10 +4294,19 @@ def overlay_screens(page):
     yield "results"
 
 
+# What actually scrolls. A panel is a scrolling body with the screen's buttons
+# pinned under it, and the panel itself is capped at the window and hides its
+# overflow — so "is this screen taller than the window" is a question about the
+# body, and asking the panel would answer 0 forever (#269).
+SCROLLER = "#overlay .panel > .panel-body"
+
 PANEL_FITS = """
 (sel) => {
   const p = document.querySelector(sel);
-  return { over: p.scrollHeight - p.clientHeight, canScroll: /auto|scroll/.test(getComputedStyle(p).overflowY) };
+  if (!p) throw new Error('nothing matched ' + sel + ', so nothing here scrolls');
+  const r = p.getBoundingClientRect();
+  return { over: p.scrollHeight - p.clientHeight, bottom: r.bottom,
+           canScroll: /auto|scroll/.test(getComputedStyle(p).overflowY) };
 }
 """
 
@@ -4296,15 +4336,16 @@ def test_nothing_on_a_menu_sits_on_top_of_anything_else(make_page, viewport, tou
                 f"{where}: nothing tappable found, so the tap-target rule below "
                 f"is being asked about nothing: {names}")
 
-            for a, b in itertools.combinations(seen, 2):
+            for a, b in itertools.combinations(on_screen(seen), 2):
                 why = ALLOWED_TO_OVERLAP.get(frozenset((a["what"], b["what"])))
-                area = overlap(a, b)
+                area = overlap(a["vis"], b["vis"])
                 assert area == 0 or why, (
                     f"{where}: {a['what']} ({a['text']!r}) covers {area:.0f}px2 of "
-                    f"{b['what']} ({b['text']!r}) — {a['what']} y "
-                    f"{a['top']:.0f}..{a['bottom']:.0f} x {a['left']:.0f}..{a['right']:.0f}, "
-                    f"{b['what']} y {b['top']:.0f}..{b['bottom']:.0f} x "
-                    f"{b['left']:.0f}..{b['right']:.0f}")
+                    f"{b['what']} ({b['text']!r}) — the parts of them on the screen "
+                    f"are {a['what']} y {a['vis']['top']:.0f}..{a['vis']['bottom']:.0f} x "
+                    f"{a['vis']['left']:.0f}..{a['vis']['right']:.0f} and "
+                    f"{b['what']} y {b['vis']['top']:.0f}..{b['vis']['bottom']:.0f} x "
+                    f"{b['vis']['left']:.0f}..{b['vis']['right']:.0f}")
 
             for item in seen:
                 assert item["left"] >= -0.5 and item["right"] <= view["w"] + 0.5, (
@@ -4320,7 +4361,7 @@ def test_nothing_on_a_menu_sits_on_top_of_anything_else(make_page, viewport, tou
                         f"{item['width']:.0f}x{item['height']:.0f} — under the "
                         f"{TAP_TARGET}px a small finger needs to hit it")
 
-            fit = page.evaluate(PANEL_FITS, PANEL)
+            fit = page.evaluate(PANEL_FITS, SCROLLER)
             if fit["over"] > 1:
                 assert name in MAY_SCROLL, (
                     f"{where}: the panel is {fit['over']:.0f}px taller than the "
@@ -4333,13 +4374,17 @@ def test_nothing_on_a_menu_sits_on_top_of_anything_else(make_page, viewport, tou
                 scrolled.append(name)
                 lowest = max(seen, key=lambda i: i["bottom"])
                 page.evaluate("(sel) => { const p = document.querySelector(sel); "
-                              "p.scrollTop = p.scrollHeight; }", PANEL)
+                              "p.scrollTop = p.scrollHeight; }", SCROLLER)
                 page.wait_for_timeout(120)
-                bottom = page.evaluate(FURNITURE, PANEL)
+                bottom = page.evaluate(FURNITURE, SCROLLER)
                 last = max(bottom["seen"], key=lambda i: i["bottom"])
-                assert last["bottom"] <= view["h"] + 0.5, (
+                # against the bottom of the scrolling part, not the bottom of the
+                # window: the buttons are pinned below it, so measuring the window
+                # would pass for anything the body could possibly show (#269)
+                assert last["bottom"] <= fit["bottom"] + 0.5, (
                     f"{where}: scrolled all the way down, {last['what']} "
-                    f"({last['text']!r}) still ends at y {last['bottom']:.0f} on a "
+                    f"({last['text']!r}) still ends at y {last['bottom']:.0f} and the "
+                    f"scrolling part of the panel ends at y {fit['bottom']:.0f} on a "
                     f"{view['h']}px screen — the bottom of this panel cannot be "
                     f"reached (it was {lowest['what']} before scrolling)")
             else:
@@ -4361,6 +4406,93 @@ def test_nothing_on_a_menu_sits_on_top_of_anything_else(make_page, viewport, tou
     assert scrolled, ("no screen overflowed its window, so nothing checked that a "
                       f"panel taller than the screen can be scrolled to the bottom "
                       f"({screen}, {len(measured)} screens)")
+
+
+# --- and the way out of every one of them (#269) ------------------------------
+
+# The block of buttons that ends a screen, wherever `showOverlay` has put it.
+ACTIONS = "#overlay .panel .actions"
+
+ACTION_BLOCK = """
+(sels) => {
+  const a = document.querySelector(sels.actions);
+  if (!a) return null;
+  const body = document.querySelector(sels.body);
+  const box = (n) => {
+    const r = n.getBoundingClientRect();
+    return { what: n.id || n.className || n.tagName.toLowerCase(),
+             text: n.textContent.trim().slice(0, 24),
+             top: r.top, bottom: r.bottom, left: r.left, right: r.right,
+             width: r.width, height: r.height };
+  };
+  return {
+    block: box(a),
+    buttons: [...a.querySelectorAll('button')].map(box),
+    // `closest` walks up: true means the block is still inside the part that
+    // scrolls, which is exactly the arrangement #269 was about
+    inTheScrollingPart: a.closest(sels.body) !== null,
+    over: body ? body.scrollHeight - body.clientHeight : 0,
+    scrollTop: body ? body.scrollTop : 0,
+    view: { w: window.innerWidth, h: window.innerHeight },
+  };
+}
+"""
+
+
+@pytest.mark.parametrize("viewport,touch,screen", SCREENS, ids=SCREEN_IDS)
+def test_the_buttons_that_end_a_screen_are_on_the_screen(make_page, viewport, touch, screen):
+    """#269: on a phone held sideways, the way out was below the fold.
+
+    Sideways is the way this game asks to be held, and on a 844x390 window the
+    characters screen ran 535px past the bottom of it, credits 372, results 180.
+    Nothing said so: the panel scrolled its own insides, so the document was
+    never taller than the window, and the only route to "← Back" was a scroll
+    gesture on a panel that gives no sign it scrolls.
+
+    So this asks what a player asks on arriving at a screen, before touching
+    anything: is the block of buttons that ends it — the way forward and the way
+    back — actually on the screen? It is the same nine screens as the check
+    above, and the only one it lets off is none of them.
+    """
+    page = make_page(viewport, touch=touch)
+    measured, needed_it = [], []
+    try:
+        for name in overlay_screens(page):
+            where = f"{screen}, {name}"
+            found = page.evaluate(ACTION_BLOCK, {"actions": ACTIONS, "body": SCROLLER})
+            assert found, (
+                f"{where}: no block of buttons on this screen at all — every screen "
+                f"ends in one, and a screen that has lost its way out is what this "
+                f"is here to notice")
+            view, buttons = found["view"], found["buttons"]
+            assert buttons, (
+                f"{where}: the block is there but has no buttons in it ({found['block']}), "
+                f"so the rule below is being asked about nothing")
+            assert not found["inTheScrollingPart"], (
+                f"{where}: the block of buttons is inside the part of the panel that "
+                f"scrolls, so a screen taller than the window takes it with it — that "
+                f"is #269 back again")
+            assert found["scrollTop"] == 0, (
+                f"{where}: the panel was already scrolled by {found['scrollTop']:.0f}px "
+                f"before anything was measured, so this is not what a player arrives at")
+
+            for b in buttons:
+                assert b["top"] >= -0.5 and b["bottom"] <= view["h"] + 0.5, (
+                    f"{where}: {b['what']} ({b['text']!r}) is at y {b['top']:.0f}.."
+                    f"{b['bottom']:.0f} on a {view['h']}px screen — below the fold on "
+                    f"arrival, and nothing on the screen says to scroll for it")
+            if found["over"] > 1:
+                needed_it.append(f"{name} (+{found['over']:.0f}px)")
+            measured.append(name)
+    finally:
+        page.evaluate("() => window.game && window.game.stop()")
+        page.context.close()
+    assert len(measured) == 9, f"only measured {measured}"
+    # a screen shorter than the window would pass this without the pinning doing
+    # anything, so at least one has to have been the hard case
+    assert needed_it, (
+        f"no screen on {screen} was taller than its window ({len(measured)} measured), "
+        f"so nothing here checked what happens when one is")
 
 
 @pytest.mark.leaves_a_game_running(reason="test_a_tap_jumps_on_touch taps the player "

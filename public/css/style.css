@@ -148,16 +148,50 @@ canvas#game {
 }
 .screen.transparent { background: rgba(18, 38, 58, 0.72); backdrop-filter: blur(3px); }
 
+/*
+ * A panel is a scrolling body with the screen's buttons pinned under it. The
+ * panel itself never scrolls: it is capped at the window and lays its two parts
+ * out in a column, so a list longer than the window shortens the body and the
+ * block of buttons stays where it is. Before that the whole panel scrolled —
+ * on a phone held sideways the characters screen ran 535px past the bottom of
+ * the window, taking "← Back" with it, and a panel that scrolls its own insides
+ * gives a player no sign that it does (#269).
+ */
 .panel {
+  --panel-pad-y: clamp(16px, 3.4vw, 30px);
+  --panel-pad-x: clamp(16px, 3.4vw, 30px);
+  display: flex;
+  flex-direction: column;
   background: var(--cream);
   border-radius: 28px;
-  padding: clamp(16px, 3.4vw, 30px);
+  padding: var(--panel-pad-y) var(--panel-pad-x);
   width: min(760px, 96vw);
   max-height: 94vh;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  overflow: hidden;
   text-align: center;
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.3);
+}
+
+/* No `min-height: 0` here, the usual charm against a flex item refusing to be
+ * shorter than its contents: a scroll container's automatic minimum size is
+ * already zero, so `overflow-y` is doing that job. Mutating it to `auto` changed
+ * nothing, which is how that was settled rather than guessed. */
+.panel-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The body is cut off wherever the buttons begin, so the last line of it fades
+ * into them instead of stopping mid-word — on a screen with more above, that
+ * fade is the only sign a player gets that there is. */
+.panel-foot { position: relative; flex: none; padding-top: 8px; }
+.panel-foot::before {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: 100%;
+  height: 16px;
+  background: linear-gradient(to bottom, rgba(255, 247, 230, 0), var(--cream));
+  pointer-events: none;
 }
 
 .title {
@@ -288,7 +322,7 @@ table.stats td:last-child, table.stats th:last-child { text-align: right; }
  * 44px tap floor.
  */
 @media (max-height: 560px) {
-  .panel { padding: 10px 16px; border-radius: 20px; }
+  .panel { --panel-pad-y: 10px; --panel-pad-x: 16px; border-radius: 20px; }
   .title { font-size: clamp(26px, 5vw, 40px); }
   .subtitle { margin: 2px 0 6px; font-size: clamp(12px, 2vw, 15px); }
   h2 { font-size: clamp(19px, 3.4vw, 26px); margin: 2px 0 6px; }

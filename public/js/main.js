@@ -78,7 +78,24 @@ const starsText = (n) => "★★★".slice(0, n) + "☆☆☆".slice(0, 3 - n);
 
 function showOverlay(html, { transparent = false } = {}) {
   overlay.className = "screen" + (transparent ? " transparent" : "");
-  overlay.innerHTML = `<div class="panel">${html}</div>`;
+  overlay.innerHTML = `<div class="panel"><div class="panel-body">${html}</div></div>`;
+  // The block of buttons that ends a screen — the way forward and the way back —
+  // is lifted out of the scrolling part and pinned under it, so a list longer
+  // than the window scrolls instead of pushing Back off the bottom. On a phone
+  // held sideways the characters screen ran 535px past the window and every
+  // button on it was unreachable-looking, because the panel scrolls its own
+  // insides and the page gives no sign of it (#269). The block and anything
+  // written under it (the menu's fine print) go together, so the order a player
+  // reads is the order it was written in.
+  const body = overlay.querySelector(".panel-body");
+  const actions = body.querySelector(":scope > .actions");
+  if (actions) {
+    const foot = document.createElement("div");
+    foot.className = "panel-foot";
+    while (actions.nextSibling) foot.appendChild(actions.nextSibling);
+    foot.insertBefore(actions, foot.firstChild);
+    body.after(foot);
+  }
   overlay.classList.remove("hidden");
   overlay.scrollTop = 0;
 }
@@ -143,11 +160,13 @@ function menu() {
     <h1 class="title">Ana&nbsp;Bingo!</h1>
     <p class="subtitle">A backyard adventure with the heeler family</p>
     <div id="menu-dogs"><canvas></canvas></div>
-    <button class="big-btn" id="btn-play">▶ ${resume ? "Keep playing" : "Play"}</button>
-    <div class="btn-row">
-      <button class="med-btn" id="btn-chapters">Chapters</button>
-      <button class="med-btn" id="btn-gallery">Characters</button>
-      <button class="med-btn" id="btn-stats">Stats</button>
+    <div class="actions">
+      <button class="big-btn" id="btn-play">▶ ${resume ? "Keep playing" : "Play"}</button>
+      <div class="btn-row">
+        <button class="med-btn" id="btn-chapters">Chapters</button>
+        <button class="med-btn" id="btn-gallery">Characters</button>
+        <button class="med-btn" id="btn-stats">Stats</button>
+      </div>
     </div>
     <p class="tap-hint">Tap anywhere to jump · hold to float</p>
     <p class="credits">${noticeShort() || NOTICE_SHORT}<br />
@@ -191,7 +210,7 @@ function credits() {
       <p class="fine">If you own this artwork and would like it taken down, it will be — it is one
       person's tablet, not a website.</p>
     </div>
-    <button class="med-btn" id="btn-back">← Menu</button>
+    <div class="actions"><button class="med-btn" id="btn-back">← Menu</button></div>
   `);
   on("btn-back", menu);
 }
@@ -246,7 +265,7 @@ function chapterSelect() {
     <h2>Chapters</h2>
     <p class="subtitle">One lost bunny, five adventures.</p>
     <div class="chapter-list">${cards}</div>
-    <button class="med-btn" id="btn-back">← Back</button>
+    <div class="actions"><button class="med-btn" id="btn-back">← Back</button></div>
   `);
   overlay.querySelectorAll(".chapter-card canvas").forEach((node) => {
     const c = characters.find((x) => x.id === node.dataset.hero);
@@ -275,10 +294,12 @@ function storyCard(index) {
     <div id="story-dog" style="height:110px"><canvas style="width:110px;height:110px"></canvas></div>
     ${ch.story.map((s) => `<p class="story">${s}</p>`).join("")}
     <p class="joke">${ch.joke}</p>
-    <button class="big-btn" id="btn-go">▶ Play as ${hero ? hero.name : "Bluey"}</button>
-    <div class="btn-row">
-      <button class="med-btn" id="btn-auto">${save.walk ? "Auto-run: off" : "Auto-run: on"}</button>
-      <button class="med-btn" id="btn-back">← Menu</button>
+    <div class="actions">
+      <button class="big-btn" id="btn-go">▶ Play as ${hero ? hero.name : "Bluey"}</button>
+      <div class="btn-row">
+        <button class="med-btn" id="btn-auto">${save.walk ? "Auto-run: off" : "Auto-run: on"}</button>
+        <button class="med-btn" id="btn-back">← Menu</button>
+      </div>
     </div>
   `);
   const node = overlay.querySelector("#story-dog canvas");
@@ -350,14 +371,16 @@ function results(r) {
       <tr><th>score</th><th>${r.score}</th></tr>
       <tr><td>your best here</td><td>${best}</td></tr>
     </table>
-    ${next < CHAPTERS.length
-      ? `<button class="big-btn" id="btn-next">▶ Chapter ${next + 1}: ${CHAPTERS[next].title}</button>`
-      : `<p class="story"><b>You found Floppy and got everyone home. 🐾</b></p>
-         <button class="big-btn" id="btn-again">▶ Play again</button>`}
-    <div class="btn-row">
-      <button class="med-btn" id="btn-retry">↻ This chapter</button>
-      <button class="med-btn" id="btn-chapters">Chapters</button>
-      <button class="med-btn" id="btn-back">Menu</button>
+    ${next < CHAPTERS.length ? "" : `<p class="story"><b>You found Floppy and got everyone home. 🐾</b></p>`}
+    <div class="actions">
+      ${next < CHAPTERS.length
+        ? `<button class="big-btn" id="btn-next">▶ Chapter ${next + 1}: ${CHAPTERS[next].title}</button>`
+        : `<button class="big-btn" id="btn-again">▶ Play again</button>`}
+      <div class="btn-row">
+        <button class="med-btn" id="btn-retry">↻ This chapter</button>
+        <button class="med-btn" id="btn-chapters">Chapters</button>
+        <button class="med-btn" id="btn-back">Menu</button>
+      </div>
     </div>
   `, { transparent: true });
   on("btn-next", () => storyCard(next));
@@ -380,7 +403,7 @@ function gallery() {
     <h2>Everyone you'll meet</h2>
     <p class="subtitle">${characters.length} characters — tap one to read about them.</p>
     <div class="gallery">${cards}</div>
-    <button class="med-btn" id="btn-back">← Back</button>
+    <div class="actions"><button class="med-btn" id="btn-back">← Back</button></div>
   `);
   overlay.querySelectorAll(".char-card canvas").forEach((node) => {
     const c = characters.find((x) => x.id === node.dataset.pal);
@@ -417,9 +440,11 @@ function bio(id) {
       <p class="fun">💡 ${c.funFact}</p>
       ${attribution(c)}
     </div>
-    <div class="btn-row">
-      <button class="med-btn" id="btn-back">← All characters</button>
-      <button class="med-btn" id="btn-menu">Menu</button>
+    <div class="actions">
+      <div class="btn-row">
+        <button class="med-btn" id="btn-back">← All characters</button>
+        <button class="med-btn" id="btn-menu">Menu</button>
+      </div>
     </div>
   `, { transparent: true });
   portrait(el("bio-dog"), c, "cheer");
@@ -448,9 +473,11 @@ function stats() {
     </table>
     <p class="story">Hidden dollarbucks found: <b>${found} / ${CHAPTERS.length}</b></p>
     <p class="joke">Chapters played: ${save.plays}</p>
-    <div class="btn-row">
-      <button class="med-btn" id="btn-reset">Start over</button>
-      <button class="med-btn" id="btn-back">← Back</button>
+    <div class="actions">
+      <div class="btn-row">
+        <button class="med-btn" id="btn-reset">Start over</button>
+        <button class="med-btn" id="btn-back">← Back</button>
+      </div>
     </div>
   `);
   on("btn-reset", () => { save = blankSave(); store(); stats(); });
@@ -466,11 +493,13 @@ function pause() {
   showOverlay(`
     <h2>Paused</h2>
     <p class="subtitle">Chapter ${game.ch.n} — ${game.ch.title}</p>
-    <button class="big-btn" id="btn-resume">▶ Keep playing</button>
-    <div class="btn-row">
-      <button class="med-btn" id="btn-retry">↻ Restart</button>
-      <button class="med-btn" id="btn-chapters">Chapters</button>
-      <button class="med-btn" id="btn-back">Menu</button>
+    <div class="actions">
+      <button class="big-btn" id="btn-resume">▶ Keep playing</button>
+      <div class="btn-row">
+        <button class="med-btn" id="btn-retry">↻ Restart</button>
+        <button class="med-btn" id="btn-chapters">Chapters</button>
+        <button class="med-btn" id="btn-back">Menu</button>
+      </div>
     </div>
   `, { transparent: true });
   on("btn-resume", () => {
