@@ -38,6 +38,14 @@ APP = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(APP / "scripts"))
 from js_source import code_only, function_body, object_literal  # noqa: E402
 
+# The two tables that say what is *meant* to be missing: which (character,
+# state) the rig is allowed to draw, and which states are strides. Imported
+# rather than restated, and — since they are the declarations these tests
+# check the artwork against — imported rather than read back out of the files
+# they produce, which is the whole of #244.
+import build_pose_joints  # noqa: E402
+import fetch_assets  # noqa: E402
+
 # The game's name is authored once, in fetch_assets.py. `--check` proves the
 # static copies agree with it; this suite is the only thing that can say the
 # *rendered* page does, which is the copy anyone actually reads.
@@ -87,12 +95,15 @@ def resolved_pose(cid, state):
 ACTION = ("run", "jump", "float", "cheer")
 
 # The stride renders, which are the ones cut at the hip so their legs can swing
-# (#212). Read from the shipped joints for the same reason: a frame that stops
-# being cut loses its motion test instead of keeping a passing one.
+# (#212). The subjects come from the *declaration* — build_pose_joints.SWUNG is
+# the list of states whose artwork is a stride — and not from the joints file it
+# writes, because that file is the thing under test: a frame that stopped being
+# cut used to drop out of this list and take its motion test with it, leaving a
+# shorter green run (#244). Now it stays, and the guard below fails.
 POSE_JOINTS = json.loads(
     (APP / "public" / "data" / "pose-joints.json").read_text())["joints"]
 SWUNG = sorted((cid, state) for cid, state in POSED
-               if POSES[cid][state][0] in POSE_JOINTS)
+               if state in build_pose_joints.SWUNG)
 # How far above the hip a swing may still change a pixel, as a fraction of the
 # drawn body. The swung band is clipped to below the hip line, so in principle
 # the answer is none; the line is the *body's*, and a run is tilted 0.03rad
@@ -114,12 +125,33 @@ PLAYABLE = [c["id"] for c in
             if c.get("playable")]
 RIGGED_RUN = sorted(cid for cid in PLAYABLE if "run" not in POSES.get(cid, {}))
 
-# The states with no drawing of their own that reach one anyway. This is where
-# #215 lived: Bandit had a run render and nothing else, so the moment he jumped
-# he turned into a front-facing standing dog. Empty the day every character is
-# drawn in every state, and these tests disappear with the subject.
+
+def rig_carries(cid, state):
+    """Does fetch_assets declare the rig right here, and say why? '*' is everyone."""
+    return bool(fetch_assets.RIG_OK.get((cid, state))
+                or fetch_assets.RIG_OK.get(("*", state)))
+
+
+# The three ways a state a player can reach gets drawn, which between them have
+# to cover every (character, state) — see the partition guard further down.
+OWN_RENDER = sorted((cid, state) for cid in PLAYABLE for state in ACTION
+                    if state in POSES.get(cid, {}))
+RIG_CARRIED = sorted((cid, state) for cid in PLAYABLE for state in ACTION
+                     if rig_carries(cid, state))
+# ...and the leftovers: the states with no drawing of their own that reach one
+# anyway. This is where #215 lived: Bandit had a run render and nothing else, so
+# the moment he jumped he turned into a front-facing standing dog. Empty the day
+# every character is drawn in every state, and these tests disappear with the
+# subject.
+#
+# A pair is in this list because it is neither drawn nor excused — deliberately
+# *not* because `resolved_pose` finds it something, which is what the tests
+# below assert. Asking the fallback chain here meant breaking the chain quietly
+# emptied the list: five of seven subjects stopped existing and the two that
+# were left passed (#244). Now a broken chain fails the test that says these
+# borrow, and the guard below names the pair nothing draws.
 BORROWED = sorted((cid, state) for cid in PLAYABLE for state in ACTION
-                  if state not in POSES.get(cid, {}) and resolved_pose(cid, state))
+                  if state not in POSES.get(cid, {}) and not rig_carries(cid, state))
 
 # The states `frameMotion` turns the other way, read out of its switch for the
 # same reason as POSE_FALLBACK above: a third one adopting JUMP_SWING arrives
@@ -1497,6 +1529,47 @@ def test_a_hero_is_the_same_kind_of_drawing_all_the_way_through(desktop, cid):
         + ", ".join(f"{s}={r['drawn']}" for s, r in sorted(got.items())))
 
 
+def test_every_playable_action_state_is_drawn_on_purpose():
+    """The three buckets have to cover the grid, or the tests leave with it (#244).
+
+    A state the player can reach in two taps is drawn one of three ways: the
+    character's own render, a render borrowed through POSE_FALLBACK, or the rig
+    — and the rig is only allowed where `fetch_assets.RIG_OK` names the pair and
+    says why. The buckets are read from three different places, so this is the
+    one line that says they add up: nothing uncovered, nothing counted twice.
+
+    It is a claim about the whole grid rather than a count, which is the point.
+    The count could be satisfied by the list getting shorter, and that is exactly
+    what used to happen: cutting POSE_FALLBACK down took five of `BORROWED`'s
+    seven cases away and the run went green on the two left over.
+
+    `fetch_assets.coverage_problems()` asks the same question of the wider
+    `states()` grid and test_prose.py runs it through `--check`. It is asked
+    again here because it has to be in *this* collection — a guard in another
+    file cannot notice that this one got shorter.
+    """
+    grid = sorted((cid, state) for cid in PLAYABLE for state in ACTION)
+    assert grid, "no playable character has an action state, so this guards nothing"
+
+    counted = sorted(OWN_RENDER + BORROWED + RIG_CARRIED)
+    assert counted == grid, (
+        "the three buckets do not partition the grid, so a state is drawn by "
+        "nobody or claimed by two:\n"
+        f"  in none: {sorted(set(grid) - set(counted))}\n"
+        f"  in two: {sorted({p for p in counted if counted.count(p) > 1})}")
+
+    unreachable = [(cid, state) for cid, state in BORROWED
+                   if not resolved_pose(cid, state)]
+    assert not unreachable, (
+        "these states have no render of their own, are not named in RIG_OK, and "
+        "the POSE_FALLBACK chain does not reach a drawing for them either — so "
+        "the rig draws them and nothing says that was meant: "
+        f"{', '.join(f'{c}/{s}' for c, s in unreachable)}.\n"
+        "Fetch a render, point POSE_FALLBACK at one, or say why the rig is right "
+        "here in fetch_assets.RIG_OK. This is the #215 bug: a hero who turns into "
+        "a front-facing standing dog the moment they leave the ground.")
+
+
 @pytest.mark.parametrize("cid,state", BORROWED, ids=[f"{c}-{s}" for c, s in BORROWED])
 def test_a_state_with_no_render_of_its_own_borrows_one(desktop, cid, state):
     """The half of #215 the uniformity check above cannot see: it would also be
@@ -1525,6 +1598,9 @@ def test_a_borrowed_state_draws_the_frame_the_chain_lands_on(desktop, cid, state
     that was overridden is not the one being drawn from.
     """
     landed = resolved_pose(cid, state)
+    assert landed, (
+        f"{cid}/{state} reaches no drawing at all, so there is no frame to repoint "
+        "— test_every_playable_action_state_is_drawn_on_purpose says why")
     owner = next(s for s, f in POSES[cid].items() if f[0] == landed)
     other = "assets/poses/bluey-cheer-0.png" if cid != "bluey" else "assets/poses/bingo-cheer-0.png"
     r = pose_diff(desktop,
@@ -1635,6 +1711,33 @@ async ({ id, state, size, t, half, noise }) => {
   };
 }
 """
+
+
+def test_every_posed_frame_is_cut_at_the_hip_or_declared_not_to_be():
+    """The same shape as the grid guard above, for the joints (#244).
+
+    `build_pose_joints.SWUNG` is the declaration — the states whose artwork is a
+    stride — and pose-joints.json is what building from it produced. Deciding
+    the subjects from the produced file meant a frame that stopped being cut
+    stopped being tested; deciding them from the declaration means it stays a
+    subject and this says the file disagrees. Both directions, because a joint
+    written for a state nobody calls a stride is the same drift facing the other
+    way.
+    """
+    assert POSED, "poses.json claims no frames at all, so this guards nothing"
+    for cid, state in POSED:
+        frame = POSES[cid][state][0]
+        cut = frame in POSE_JOINTS
+        declared = state in build_pose_joints.SWUNG
+        assert cut == declared, (
+            f"{cid}/{state} ({frame}) is "
+            + ("declared a stride in build_pose_joints.SWUNG but has no joint in "
+               "pose-joints.json — re-run scripts/build_pose_joints.py, and if it "
+               f"still writes none, {cid} has no hip in that file's HIPS table"
+               if declared else
+               "cut at the hip in pose-joints.json, but no state it is drawn in is "
+               "declared a stride — a swing on a drawing that has no stride phase "
+               "under it is the #164 look coming back"))
 
 
 @pytest.mark.parametrize("cid,state", SWUNG, ids=[f"{c}-{s}" for c, s in SWUNG])
