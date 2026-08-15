@@ -372,6 +372,57 @@ function setReadLabel(state) {
   if (btn) btn.textContent = readLabel(state);
 }
 
+// The affordance itself — placed, not pasted into each screen's markup. Three
+// screens read themselves now, and a button that says "🔊 Read it again" on one
+// and "Read" on another is two affordances to learn (#293).
+//
+// It goes at the top of the panel rather than in the pinned row of buttons that
+// ends a screen, where the story card used to carry it: the results screen
+// already ends in four buttons, and a fifth wraps that row onto a second line —
+// which left 193px of a 395px panel to read the score through, tripping #269's
+// peephole rule. Top of the panel is also where the text it reads starts, and
+// it is the same corner on all three.
+function placeReadButton() {
+  const body = overlay.querySelector(".panel-body");
+  if (!body || body.querySelector("#btn-read")) return;
+  const row = document.createElement("div");
+  row.className = "read-row";
+  row.innerHTML = `<button class="med-btn" id="btn-read">${readLabel()}</button>`;
+  body.insertBefore(row, body.firstChild);
+}
+
+/**
+ * Give the screen that is up its voice: say `lines`, and wire `#btn-read`.
+ *
+ * The story card had all of this inline and it was the only screen with it
+ * (#255, #290) — so the results screen, which is what a three-year-old is
+ * looking at when she asks what happened, and the 25 character bios, each
+ * reached by tapping a dog she recognises, were silent grey text (#293).
+ * Extracted rather than copied twice: the four states the button reports
+ * (reading / no voice / muted / idle) were three fixes' worth of getting right,
+ * and a copy would have been a fourth screen's worth of getting wrong.
+ *
+ * `speak: false` is for a re-render of a screen already being read — the story
+ * card redraws itself for a one-word label change, and starting the story again
+ * from the top halfway through hearing it is worse than the stale label.
+ */
+function readAloud(lines, { speak = true } = {}) {
+  placeReadButton();
+  const readOut = () => {
+    const queued = sound.read(lines, {
+      onend: () => setReadLabel(),
+      onerror: () => setReadLabel("novoice"),
+    });
+    // nothing queued and the sound is on means this browser has no
+    // `speechSynthesis` at all — "Read it again" would be a button that has
+    // never worked and never says so (#294)
+    setReadLabel(queued ? "reading" : sound.muted ? null : "novoice");
+  };
+  if (speak) readOut();
+  on("btn-read", readOut);
+  return readOut;
+}
+
 function storyCard(index, { speak = true } = {}) {
   const ch = CHAPTERS[index];
   const hero = characters.find((c) => c.id === ch.hero);
@@ -387,7 +438,6 @@ function storyCard(index, { speak = true } = {}) {
     <div class="actions">
       <button class="big-btn" id="btn-go">▶ Play as ${hero ? hero.name : "Bluey"}</button>
       <div class="btn-row">
-        <button class="med-btn" id="btn-read">${readLabel()}</button>
         <button class="med-btn" id="btn-auto">${save.walk ? "Auto-run: off" : "Auto-run: on"}</button>
         <button class="med-btn" id="btn-back">← Menu</button>
       </div>
@@ -397,19 +447,7 @@ function storyCard(index, { speak = true } = {}) {
   if (node && hero) portrait(node, hero, "cheer");
   // read to whoever is holding the phone, because the reason this card is no
   // longer in the way of ▶ Play is that they cannot read it (#255)
-  const lines = [`Chapter ${ch.n}. ${ch.title}.`, ...ch.story, ch.joke];
-  const readOut = () => {
-    const queued = sound.read(lines, {
-      onend: () => setReadLabel(),
-      onerror: () => setReadLabel("novoice"),
-    });
-    // nothing queued and the sound is on means this browser has no
-    // `speechSynthesis` at all — "Read it again" would be a button that has
-    // never worked and never says so (#294)
-    setReadLabel(queued ? "reading" : sound.muted ? null : "novoice");
-  };
-  if (speak) readOut();
-  on("btn-read", readOut);
+  readAloud([`Chapter ${ch.n}. ${ch.title}.`, ...ch.story, ch.joke], { speak });
   on("btn-go", () => play(index));
   // re-rendered for a one-word label change, so it does not start the story
   // over from the top halfway through hearing it
@@ -536,11 +574,38 @@ function results(r) {
   // the same gate as the menu's, and reached by a player who has just finished a
   // chapter and wants the next one: straight in, and the story is still one tap
   // away under Chapters (#255)
+  // said, not shown: this screen arrives on its own at the end of a chapter, and
+  // the table is the answer to "what happened?" — the one question the player
+  // this game is for cannot read the answer to (#293). Sentences rather than the
+  // cells in order: "chippies found, 7 slash 10" is a table read out, not news.
+  readAloud(resultLines(r));
   on("btn-next", () => play(next));
   on("btn-again", () => play(0));
   on("btn-retry", () => play(r.chapter));
   on("btn-chapters", chapterSelect);
   on("btn-back", menu);
+}
+
+/**
+ * What the results screen says out loud, in the order it is read on screen.
+ *
+ * Its own function so a test can compare the two: every number on that table is
+ * in here, and a screen that grows a row nothing says is the state this issue
+ * was filed about.
+ */
+function resultLines(r) {
+  const ch = CHAPTERS[r.chapter];
+  const stars = ["no stars this time", "one star", "two stars", "three stars"][r.stars] || "";
+  return [
+    `${ch.title} — done!`,
+    `${stars}.`,
+    ch.outro,
+    `You found ${r.collected} of ${r.total} ${ch.tokenName}.`,
+    ch.hasBalloon ? `Keepy uppy bops: ${r.bops}.` : null,
+    r.secret ? "You found the hidden dollarbucks!" : "The hidden dollarbucks is still hidden.",
+    `Chapter bonus, ${r.bonus}. Your score, ${r.score}.`,
+    `Your best here is ${(save.chapters[r.chapter] || {}).best || 0}.`,
+  ].filter(Boolean);
 }
 
 /* --------------------------------------------------------------- gallery -- */
@@ -601,6 +666,11 @@ function bio(id) {
     </div>
   `, { transparent: true });
   portrait(el("bio-dog"), c, "cheer");
+  // the tap that got here was "tell me about this dog", and the answer was a
+  // paragraph she cannot read (#293). The artwork credit is not read out: it is
+  // for the grown-up holding the phone.
+  readAloud([c.name, `${c.species}. ${c.role}${c.age ? `, age ${c.age}` : ""}.`,
+             c.personality, c.funFact]);
   on("btn-back", gallery);
   on("btn-menu", menu);
 }

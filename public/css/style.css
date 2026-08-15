@@ -227,6 +227,8 @@ p.joke { font-size: clamp(13px, 2.4vw, 18px); color: #7A8894; font-style: italic
 .big-btn:active { transform: translateY(4px); box-shadow: 0 2px 0 rgba(0, 0, 0, 0.18); }
 
 .btn-row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+/* the speaker button, in the same corner of every screen that reads itself (#293) */
+.read-row { display: flex; justify-content: flex-end; margin: 0 0 2px; }
 .med-btn {
   flex: 1 1 30%;
   min-width: 120px;

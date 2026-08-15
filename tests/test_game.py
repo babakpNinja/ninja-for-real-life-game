@@ -855,6 +855,91 @@ def test_the_hud_speaker_still_answers_its_own_button(own_page):
     assert page.evaluate("() => window.__sound.muted") is False
 
 
+# --- the other two screens that are read to you (#293) -----------------------
+# The story card was the only text in the game that read itself. The results
+# screen is what a three-year-old is looking at when she asks what happened, and
+# a bio is reached by tapping a dog she recognises — which is the question
+# "tell me about this dog", answered until now with a paragraph she cannot read.
+
+
+def test_the_results_screen_reads_out_every_number_it_shows(own_page):
+    """The table, said as sentences. Every figure on screen has to be in the
+    read: a screen that grows a row nothing says is this issue again."""
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    play_chapter(page, 0)
+    page.wait_for_selector(".stars-big")
+    said = " ".join(page.evaluate("() => window.__said"))
+    assert said, "the results screen said nothing"
+
+    shown = page.locator("table.stats").inner_text()
+    missing = [n for n in re.findall(r"\d+", shown) if n not in said]
+    assert not missing, f"on the results table and never read out: {missing} — said {said!r}"
+    outro = page.locator("p.story").first.inner_text().strip()
+    assert outro in said, f"the outro was not read: {outro!r}"
+
+
+def test_the_results_speaker_button_reads_it_again(own_page):
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    play_chapter(page, 0)
+    page.wait_for_selector(".stars-big")
+    assert story_button(page) == "🔊 Reading…", story_button(page)
+    assert page.evaluate("() => window.__finish()") > 0
+    assert story_button(page) == "🔊 Read it again", story_button(page)
+
+    page.evaluate("() => { window.__said = []; }")
+    page.click("#btn-read")
+    assert page.evaluate("() => window.__said"), "tapping the speaker read nothing back"
+
+
+def test_a_character_bio_reads_itself_when_the_dog_is_tapped(own_page):
+    """The tap *is* the question. The artwork credit is deliberately not in the
+    read — it is for the grown-up holding the phone."""
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.click("#btn-gallery")
+    page.wait_for_selector(".char-card")
+    page.locator(".char-card").first.click()
+    page.wait_for_selector(".bio h3")
+
+    said = page.evaluate("() => window.__said")
+    assert said, "the bio said nothing"
+    assert page.locator(".bio h3").inner_text().strip() in said, said
+    for part in (page.locator(".bio p").first.inner_text().strip(),
+                 page.locator(".bio .fun").inner_text().strip().lstrip("💡 ")):
+        assert any(part in line for line in said), f"not read out: {part!r}"
+    assert not any("Ludo Studio" in line for line in said), (
+        "the artwork credit was read to the child")
+
+    page.evaluate("() => { window.__said = []; }")
+    page.click("#btn-read")
+    assert page.evaluate("() => window.__said"), "tapping the speaker read nothing back"
+
+
+def test_a_muted_game_says_so_on_both_new_screens_instead_of_doing_nothing(own_page):
+    """The four states are the affordance. A muted screen that simply stays
+    quiet is indistinguishable from a broken one (#290), on every screen that
+    offers the button — not just the one it was written for."""
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.evaluate("() => document.getElementById('btn-mute').click()")   # save.muted
+
+    page.click("#btn-gallery")
+    page.wait_for_selector(".char-card")
+    page.locator(".char-card").first.click()
+    page.wait_for_selector(".bio h3")
+    assert page.evaluate("() => window.__said") == [], "a muted game read the bio out loud"
+    assert story_button(page) == "🔇 Sound is off", story_button(page)
+
+    page.click("#btn-menu")
+    play_chapter(page, 0)
+    page.wait_for_selector(".stars-big")
+    assert page.evaluate("() => window.__said") == [], "a muted game read the results out loud"
+    assert story_button(page) == "🔇 Sound is off", story_button(page)
+    page.evaluate("() => document.getElementById('btn-mute').click()")
+
+
 def test_this_browser_cannot_speak(own_page):
     """The gap the tests above cannot cover, pinned so it stays visible (#289).
 
