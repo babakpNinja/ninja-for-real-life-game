@@ -226,6 +226,12 @@ export class Sound {
   treasure()  { [0, 4, 7, 12].forEach((n, i) => this.blip(523.25 * Math.pow(2, n / 12), 0.3, "triangle", 0.26, i * 0.07)); }
   cheer()     { [0, 4, 7, 12, 16, 19].forEach((n, i) => this.blip(523.25 * Math.pow(2, n / 12), 0.45, "triangle", 0.24, i * 0.1)); }
   ui()        { this.blip(700, 0.08, "sine", 0.2); }
+  // the special move going off: a rising fifth, so it reads as something
+  // starting rather than as one more collect
+  ability()   { [0, 7, 12].forEach((n, i) => this.blip(392 * Math.pow(2, n / 12), 0.22, "triangle", 0.26, i * 0.06)); this.noise(0.14, 0.08, 0, 2600); }
+  // and coming back: quieter than anything the player *did*, because nobody
+  // pressed anything to make it happen
+  recharged() { this.blip(880, 0.09, "sine", 0.14); this.blip(1174, 0.1, "sine", 0.1, 0.06); }
 
   /* ------------------------------------------------------------- music -- */
 

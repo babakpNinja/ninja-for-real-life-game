@@ -12,6 +12,7 @@ import {
   drawCharacter, loadArt, preload, creditFor, notice, noticeShort, artState,
 } from "./sprites.js";
 import { sound } from "./audio.js";
+import { PLAYABLE, ABILITIES, abilityFor, heroFor } from "./abilities.js";
 
 const SAVE_KEY = "forreallife.save.v1";
 
@@ -39,8 +40,11 @@ let save = load();
 
 /* ------------------------------------------------------------------ save -- */
 
+// `hero: null` is not the same as "Bluey": it is what makes the first ▶ Play go
+// through the character screen instead of past it, and what puts "who do you
+// want to be?" before the first chapter exactly once (#302).
 function blankSave() {
-  return { chapters: {}, unlocked: 0, totalScore: 0, plays: 0, muted: false };
+  return { chapters: {}, unlocked: 0, totalScore: 0, plays: 0, muted: false, hero: null };
 }
 
 function load() {
@@ -206,9 +210,14 @@ function menu() {
   if (game) game.stop();
   hud.classList.add("hidden");
   const resume = save.unlocked > 0 || Object.keys(save.chapters).length;
+  const me = save.hero ? characters.find((c) => c.id === save.hero) : null;
+  const myMove = save.hero ? abilityFor(save.hero) : null;
   showOverlay(`
     <h1 class="title">Ana&nbsp;Bingo!</h1>
-    <p class="subtitle">A backyard adventure with the heeler family</p>
+    <p class="subtitle playing-as">${me
+      ? `Playing as <b>${me.name}</b> · ${myMove.emoji} ${myMove.name}
+         <button class="link-btn" id="btn-hero">change</button>`
+      : "A backyard adventure with the heeler family"}</p>
     <div id="menu-dogs"><canvas></canvas></div>
     <div class="actions">
       <button class="big-btn" id="btn-play">▶ ${resume ? "Keep playing" : "Play"}</button>
@@ -229,7 +238,19 @@ function menu() {
   // menu and a moving dog there were two taps and three paragraphs of reading —
   // and the player this is for is three and cannot read them (#255). The story
   // is one tap away below, and it is read out loud when it gets there.
-  on("btn-play", () => play(currentChapter()));
+  // Nobody chosen yet means the first ▶ Play goes through "who do you want to
+  // be?" — the question is asked once, at the only moment it is not an
+  // interruption, and never again unless it is asked for. Afterwards ▶ Play is
+  // still one tap into a moving dog (#255).
+  on("btn-play", () => {
+    const go = () => play(currentChapter());
+    if (save.hero) return go();
+    characterSelect({ then: go, back: menu, title: "Who do you want to be?" });
+  });
+  on("btn-hero", () => characterSelect({
+    then: menu, back: menu,
+    title: save.hero ? "Play as somebody else?" : "Who do you want to be?",
+  }));
   on("btn-story", () => storyCard(currentChapter()));
   on("btn-chapters", chapterSelect);
   on("btn-gallery", gallery);
@@ -298,6 +319,78 @@ function drawMenuDogs() {
     requestAnimationFrame(draw);
   };
   draw();
+}
+
+/* ------------------------------------------------------ character select -- */
+
+/** Whoever is being played as — the chosen one, or the chapter's own. */
+function heroOf(index) {
+  return heroFor(save.hero, CHAPTERS[index]);
+}
+
+/**
+ * Who do you want to be?
+ *
+ * Shown before the first chapter and reachable from the menu afterwards, and it
+ * is the only screen in the game whose answer is remembered *across* chapters:
+ * a three-year-old picks Bingo once and stays Bingo, rather than being handed
+ * whoever chapter four happens to be about.
+ *
+ * The roster is `PLAYABLE`, not `characters` — see abilities.js for why it is
+ * four and not twenty-five. Everyone else is still in the gallery, still in the
+ * chapters and still waving from the middle of them.
+ *
+ * `then` is where picking somebody goes next: straight into the chapter when
+ * this screen is standing between ▶ Play and the game, and back to the menu when
+ * it was opened on purpose. Passed in rather than decided here, because "I came
+ * to change my mind" and "I am starting" want different next screens and this
+ * screen cannot tell them apart.
+ */
+function characterSelect({ then = menu, back = menu, title = "Who do you want to be?" } = {}) {
+  const cast = PLAYABLE
+    .map((id) => characters.find((c) => c.id === id))
+    .filter(Boolean);
+  const cards = cast.map((c) => {
+    const a = abilityFor(c.id);
+    return `
+      <button class="hero-card ${save.hero === c.id ? "chosen" : ""}" data-id="${c.id}">
+        <canvas data-hero="${c.id}"></canvas>
+        <div class="hero-copy">
+          <b>${c.name}</b>
+          <span class="hero-role">${c.role}</span>
+          <span class="hero-move">${a.emoji} ${a.name}</span>
+          <span class="hero-blurb">${a.blurb}</span>
+        </div>
+      </button>`;
+  }).join("");
+  showOverlay(`
+    <h2>${title}</h2>
+    <p class="subtitle">Everyone has their own special move. Tap the ${"✨"} button to use it!</p>
+    <div class="hero-list">${cards}</div>
+    <div class="actions"><button class="med-btn" id="btn-back">← Back</button></div>
+  `);
+  overlay.querySelectorAll(".hero-card canvas").forEach((node) => {
+    const c = characters.find((x) => x.id === node.dataset.hero);
+    // running, not standing: the run frame is the artwork that will be on screen
+    // for the whole chapter, so this is a picture of the actual choice
+    if (c) portrait(node, c, "run");
+  });
+  overlay.querySelectorAll(".hero-card").forEach((b) => {
+    b.addEventListener("click", () => {
+      sound.unlock(); sound.ui();
+      save.hero = b.dataset.id;
+      store();
+      preload([save.hero]);
+      then();
+    });
+  });
+  // said out loud, like every other screen with words on it (#293): this one is
+  // a question put to somebody who cannot read the four answers
+  readAloud([title, ...cast.map((c) => {
+    const a = abilityFor(c.id);
+    return `${c.name}. ${a.name}. ${a.blurb}`;
+  })]);
+  on("btn-back", back);
 }
 
 /* -------------------------------------------------------- chapter select -- */
@@ -425,10 +518,10 @@ function readAloud(lines, { speak = true } = {}) {
 
 function storyCard(index, { speak = true } = {}) {
   const ch = CHAPTERS[index];
-  const hero = characters.find((c) => c.id === ch.hero);
+  const hero = characters.find((c) => c.id === heroOf(index));
   // fetch this chapter's cast while the story is being read, so the cameo is
   // never drawn as the fallback dog for the first second it is on screen
-  preload([ch.hero, ch.cameo].filter(Boolean));
+  preload([heroOf(index), ch.cameo].filter(Boolean));
   showOverlay(`
     <h2>Chapter ${ch.n} — ${ch.title}</h2>
     <p class="subtitle">${ch.where}</p>
@@ -462,14 +555,17 @@ function play(index) {
   // through it: without it the hero and the cameo are drawn as the fallback dog
   // for the first second of the chapter (#255)
   const ch = CHAPTERS[index];
-  if (ch) preload([ch.hero, ch.cameo].filter(Boolean));
+  // whoever is being played as, not whoever the chapter is about: the wrong one
+  // here is a fallback dog for the first second of every chapter (#255)
+  if (ch) preload([heroOf(index), ch.cameo].filter(Boolean));
   hideOverlay();
   rotateHint(false);        // the bottom of the screen belongs to the HUD now (#252)
   hud.classList.remove("hidden");
   sound.unlock();
   sound.setMuted(!!save.muted);
   game.autoRun = !save.walk;
-  game.start(index);
+  game.start(index, save.hero);
+  abilityButton();
   updateHud();
 }
 
@@ -492,6 +588,27 @@ function muteIcon() {
   el("btn-mute").textContent = sound.muted ? "🔇" : "🔊";
 }
 
+/**
+ * Put the special-move button on the screen, or take it away.
+ *
+ * Called when a chapter starts rather than every frame: whether there *is* a
+ * move is settled by who is being played as, and only the charge on it changes
+ * while playing. The colour is the move's own, so the ring, the glow and the
+ * motes the engine draws are all the same colour without either side being
+ * told about the other.
+ */
+function abilityButton() {
+  const btn = el("btn-ability");
+  const state = game && game.abilityState();
+  if (!btn) return;
+  btn.classList.toggle("hidden", !state);
+  if (!state) return;
+  el("ability-emoji").textContent = state.emoji;
+  el("ability-name").textContent = state.name;
+  btn.style.setProperty("--ability", (game.ability || {}).color || "#FFD166");
+  btn.setAttribute("aria-label", `Special move: ${state.name}`);
+}
+
 function updateHud() {
   if (!game || game.mode !== "playing") return;
   el("hud-score").textContent = game.score;
@@ -499,6 +616,15 @@ function updateHud() {
   const pct = Math.max(0, Math.min(1, game.player.x / game.ch.length));
   el("hud-progress-fill").style.width = `${pct * 100}%`;
   el("hud-progress-dog").style.left = `${pct * 100}%`;
+  // the ring is the cooldown, drawn from the engine's own clock: `--charge`
+  // counts up to 1, so it fills back rather than draining away (#303)
+  const move = game.abilityState();
+  const btn = el("btn-ability");
+  if (btn && move) {
+    btn.style.setProperty("--charge", move.charge.toFixed(3));
+    btn.classList.toggle("ready", move.ready);
+    btn.classList.toggle("active", move.active);
+  }
   requestAnimationFrame(updateHud);
 }
 
@@ -744,11 +870,18 @@ function wireInput() {
   const down = (e) => {
     sound.unlock();
     if (!playing()) return;
-    if (e.target.closest && e.target.closest("button")) return;
     e.preventDefault();
     game.press();
   };
   const up = () => { if (game) game.release(); };
+
+  // The move. The jump listens on the canvas and this button is in the HUD, a
+  // layer above it — so a thumb here fires the move and not a jump as well,
+  // which would be one tap doing two things. That is a fact about the button
+  // taking the tap, not about this handler: give it `pointer-events: none` and
+  // the press falls straight through to the canvas — see abilities.json.
+  const useAbility = () => { if (playing() && game.useAbility()) sound.unlock(); };
+  el("btn-ability").addEventListener("click", useAbility);
 
   canvas.addEventListener("pointerdown", down);
   window.addEventListener("pointerup", up);
@@ -759,6 +892,12 @@ function wireInput() {
     if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") {
       e.preventDefault();
       if (playing()) game.press();
+    }
+    // a keyboard hand is nowhere near the bottom-right corner: Shift is under
+    // the little finger and E is under the first, and neither is a jump
+    if (e.code === "KeyE" || e.code === "ShiftLeft" || e.code === "ArrowDown") {
+      e.preventDefault();
+      useAbility();
     }
     if (e.code === "ArrowLeft") game.keys.left = true;
     if (e.code === "ArrowRight") game.keys.right = true;

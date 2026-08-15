@@ -31,7 +31,9 @@ import warnings
 from pathlib import Path
 
 import pytest
-from conftest import DESKTOP        # the viewport `own_page` opens too, authored there
+# DESKTOP is the viewport `own_page` opens too; the census is the leak guard's own
+# question, asked of the whole session (#302). Both authored in conftest.
+from conftest import DESKTOP, census_phrase, page_census
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 APP = Path(__file__).resolve().parent.parent
@@ -195,6 +197,21 @@ def desktop(make_page):
 @pytest.fixture(scope="module", params=[IPHONE, PIXEL], ids=["iphone", "pixel"])
 def phone(request, make_page):
     return make_page(request.param, touch=True)
+
+
+def tap_play(page, hero="bluey"):
+    """▶ Play, answering the picker when nobody has been chosen yet (#303).
+
+    The choice is asked for "at the start", so on a fresh save ▶ Play opens
+    `characterSelect` rather than the chapter — once, and never again on that
+    save. Every test below is about what is on the *other* side of that screen,
+    so the helper answers it the way a player would rather than each test
+    growing its own copy of the answer.
+    """
+    page.click("#btn-play")
+    card = page.locator(f'.hero-card[data-id="{hero}"]')
+    if card.count() and card.is_visible():
+        card.click()
 
 
 def play_chapter(page, index):
@@ -559,7 +576,7 @@ def test_play_puts_nothing_to_read_between_the_menu_and_the_game(own_page):
     """The complaint itself: one tap, and the dog is moving."""
     page = own_page
     assert page.locator("p.story").count() == 0, "the menu is showing story text"
-    page.click("#btn-play")
+    tap_play(page)
     page.wait_for_timeout(400)
     assert page.evaluate("window.game.mode") == "playing", (
         "▶ Play did not start a chapter")
@@ -1022,13 +1039,15 @@ def test_the_stats_screen_opens(desktop):
 @pytest.mark.leaves_a_game_running(reason="test_tapping_the_canvas_makes_the_player_jump "
                                           "jumps the player this starts")
 def test_play_leads_straight_into_chapter_one(desktop):
-    """One tap from the menu to a moving dog (#255).
+    """Two taps from the menu to a moving dog: who, then go (#255, #303).
 
     This used to go via the story card and assert its heading, and the player it
     is for is three: three paragraphs she cannot read stood between ▶ Play and
     the game. The card is still there — the test below opens it — it is just no
-    longer the gate."""
-    desktop.click("#btn-play")
+    longer the gate. What stands there now is the picker, and it is a different
+    kind of thing: four pictures, one tap, and it is asked once per save rather
+    than every time the game is opened."""
+    tap_play(desktop)
     desktop.wait_for_timeout(500)
     assert desktop.locator("#hud").is_visible()
     assert desktop.evaluate("window.game.mode") == "playing"
@@ -2725,6 +2744,18 @@ PARTICLE_SOURCES = {
         g.particles = [];
         g.step(1 / 120);
         if (!g.particles.length) return "the secret was not found";
+        return "";
+    """},
+    "the big bounce's launch puff": {"factory": "puff", "make": """
+        g.scuff = () => {}; g.sparkle = () => {};
+        // restarted as the one hero whose move is a shove rather than a window,
+        // so the ability comes from the game's own table rather than a copy of it
+        g.start(g.chapterIndex, 'bandit');
+        g.running = false;
+        g.player.onGround = true;
+        g.particles = [];
+        if (!g.useAbility()) return "the big bounce was refused";
+        if (!g.particles.length) return "the launch made no puff";
         return "";
     """},
     "the bopped balloon's sparkle": {"factory": "sparkle", "make": """
@@ -4448,7 +4479,7 @@ def test_the_rotate_pill_never_covers_the_progress_bar(make_page):
         assert page.locator("#rotate-hint").is_visible(), (
             "the pill is already gone before the chapter starts, so this test "
             "would pass without the game doing anything about it")
-        page.click("#btn-play")
+        tap_play(page)
         page.wait_for_timeout(400)
         assert page.evaluate("window.game.mode") == "playing"
 
@@ -4597,7 +4628,7 @@ def test_nothing_on_the_hud_sits_on_top_of_anything_else(make_page, viewport, to
                     "quietly turn that half off")
     page = make_page(viewport, touch=touch)
     try:
-        page.click("#btn-play")
+        tap_play(page)
         page.wait_for_timeout(400)
         assert page.evaluate("window.game.mode") == "playing", (
             f"{screen}: never got into a chapter, so there is no HUD to measure")
@@ -5257,7 +5288,7 @@ def test_the_pill_rule_notices_the_pill_back_over_the_way_out(make_page):
 @pytest.mark.leaves_a_game_running(reason="test_a_tap_jumps_on_touch taps the player "
                                           "this starts, and stops it afterwards")
 def test_it_plays_on_touch(phone):
-    phone.click("#btn-play")
+    tap_play(phone)
     phone.wait_for_timeout(400)
     assert phone.evaluate("window.game.mode") == "playing"
     assert phone.evaluate("window.game && !!document.querySelector('canvas')")
@@ -5296,18 +5327,25 @@ def blank_page_fps(page) -> int:
         control.close()
 
 
-def playability_verdict(measure, control, floor=PLAYABLE_FPS):
-    """Why a page is short of frames — itself, or the machine it is running on.
+def playability_verdict(measure, control, census, floor=PLAYABLE_FPS):
+    """Why a page is short of frames — itself, the machine, or another page.
 
-    Both readings arrive as callables because the case that matters cannot be
+    All three readings arrive as callables because the case that matters cannot be
     produced to order: a starved *host* is what a 2-core box under load does to
     every page at once (#275), and handing this decision fake readings is the only
-    way to run it for that case. The control is only paid for when it is needed.
+    way to run it for that case. The control and the census are only paid for when
+    they are needed.
 
     `measure` is asked twice before anything is blamed. The window is 700ms, and
     under `ship.py` — 942 tool tests just finished, a deploy is being polled — one
     700ms window is a sample of one; two failures in a day were both single
     samples that measured 59 and 60 when asked again.
+
+    `census` says which *other* pages this run has open and what they are
+    animating (`conftest.page_census`). It is a parameter rather than something
+    read in here so a case can build the state it is about — and it has no
+    default, because the whole of #302 is that this decision used to be able to
+    blame a leaked page without anyone looking for one.
 
     Returns `(cause, said)`:
 
@@ -5316,8 +5354,15 @@ def playability_verdict(measure, control, floor=PLAYABLE_FPS):
       loud, not worth failing.
     * `"host"` — a page with nothing on it cannot reach the floor either, so
       there is nothing here about the game.
-    * `"leak"` — the frames are there and this page is not getting them. The
-      #182 case, and the only one that fails.
+    * `"leak"` — the frames are there, this page is not getting them, and the
+      census names a page that is still animating. The #182 case, and the only
+      one that fails.
+    * `"starved"` — the same reading with nothing else animating. A real fault
+      and an unattributed one: it is what a page burning its own frames looks
+      like, and also what an unlucky pair of windows looks like. It fired during
+      the #293 ship on a suite that was green either side of it, and a red here
+      arrives after the push and asks for a revert of a commit that is fine
+      (#275, #276) — so it is said, not failed.
     """
     fps = measure()
     if fps >= floor:
@@ -5334,11 +5379,17 @@ def playability_verdict(measure, control, floor=PLAYABLE_FPS):
                         f"browser manages {host}fps against a {floor}fps floor. This machine "
                         f"is not giving frames to anything, so this reading says nothing "
                         f"about the game (#275)")
-    return "leak", (f"{fps} and {again}fps against a {floor}fps floor, while a page with "
-                    f"nothing on it in the same browser gets {host}fps: the frames are there "
-                    f"and this page is not getting them. Something else in this run is "
-                    f"probably still animating — an `own_page` that walked away from a "
-                    f"running game loop is the one that has happened (#182).")
+    rows = census()
+    starved = (f"{fps} and {again}fps against a {floor}fps floor, while a page with "
+               f"nothing on it in the same browser gets {host}fps: the frames are there "
+               f"and this page is not getting them")
+    if not any(isinstance(r["running"], dict) for r in rows):
+        return "starved", (f"{starved} — and {census_phrase(rows)}, so this is not a page "
+                           f"somebody walked away from. Either this page is burning its own "
+                           f"frames or these two windows were unlucky; re-run it before "
+                           f"reverting anything (#302)")
+    return "leak", (f"{starved}. {census_phrase(rows)} — an `own_page` that walked away "
+                    f"from a running game loop is the one that has happened (#182).")
 
 
 @pytest.mark.leaves_a_game_running(reason="it measures the chapter test_it_plays_on_touch "
@@ -5364,11 +5415,12 @@ def test_the_phone_gets_enough_frames_to_be_played(phone):
     reading with a starved one is the box's.
     """
     cause, said = playability_verdict(lambda: phone.evaluate(FRAME_RATE),
-                                      lambda: blank_page_fps(phone))
+                                      lambda: blank_page_fps(phone),
+                                      lambda: page_census(subject=phone))
     where = f"on {phone.viewport_size['width']}px"
     if cause == "host":
         pytest.skip(f"{where}: {said}")
-    if cause == "retaken":
+    if cause in ("retaken", "starved"):
         warnings.warn(f"{where}: {said}")
     assert cause != "leak", f"{where}: {said}"
 
@@ -5391,6 +5443,25 @@ class Readings:
             f"expect the verdict to measure again")
         self.asked += 1
         return self.values[self.asked - 1]
+
+
+class Census(Readings):
+    """The rows `conftest.page_census` would return, and whether it was asked.
+
+    *Not* being asked is half of what these cases check: a census is an
+    `evaluate` on every page this session has open, and a run where the page has
+    its frames must not pay for it. Readings' counting, one reply instead of a
+    queue — the census is asked once or not at all.
+    """
+
+    def __init__(self, *rows):
+        super().__init__(list(rows))
+
+
+def a_page_still_animating(where="1280x800 http://localhost/", mode="finished",
+                           chapter="backyard"):
+    """One census row for a page somebody walked away from (#182)."""
+    return {"where": where, "running": {"mode": mode, "chapter": chapter}}
 
 
 def test_the_control_page_measures_and_then_goes_away(browser):
@@ -5417,36 +5488,67 @@ def test_the_control_page_measures_and_then_goes_away(browser):
 
 
 def test_a_page_that_has_its_frames_is_asked_once_and_costs_no_control():
-    measure, control = Readings(60), Readings()
-    assert playability_verdict(measure, control) == ("", "")
-    assert (measure.asked, control.asked) == (1, 0), (
-        "the happy path paid for a re-take or a control page: that is 700ms per "
-        "measured page on every run, to answer a question nobody asked")
+    measure, control, census = Readings(60), Readings(), Census()
+    assert playability_verdict(measure, control, census) == ("", "")
+    assert (measure.asked, control.asked, census.asked) == (1, 0, 0), (
+        "the happy path paid for a re-take, a control page or a census: that is "
+        "700ms per measured page on every run, to answer a question nobody asked")
 
 
 def test_one_bad_sample_followed_by_a_good_one_is_reported_not_failed():
-    measure, control = Readings(19, 55), Readings()
-    cause, said = playability_verdict(measure, control)
+    measure, control, census = Readings(19, 55), Readings(), Census()
+    cause, said = playability_verdict(measure, control, census)
     assert cause == "retaken", f"a re-take over the floor was called {cause!r}: {said}"
-    assert control.asked == 0, "a page that turned out fine still paid for a control"
+    assert (control.asked, census.asked) == (0, 0), (
+        "a page that turned out fine still paid for a control or a census")
     assert "19" in said and "55" in said, f"the two samples are not in the message: {said}"
     assert "#182" not in said, (
         f"a marginal sample was reported as the leak (#182): {said}")
 
 
 def test_a_machine_that_cannot_give_a_blank_page_frames_is_not_the_games_fault():
-    cause, said = playability_verdict(Readings(12, 13), Readings(14))
+    census = Census(a_page_still_animating())
+    cause, said = playability_verdict(Readings(12, 13), Readings(14), census)
     assert cause == "host", f"a starved box was called {cause!r}: {said}"
     assert "14" in said, f"the control reading is not in the message: {said}"
+    assert census.asked == 0, (
+        "a box that cannot give a blank page frames was still asked which page to "
+        "blame — and a page left animating on a starved box is not the cause of "
+        "anything, so the answer would have been a red herring")
     assert "#182" not in said, (
         f"a busy box was blamed on a leaked game loop (#182), which is the finding "
         f"#275 was filed to stop: {said}")
 
 
-def test_a_page_short_of_frames_beside_a_healthy_blank_one_is_the_leak():
-    cause, said = playability_verdict(Readings(12, 13), Readings(58))
+def test_a_page_short_of_frames_beside_a_page_still_animating_is_the_leak():
+    census = Census(a_page_still_animating(where="390x844 http://box/", chapter="creek"))
+    cause, said = playability_verdict(Readings(12, 13), Readings(58), census)
     assert cause == "leak", f"a real starvation was called {cause!r}: {said}"
     assert "#182" in said, f"the leak is not named as the thing to look for: {said}"
+    assert census.asked == 1, "the leak was named without anybody being asked"
+    assert "390x844 http://box/" in said and "creek" in said, (
+        f"the verdict blames a leaked page and does not say which one: {said}. That "
+        f"is #302 — the reader is left to find it by closing pages until it stops.")
+
+
+def test_a_page_short_of_frames_with_nothing_else_animating_is_not_blamed_on_a_leak():
+    """#302's own case: the reading that fired during the #293 ship.
+
+    Same numbers as the leak above — the frames are there and this page is not
+    getting them — and nothing else in the run is animating. That is a real
+    fault and an *unattributed* one, and the old code called it #182 anyway. It
+    arrives after the push, so a red here asks for the revert of a commit that is
+    fine; it is said, and the sentence has to make clear the census was taken.
+    """
+    census = Census()
+    cause, said = playability_verdict(Readings(12, 13), Readings(58), census)
+    assert cause == "starved", f"an unattributed starvation was called {cause!r}: {said}"
+    assert census.asked == 1, "nothing was asked before deciding nothing was animating"
+    assert "#182" not in said, (
+        f"a page with no leak beside it was still blamed on one: {said}")
+    assert "no other page in this run is open" in said, (
+        f"the message does not say the census was taken and came back empty: {said}. "
+        f"An unasked question and an empty answer read identically otherwise (#40).")
 
 
 # A page eating its own frames: the shape #182 arrived in, minus the intent. The
@@ -5483,11 +5585,18 @@ def test_the_frame_floor_catches_a_page_that_is_really_not_getting_frames(browse
             pytest.skip(f"a blank page gets {control}fps on this box, under the "
                         f"{PLAYABLE_FPS}fps floor: with the machine itself starved there is "
                         f"no difference here for the verdict to find")
-        cause, said = playability_verdict(lambda: starved.evaluate(FRAME_RATE), lambda: control)
-        assert cause == "leak", (
+        cause, said = playability_verdict(lambda: starved.evaluate(FRAME_RATE),
+                                          lambda: control,
+                                          lambda: page_census(subject=starved,
+                                                              open_pages=ctx.pages))
+        assert cause == "starved", (
             f"a page burning its own frames beside a {control}fps blank page was called "
             f"{cause!r}: {said}")
-        assert "#182" in said, f"the leak is not named as the thing to look for: {said}"
+        # the census here is real and comes back empty, which is the finding: this
+        # page is eating its own frames, and there is no other page to blame
+        assert "#182" not in said, f"a page with nothing beside it was blamed on a leak: {said}"
+        assert "no other page in this run is open" in said, (
+            f"the real census is not in the message: {said}")
     finally:
         ctx.close()
 
@@ -5633,10 +5742,11 @@ SLOW_NET = {"offline": False, "latency": 700,
 # What each dead button should turn out to have done. The menu is the only screen
 # with an `h1.title`; every screen behind these buttons has an `h2`, so the
 # heading is how the test says "the tap was honoured" without knowing the shapes.
-# ▶ Play is the exception since #255: it opens no screen at all, it starts the
-# chapter, so what it left behind is a running game (`heading` of None).
+# ▶ Play used to be the exception (#255: it opened no screen at all, it started
+# the chapter). Since #303 it opens the picker on a save with nobody in it, which
+# is the state a page opened by this test is always in.
 EARLY_TAPS = [
-    ("btn-play", None),
+    ("btn-play", "Who do you want to be?"),
     ("btn-story", "Chapter 1"),
     ("btn-gallery", "Everyone you'll meet"),
     ("btn-stats", "Stats"),
@@ -5747,7 +5857,7 @@ def test_a_toast_lands_on_the_picture_not_in_the_sky(make_page, viewport, touch,
     assert TOASTS, "no toasts found in game.js, so there is nothing to raise"
     page = make_page(viewport, touch=touch)
     try:
-        page.click("#btn-play")
+        tap_play(page)
         page.wait_for_timeout(400)
         assert page.evaluate("window.game.mode") == "playing", (
             f"{screen}: never got into a chapter, so there is no game to talk about")
@@ -5863,3 +5973,407 @@ def test_a_leak_on_a_shared_page_is_blamed_once_and_put_down(base_url):
     # count to read is the errors: the leaker and the empty exemption, and
     # nothing for the test that declared its handoff or the one that followed
     assert "4 passed, 2 errors" in out, f"the blame did not land where it should:\n{out}"
+
+
+# --- who you play as, and the move that comes with them (#303) ---------------
+# Babak asked for a character to pick at the start and a special move each, "with
+# smooth animations". Three separable claims: the roster is the characters that
+# can actually be drawn running; the move is a *window* with a cost, not a button
+# that does something every press; and it arrives without a step in the motion.
+
+# The roster the picker offers, taken from characters.json rather than from
+# abilities.js: the list in the source is what is under test, and a test that
+# read it would agree with any list at all. Everyone playable the wiki drew
+# running — which is Muffin's exclusion stated as a fact about the artwork, so
+# the day a run render is fetched for her this fails and the roster grows.
+CAN_BE_DRAWN_RUNNING = sorted(cid for cid in PLAYABLE if "run" in POSES.get(cid, {}))
+
+
+def ability_roster(page):
+    """`PLAYABLE` and `ABILITIES` as the running game sees them."""
+    return page.evaluate("""async () => {
+      const a = await import('/js/abilities.js');
+      return { playable: a.PLAYABLE, abilities: a.ABILITIES };
+    }""")
+
+
+def test_you_can_pick_anyone_the_artwork_can_draw_running(desktop):
+    """The picker's roster is not a taste: it is who has side-on run art.
+
+    Muffin is playable in characters.json and has no run render anywhere, so she
+    would be drawn from the rig while the character next to her is drawn from the
+    wiki's artwork — the mismatch #215/#220 fixed and
+    `test_a_hero_is_the_same_kind_of_drawing_all_the_way_through` guards. Leaving
+    her out is right; leaving her out *by hand* is what this stops, because the
+    hand-written list would still say four the day her artwork arrives.
+    """
+    roster = ability_roster(desktop)
+    assert sorted(roster["playable"]) == CAN_BE_DRAWN_RUNNING, (
+        f"the picker offers {sorted(roster['playable'])} but the run artwork exists for "
+        f"{CAN_BE_DRAWN_RUNNING}. A character with no run render is drawn from the rig "
+        f"beside characters drawn from the wiki (#215); a character with one and no card "
+        f"is missing from a screen that claims to be everybody.")
+
+
+def test_every_hero_you_can_pick_has_a_move_that_does_something(desktop):
+    """A card with no move on it is a choice that does not matter.
+
+    The physics field is the point of the check: `name`, `emoji` and `blurb` are
+    what the card says, and a move can have all three and change nothing about
+    the running. Exactly one, too — the effects multiply by the same envelope, so
+    two on one character would stack into a move nobody balanced.
+    """
+    roster = ability_roster(desktop)
+    effects = ("speed", "fall", "launch", "magnet")
+    for cid in roster["playable"]:
+        a = roster["abilities"].get(cid)
+        assert a, f"{cid} is offered on the picker with no special move"
+        for field in ("name", "emoji", "color", "blurb"):
+            assert a.get(field), f"{cid}'s move has no {field}: {a}"
+        assert a["duration"] > 0 and a["cooldown"] > 0, (
+            f"{cid}'s move has no window or no cost: {a}")
+        doing = [f for f in effects if a.get(f)]
+        assert len(doing) == 1, (
+            f"{cid}'s move changes {doing or 'nothing'} about the physics; it should "
+            f"change exactly one of {effects}")
+
+
+def test_the_hero_you_picked_is_who_the_engine_draws_in_every_chapter(desktop):
+    """The choice outlives the chapter, which is the whole of what was asked for.
+
+    A chapter has a hero of its own — the story is about somebody — and before
+    this the player was handed whoever chapter four happened to be about. Now the
+    chapter's hero is only the *default*, and a choice the roster does not carry
+    (Muffin, an old save, a typo) falls back rather than drawing the rig.
+    """
+    got = desktop.evaluate("""async () => {
+      const a = await import('/js/abilities.js');
+      const { CHAPTERS } = await import('/js/chapters.js');
+      return CHAPTERS.map((ch) => ({
+        id: ch.id,
+        chapters_own: ch.hero,
+        picked: a.heroFor('bingo', ch),
+        unpicked: a.heroFor(null, ch),
+        offroster: a.heroFor('muffin', ch),
+      }));
+    }""")
+    assert got, "no chapters to ask about"
+    for row in got:
+        assert row["picked"] == "bingo", (
+            f"{row['id']} draws {row['picked']} after Bingo was picked")
+        assert row["unpicked"] == row["chapters_own"], (
+            f"{row['id']} with nobody picked should still star {row['chapters_own']}, "
+            f"not {row['unpicked']}")
+        assert row["offroster"] in CAN_BE_DRAWN_RUNNING, (
+            f"{row['id']} would draw {row['offroster']}, who has no run artwork")
+
+
+def test_picking_somebody_is_remembered_after_a_reload(own_page):
+    """Asked once, at the start, and not again every time the game is opened.
+
+    Through the screens rather than by writing `localStorage` directly: what is
+    being checked is that the card *writes* the choice and the menu *reads* it
+    back, and a test that set the value itself would pass with the card wired to
+    nothing.
+    """
+    page = own_page
+    tap_play(page, hero="bingo")
+    page.wait_for_timeout(200)
+    saved = page.evaluate(
+        "() => JSON.parse(localStorage.getItem('forreallife.save.v1') || '{}').hero")
+    assert saved == "bingo", f"picking Bingo saved {saved!r}"
+
+    page.evaluate("() => window.game.stop()")
+    page.reload(wait_until="domcontentloaded")
+    page.wait_for_function("window.__ready === true", timeout=20000)
+    said = page.inner_text(".playing-as")
+    assert "Bingo" in said, f"the menu does not say who is being played as: {said!r}"
+    assert page.locator("#btn-hero").is_visible(), (
+        "there is no way back to the picker: a three-year-old who picked wrong is "
+        "stuck with it until the save is cleared")
+
+
+# The special move as the engine sees it. Stepped by hand rather than played:
+# what is being checked here is the *shape* of a move over time — when it is
+# refused, how it comes on, what it moves — and a wall-clock test of a 2.4s
+# window with a 5.5s cost would be eight seconds of waiting per claim.
+MOVE_TRACE = """
+({ hero, fire, total, dt }) => {
+  const g = window.game;
+  document.getElementById('overlay').classList.add('hidden');
+  g.start(0, hero);
+  // the paint loop stops, the chapter does not: `stop()` would set mode to idle
+  // and the move is refused outside a running chapter, which is the point
+  g.running = false;
+  const rows = [];
+  let refusedWhileOn = null, refusedWhileCooling = null, acceptedAfter = null;
+  for (let n = 0; n < total; n++) {
+    if (n === fire) rows.push({ n, fired: g.useAbility(), level: g.abilityLevel() });
+    else {
+      const t = n * dt;
+      if (n === fire + 2) refusedWhileOn = g.useAbility();
+      rows.push({ n, t, level: g.abilityLevel(), x: g.player.x,
+                  abil: g.player.abil, cool: g.player.cool });
+      g.step(dt);
+    }
+  }
+  return { rows, refusedWhileOn, stumbles: g.stumbles, uses: g.abilityUses,
+           speed: g.ch.speed, ability: g.ability };
+}
+"""
+
+
+def move_trace(page, hero, fire=30, total=700, dt=1 / 120):
+    return page.evaluate(MOVE_TRACE, {"hero": hero, "fire": fire, "total": total, "dt": dt})
+
+
+def test_a_special_move_is_refused_while_it_is_running_and_while_it_cools(own_page):
+    """A move with no cost is a button that is just held down.
+
+    Refused while it is *already on*, not only while cooling: a second press
+    mid-move that restarted the clock would make the move longer the more it was
+    mashed, which is the first thing a three-year-old finds. And it does come
+    back — a move refused forever after one use is the same bug with the
+    opposite sign, so the last press has to be accepted.
+    """
+    page = own_page
+    got = move_trace(page, "bluey", fire=30, total=40)
+    assert got["rows"][0]["level"] == 0, "the move was already on before anyone pressed it"
+    fired = [r for r in got["rows"] if "fired" in r][0]
+    assert fired["fired"] is True, "the first press did nothing"
+    assert got["refusedWhileOn"] is False, (
+        "a second press while the move was still running was accepted — mashing the "
+        "button would extend it")
+
+    later = page.evaluate("""(dt) => {
+      const g = window.game;
+      // what is *left* on the clock, not the whole of it: the trace above has
+      // already stepped part of the cooldown away, and a count taken from the
+      // table would step past the moment being asked about
+      const nearly = Math.max(0, Math.floor(g.player.cool / dt) - 2);
+      for (let n = 0; n < nearly; n++) g.step(dt);
+      const stillCooling = g.useAbility();
+      for (let n = 0; n < 6; n++) g.step(dt);
+      return { nearly, stillCooling, backAgain: g.useAbility(), uses: g.abilityUses };
+    }""", 1 / 120)
+    page.evaluate("() => window.game.stop()")
+    assert later["nearly"] > 100, (
+        f"only {later['nearly']} steps of cooldown were left to wait out, so this "
+        f"barely asked the question")
+    assert later["stillCooling"] is False, (
+        "the move was available again before its cooldown had run")
+    assert later["backAgain"] is True, (
+        "the move never came back: after one use the button is dead for the rest of "
+        f"the chapter ({later})")
+    assert later["uses"] == 2, f"the engine counted {later['uses']} uses, not 2"
+
+
+def test_a_move_eases_on_and_off_instead_of_switching(own_page):
+    """"Check for smooth animations", at the one place a step change would show.
+
+    Every effect multiplies by `abilityLevel()`, so this envelope is the whole of
+    the smoothness: 0 before, 1 in the middle, 0 after, and — the part a linear
+    ramp would fail — no corner at either end, because the legs are driven by
+    distance covered and a corner in the speed is a visible tick in the stride.
+    """
+    page = own_page
+    got = move_trace(page, "bluey", fire=30, total=400)
+    page.evaluate("() => window.game.stop()")
+    levels = [r["level"] for r in got["rows"] if "level" in r and "t" in r]
+    on = [r for r in got["rows"] if r.get("abil", 0) > 0]
+    assert on, "the move never came on at all"
+    assert max(levels) > 0.999, f"the move never reached full strength: peak {max(levels):.3f}"
+    assert levels[0] == 0 and levels[-1] == 0, (
+        f"the move is on outside its own window: {levels[0]} .. {levels[-1]}")
+    # the corner test: the *rate* the envelope changes at may not itself jump.
+    # A linear ramp is 0 then a constant then 0, so its second difference has two
+    # spikes the size of one step's worth of ramp; smoothstep has none.
+    steps = [b - a for a, b in zip(levels, levels[1:])]
+    corners = [abs(b - a) for a, b in zip(steps, steps[1:])]
+    one_step = max(abs(s) for s in steps)
+    assert max(corners) < one_step * 0.5, (
+        f"the envelope turns a corner: the biggest change of rate is {max(corners):.5f} "
+        f"against a step of {one_step:.5f}. A ramp with a corner in it is a tick in "
+        f"the legs, which is the thing being checked here.")
+
+
+def test_the_zoomies_do_not_put_a_step_in_the_stride(own_page):
+    """The smoothness claim, as a number, on the thing on screen.
+
+    Bluey's speed multiplies straight into how far she moves per step, so a move
+    that switched on would show up as one frame where the gap between footfalls
+    jumps by three quarters. The bound is not a taste: it is a fraction of the
+    jump a switch would have made, computed from the engine's own numbers, so it
+    stays right if the chapter speed or the multiplier is ever retuned.
+    """
+    page = own_page
+    got = move_trace(page, "bluey", fire=30, total=400)
+    page.evaluate("() => window.game.stop()")
+    assert got["stumbles"] == 0, (
+        "she tripped over something during the sample, which is a real step change "
+        "in speed and not the one under test — the window needs to be somewhere else")
+    xs = [r["x"] for r in got["rows"] if "x" in r]
+    steps = [b - a for a, b in zip(xs, xs[1:])]
+    assert max(steps) > min(steps) * 1.5, (
+        f"she never sped up: steps ran {min(steps):.3f}..{max(steps):.3f}, so this "
+        f"measured a constant speed and would pass with the move doing nothing")
+    jerk = max(abs(b - a) for a, b in zip(steps, steps[1:]))
+    switch = got["speed"] * (got["ability"]["speed"] - 1) / 120
+    assert jerk < switch * 0.2, (
+        f"the biggest one-frame change in stride is {jerk:.3f}px; switching the move "
+        f"on with no ramp would be {switch:.3f}px, and this is meant to be a small "
+        f"fraction of that")
+
+
+def test_sniffing_out_treats_pulls_the_tokens_in_and_leaves_the_secret_hidden(own_page):
+    """Chilli's move moves things that are hers to move.
+
+    The secret dollarbucks is the one thing in a chapter that has to be *found*,
+    and a magnet that dragged it out of its hiding place would find it for you —
+    so it is deliberately not in the loop, and this is what says so out loud.
+    """
+    page = own_page
+    got = page.evaluate("""(dt) => {
+      const g = window.game;
+      document.getElementById('overlay').classList.add('hidden');
+      g.start(0, 'chilli');
+      g.running = false;
+      const p = g.player;
+      const reach = g.ability.magnet;
+      // one token and the secret put the same distance out, on the same side, so
+      // the only thing that differs between them is which one the move is for
+      const near = g.level.tokens.find((tk) => !tk.taken);
+      near.x = p.x + reach * 0.5;
+      near.y = p.y - 40;
+      g.level.secret.taken = false;
+      g.level.secret.x = p.x + reach * 0.5;
+      g.level.secret.y = p.y - 40;
+      // world coordinates, not distances from her: she is running, so a gap that
+      // closed because she caught up is not the move having moved anything
+      const was = { token: near.x, secret: g.level.secret.x };
+      g.useAbility();
+      for (let n = 0; n < 40; n++) g.step(dt);
+      return { was, token: near.x, secret: g.level.secret.x,
+               taken: near.taken, secretTaken: g.level.secret.taken };
+    }""", 1 / 120)
+    page.evaluate("() => window.game.stop()")
+    assert got["taken"] or got["token"] < got["was"]["token"] - 1, (
+        f"the token was not pulled in at all: it sat at x={got['was']['token']:.0f} and "
+        f"is still at x={got['token']:.0f}")
+    assert got["secret"] == got["was"]["secret"], (
+        f"the secret dollarbucks moved {got['was']['secret'] - got['secret']:.1f}px "
+        f"toward her — the one thing in a chapter that has to be found was found by "
+        f"the move instead")
+    assert not got["secretTaken"], "the magnet collected the secret dollarbucks"
+
+
+def ability_button(page):
+    """What the move button is saying right now, as a player would read it."""
+    return page.evaluate("""() => {
+      const b = document.getElementById('btn-ability');
+      const box = b.getBoundingClientRect();
+      return {
+        shown: !b.classList.contains('hidden') && box.width > 0,
+        ready: b.classList.contains('ready'),
+        active: b.classList.contains('active'),
+        name: document.getElementById('ability-name').textContent,
+        emoji: document.getElementById('ability-emoji').textContent,
+        charge: parseFloat(getComputedStyle(b).getPropertyValue('--charge')),
+        colour: getComputedStyle(b).getPropertyValue('--ability').trim(),
+        label: b.getAttribute('aria-label'),
+      };
+    }""")
+
+
+def test_the_move_button_says_whose_move_it_is_and_fills_back_up(own_page):
+    """The button is the only place the move is explained while playing.
+
+    Three states, and they have to be told apart from across a room: ready (it
+    breathes), running (it glows), cooling (the ring is filling back). The ring
+    is the one worth a real clock — it is redrawn every frame from the engine's
+    own cooldown, and a ring that did not move would look exactly like a button
+    that had stopped working.
+    """
+    page = own_page
+    tap_play(page, hero="bluey")
+    page.wait_for_function("() => window.game && window.game.mode === 'playing'")
+    before = ability_button(page)
+    assert before["shown"], "the move button is not on screen during a chapter"
+    assert before["name"] == "Zoomies" and before["emoji"] == "💨", (
+        f"the button does not say whose move it is: {before}")
+    assert "Zoomies" in (before["label"] or ""), (
+        f"the button reads out as {before['label']!r}, which names no move")
+    assert before["ready"] and before["charge"] == 1, (
+        f"the move is not offered as ready at the start of a chapter: {before}")
+
+    page.click("#btn-ability")
+    used = ability_button(page)
+    assert page.evaluate("() => window.game.abilityUses") == 1, "the button did not fire"
+    assert used["active"] and not used["ready"], (
+        f"the button does not show the move is running: {used}")
+
+    page.wait_for_timeout(700)
+    cooling = ability_button(page)
+    page.wait_for_timeout(700)
+    later = ability_button(page)
+    page.evaluate("() => window.game.stop()")
+    assert cooling["charge"] < 1, f"the ring never emptied: {cooling}"
+    assert later["charge"] > cooling["charge"], (
+        f"the ring is not filling back up: {cooling['charge']:.3f} then "
+        f"{later['charge']:.3f}. It is drawn from the engine's cooldown every frame, "
+        f"so a ring standing still is the HUD not being redrawn.")
+
+
+@pytest.mark.parametrize("viewport", [IPHONE, PIXEL], ids=["iphone", "pixel"])
+def test_a_thumb_on_the_move_button_does_not_also_jump(make_page, viewport):
+    """One tap, one thing. The button sits over the canvas, and the canvas is
+    the jump: a tap counted by both is a move that always costs a jump.
+
+    `press` is counted rather than the player watched, because the answer has to
+    be the same whether she happens to be on the ground at the time. Its own page
+    because it starts from the menu — the shared phone is already mid-chapter by
+    the time this runs, handed on by the tap tests.
+    """
+    page = make_page(viewport, touch=True)
+    try:
+        tap_play(page, hero="bluey")
+        page.wait_for_function("() => window.game && window.game.mode === 'playing'")
+        page.evaluate("""() => {
+          window.__presses = 0;
+          const real = window.game.press.bind(window.game);
+          window.game.press = (...a) => { window.__presses++; return real(...a); };
+        }""")
+        box = page.locator("#btn-ability").bounding_box()
+        page.touchscreen.tap(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        page.wait_for_timeout(150)
+        got = page.evaluate("() => ({ presses: window.__presses, uses: window.game.abilityUses })")
+        assert got["uses"] == 1, f"the tap did not fire the move: {got}"
+        assert got["presses"] == 0, (
+            f"the same tap also jumped ({got['presses']} press(es)) — the move button is "
+            f"over the canvas, and the canvas is the jump")
+    finally:
+        page.evaluate("() => window.game && window.game.stop()")
+        page.context.close()
+
+
+def test_there_is_no_move_button_until_there_is_a_chapter(own_page):
+    """The button belongs to a chapter, not to the app.
+
+    It sits in the HUD, over the picture, and the menu and the picker are that
+    same picture with an overlay on it — a ring in the corner of a screen with
+    nothing to press it during is a control that looks broken. Both directions in
+    one test: gone on the menu, there once she is running, because a button that
+    is always hidden would pass half of this.
+    """
+    page = own_page
+    assert not ability_button(page)["shown"], (
+        "the move button is on the menu, where there is no chapter to use it in")
+    tap_play(page, hero="chilli")
+    page.wait_for_function("() => window.game && window.game.mode === 'playing'")
+    playing = ability_button(page)
+    page.evaluate("() => window.game.stop()")
+    assert playing["shown"] and playing["name"] == "Sniff Out", (
+        f"the chapter started and the move button did not arrive with it: {playing}")
+    assert playing["colour"] == "#FFC98A", (
+        f"the ring is drawn in {playing['colour']!r} rather than the move's own colour, "
+        f"so the button, the aura and the trail are three different colours")

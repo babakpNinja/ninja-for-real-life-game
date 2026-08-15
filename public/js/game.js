@@ -14,6 +14,7 @@ import {
   drawToken, drawObstacle, roundRect, star,
 } from "./art.js";
 import { drawCharacter, footfall, stridePhase, BLEND } from "./sprites.js";
+import { abilityFor, heroFor } from "./abilities.js";
 import { sound } from "./audio.js";
 import { CHAPTERS, buildLevel, sceneryFor, starsFor, GROUND_Y, SEA_TOP, CLOUD_TOP,
   WORLD_W, WORLD_H } from "./chapters.js";
@@ -46,6 +47,15 @@ export const CAM_SLACK = 200;   // px, against CAM_X = 300
 // Only ever a *lower* bound on the centred position, so a screen with a little
 // spare height (a 16:10 laptop) does not move at all.
 export const GROUND_ON_SCREEN = 0.74;
+
+// How long a special move takes to come fully on, and to go fully off again.
+// Every ability changes a number the picture is drawn from — speed, gravity, the
+// pull on a chip — and switching one of those on a single frame is a jolt: the
+// legs jump a cadence, the fall rate steps. So nothing reads `active` as a
+// boolean; they all multiply by `abilityLevel()`, which eases 0 → 1 → 0 over
+// this. Kept shorter than the shortest ability so there is always a middle where
+// the move is at full strength.
+const ABILITY_RAMP = 0.28;   // seconds, each end
 
 export class Game {
   constructor(canvas, characters) {
@@ -121,11 +131,22 @@ export class Game {
     return c.palette;
   }
 
-  start(chapterIndex) {
+  /**
+   * Begin a chapter, played as `heroId` if the player has chosen somebody.
+   *
+   * The hero is settled here and read from `this.hero` everywhere after, rather
+   * than each site reaching for `ch.hero`: a chapter still has an owner (it is
+   * whose story it is, and it is who the story card shows if nothing is chosen),
+   * but who is *on screen* is the player's choice, and those two disagreeing is
+   * a game that draws a different dog from the one on the button.
+   */
+  start(chapterIndex, heroId) {
     const ch = CHAPTERS[chapterIndex];
     const level = buildLevel(chapterIndex);
     this.chapterIndex = chapterIndex;
     this.ch = ch;
+    this.hero = heroFor(heroId, ch);
+    this.ability = abilityFor(this.hero);
     this.level = level;
     this.mode = "playing";
     this.paused = false;
@@ -147,7 +168,13 @@ export class Game {
       // a chapter is partly crossed in the air, and counting that distance
       // would put the feet back out of step with the floor.
       strode: 0,
+      // The special move: seconds of it left, and seconds until it can be used
+      // again. Both count down in `step`, so both are in game time and a paused
+      // game does not quietly recharge.
+      abil: 0,
+      cool: 0,
     };
+    this.abilityUses = 0;
     this.camSlack = 0;
     this.balloon = ch.hasBalloon
       ? { x: 300, y: GROUND_Y - 300, vy: 0, vx: 0, hue: 0 }
@@ -174,6 +201,70 @@ export class Game {
 
   release() {
     this.holding = false;
+  }
+
+  /**
+   * Fire the special move. Answers whether it actually went off, so the button
+   * that called it can say no out loud instead of looking broken.
+   *
+   * Refused while it is already running, not just while cooling down: a second
+   * press mid-Zoomies that silently restarted the clock would make the move
+   * longer the more you mash it, which is the one strategy this design does not
+   * want a three-year-old to find.
+   */
+  useAbility() {
+    const a = this.ability;
+    const p = this.player;
+    if (!a || this.mode !== "playing" || this.paused) return false;
+    if (p.abil > 0 || p.cool > 0) return false;
+    p.abil = a.duration;
+    p.cool = a.duration + a.cooldown;
+    this.abilityUses++;
+    // The one ability that is a shove rather than a window: spend it here, at
+    // the press, because a launch applied gradually over a ramp is not a launch.
+    if (a.launch) {
+      p.vy = JUMP_V * a.launch;
+      p.onGround = false;
+      p.coyote = 0;
+      this.puff(p.x, p.y, 14);
+    }
+    sound.ability();
+    this.toast(`${a.emoji} ${a.name}!`);
+    this.onEvent({ type: "ability", hero: this.hero, name: a.name });
+    return true;
+  }
+
+  /**
+   * How far *on* the special move is right now: 0 off, 1 at full strength.
+   *
+   * Every effect multiplies by this rather than branching on it, so a move
+   * arrives and leaves over ABILITY_RAMP instead of on one frame. Smoothstep
+   * rather than the bare ramp so the rate of change is zero at both ends too —
+   * a linear ramp still has a corner in it, and a corner in the speed is a
+   * visible tick in the legs.
+   */
+  abilityLevel() {
+    const a = this.ability;
+    const p = this.player;
+    if (!a || p.abil <= 0) return 0;
+    const on = a.duration - p.abil;          // seconds since it started
+    const k = Math.max(0, Math.min(1, Math.min(on, p.abil) / ABILITY_RAMP));
+    return k * k * (3 - 2 * k);
+  }
+
+  /** What the HUD button needs to draw itself: 0..1 charge, and whether it is live. */
+  abilityState() {
+    const a = this.ability;
+    const p = this.player;
+    if (!a) return null;
+    return {
+      name: a.name,
+      emoji: a.emoji,
+      active: p.abil > 0,
+      // charge counts *up* to 1 = ready, so the ring fills rather than drains
+      charge: p.cool > 0 ? 1 - p.cool / (a.duration + a.cooldown) : 1,
+      ready: p.abil <= 0 && p.cool <= 0,
+    };
   }
 
   /* ---------------------------------------------------------------- loop -- */
@@ -208,17 +299,31 @@ export class Game {
     this.t += dt;
     if (this.jumpBuffer > 0) this.jumpBuffer -= dt;
     if (p.slow > 0) p.slow -= dt;
+    if (p.abil > 0) p.abil -= dt;
+    if (p.cool > 0) {
+      p.cool -= dt;
+      // the move is back — said quietly, because the button lighting up is the
+      // real message and a small player is not watching the corner for it
+      if (p.cool <= 0) sound.recharged();
+    }
+    // 0 while nobody has a move on, which is the whole of ordinary play: every
+    // use of it below multiplies, so an unused ability changes no number at all
+    const power = this.abilityLevel();
+    const a = this.ability || {};
     // the camera catching up after a teleport; nothing to do the rest of the time
     if (this.camSlack) {
       this.camSlack *= Math.exp(-dt / CAM_BLEND);
       if (Math.abs(this.camSlack) < 0.5) this.camSlack = 0;
     }
 
-    // horizontal
-    let speed = ch.speed * (p.slow > 0 ? 0.45 : 1);
+    // horizontal. `boost` is 1 unless somebody's move makes them faster, and it
+    // eases in and out with `power` rather than switching — the legs are driven
+    // by distance covered, so a step change in speed is a step change in stride.
+    const boost = 1 + (a.speed ? (a.speed - 1) * power : 0);
+    let speed = ch.speed * (p.slow > 0 ? 0.45 : 1) * boost;
     if (!this.autoRun) {
       const dir = (this.keys.right ? 1 : 0) - (this.keys.left ? 1 : 0);
-      speed = dir === 0 ? 0 : ch.speed * dir * (p.slow > 0 ? 0.45 : 1);
+      speed = dir === 0 ? 0 : ch.speed * dir * (p.slow > 0 ? 0.45 : 1) * boost;
       if (dir !== 0) p.facing = dir;
     }
     const before = p.x;
@@ -237,8 +342,14 @@ export class Game {
       this.puff(p.x, p.y, 6);
     }
 
-    // gravity, with a float while the finger is held on the way down
-    const g = GRAVITY * (ch.gravityScale || 1) * (this.holding && p.vy > 0 ? FLOAT_GRAVITY : 1);
+    // Gravity, with a float while the finger is held on the way down — and a
+    // lighter one still for whoever's move is falling slowly, which unlike the
+    // held float needs no finger at all. `Math.min` of the two rather than a
+    // product: they are both answers to "how fast does she come down", and
+    // holding the screen during Floaty should not make her hang in the air.
+    let fall = this.holding && p.vy > 0 ? FLOAT_GRAVITY : 1;
+    if (a.fall && p.vy > 0) fall = Math.min(fall, 1 + (a.fall - 1) * power);
+    const g = GRAVITY * (ch.gravityScale || 1) * fall;
     p.vy += g * dt;
     if (p.vy > 1400) p.vy = 1400;
     const prevY = p.y;
@@ -323,7 +434,28 @@ export class Game {
       }
     }
 
-    // collectibles
+    // collectibles. Whoever can sniff them out pulls the near ones in first —
+    // before the pickup test, so one that arrives this frame is picked up this
+    // frame rather than hovering inside her for one more.
+    //
+    // The secret dollarbucks is deliberately not in this loop: it is the one
+    // thing in a chapter that has to be *found*, and a move that drags it out of
+    // its hiding place would find it for you.
+    if (a.magnet && power > 0) {
+      const reach = a.magnet * power;
+      const cx = p.x, cy = p.y - PLAYER_H / 2;
+      for (const tk of this.level.tokens) {
+        if (tk.taken) continue;
+        const dx = cx - tk.x, dy = cy - tk.y;
+        if (Math.abs(dx) > reach || Math.abs(dy) > reach) continue;
+        if (Math.hypot(dx, dy) > reach) continue;
+        // an exponential approach, not a constant speed: it leaves its perch
+        // gently and arrives quickly, which is what "pulled" looks like
+        const k = 1 - Math.exp(-5.5 * power * dt);
+        tk.x += dx * k;
+        tk.y += dy * k;
+      }
+    }
     for (const tk of this.level.tokens) {
       if (tk.taken) continue;
       if (Math.abs(tk.x - p.x) < 46 && Math.abs(tk.y - (p.y - PLAYER_H / 2)) < 62) {
@@ -343,6 +475,8 @@ export class Game {
       this.sparkle(sec.x, sec.y, 26);
       this.toast("Dollarbucks! 💰 +250");
     }
+
+    if (power > 0) this.trail(power, dt);
 
     if (this.balloon) this.stepBalloon(dt);
 
@@ -465,6 +599,34 @@ export class Game {
         life: 0.45, r: 3 + Math.random() * 4, color: "rgba(176,160,133,0.9)",
       });
     }
+  }
+
+  /**
+   * The motes a special move leaves behind it while it is on.
+   *
+   * Emitted on an accumulator rather than "one per frame, sometimes": a 120Hz
+   * step and a 60Hz one would otherwise lay down twice as much trail on the
+   * faster machine, and the trail is the main thing on screen that says the
+   * move is still running. Scaled by `power` at both ends, so it thins out as
+   * the move eases off instead of stopping dead with it.
+   */
+  trail(power, dt) {
+    const a = this.ability;
+    const p = this.player;
+    this.trailAcc = (this.trailAcc || 0) + dt * power;
+    if (this.trailAcc < 0.04) return;
+    this.trailAcc = 0;
+    this.particles.push({
+      x: p.x - p.facing * (6 + Math.random() * 16),
+      y: p.y - 14 - Math.random() * PLAYER_H * 0.8,
+      // thrown back the way she came, and drifting up: these are not dust, and
+      // the particle loop's own gravity brings them down again on its own
+      vx: -p.facing * (30 + Math.random() * 90),
+      vy: -60 - Math.random() * 80,
+      life: 0.32 + Math.random() * 0.2 * power,
+      r: 2.5 + Math.random() * 4.5,
+      color: a.color,
+    });
   }
 
   sparkle(x, y, n = 12) {
@@ -757,9 +919,38 @@ export class Game {
     ctx.globalAlpha = 1;
 
     const p = this.player;
-    drawCharacter(ctx, ch.hero, p.x, p.y, 92, this.palette(ch.hero), this.t, p.state, p.facing,
+    this.renderAura(ctx);
+    drawCharacter(ctx, this.hero, p.x, p.y, 92, this.palette(this.hero), this.t, p.state, p.facing,
                   { from: p.was, k: (this.t - p.changedAt) / BLEND },
                   stridePhase(p.strode));
+  }
+
+  /**
+   * The glow around whoever has their move on. Drawn under the character, so it
+   * is a light they are standing in rather than a film over their face.
+   *
+   * Its whole strength comes from `abilityLevel()`, the same easing the physics
+   * uses: what the player feels change and what they see change arrive together,
+   * and neither of them arrives on one frame. The pulse on top of that is slow
+   * and shallow — it is meant to read as "still going", not as a flash.
+   */
+  renderAura(ctx) {
+    const power = this.abilityLevel();
+    if (power <= 0) return;
+    const p = this.player;
+    const cy = p.y - PLAYER_H / 2;
+    const pulse = 1 + Math.sin(this.t * 7) * 0.06;
+    const r = 74 * pulse;
+    const g = ctx.createRadialGradient(p.x, cy, 8, p.x, cy, r);
+    g.addColorStop(0, this.ability.color);
+    g.addColorStop(1, `${this.ability.color}00`);   // its own colour, faded out
+    ctx.save();
+    ctx.globalAlpha = 0.42 * power;
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(p.x, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   renderGoal(ctx, left, right) {

@@ -109,6 +109,93 @@ canvas#game {
   transition: left 0.15s linear;
 }
 
+/* ---------------------------------------------------------- special move -- */
+
+/* The cooldown is the button itself: a ring that fills up as the move comes
+   back, rather than a number counting down somewhere else. `--charge` is set
+   from the engine every frame; nothing here knows what an ability is. */
+.ability-btn {
+  pointer-events: auto;
+  position: absolute;
+  right: max(14px, env(safe-area-inset-right));
+  bottom: max(14px, env(safe-area-inset-bottom));
+  width: clamp(64px, 13vw, 88px);
+  height: clamp(64px, 13vw, 88px);
+  padding: 5px;
+  border: none;
+  border-radius: 50%;
+  background: conic-gradient(
+    from -90deg,
+    var(--ability, #FFD166) calc(var(--charge, 1) * 360deg),
+    rgba(255, 255, 255, 0.45) 0
+  );
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  /* no transition on the ring: it is redrawn every frame from the engine and a
+     transition would make it lag its own clock */
+  transition: transform 0.12s ease-out, filter 0.2s ease-out;
+}
+.ability-face {
+  pointer-events: none;
+  cursor: default;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.94);
+  font-size: clamp(26px, 5.4vw, 38px);
+  line-height: 1;
+}
+.ability-name {
+  /* a label, not a control: the walk over the HUD counts anything with a
+     pointer cursor as something a finger has to be able to hit, and it is right
+     to — the tap belongs to the button underneath */
+  pointer-events: none;
+  cursor: default;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  /* above the ring, not inside it: the face fills the button, so a label at the
+     bottom was printed over the emoji it was labelling */
+  top: -17px;
+  font-size: 11px;
+  /* on its own pill: the label sits over whatever the chapter happens to be
+     drawing there — sky, grass, a balloon — and white-on-pale was only legible
+     over half of them */
+  color: #fff;
+  font-weight: 700;
+  background: rgba(29, 53, 87, 0.72);
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+  letter-spacing: 0.2px;
+}
+
+/* charging: still there, still says what it is, plainly not ready */
+.ability-btn:not(.ready) .ability-face { opacity: 0.62; filter: grayscale(0.65); }
+
+/* ready: a slow breath, so it is noticed without being a flashing light.
+   It breathes on the *face*, not on the button: the button is the tap target,
+   and a target that is never in the same place for two frames running is harder
+   to hit — for a thumb, and for anything checking the button can be pressed. */
+.ability-btn.ready .ability-face { animation: ability-ready 1.6s ease-in-out infinite; }
+@keyframes ability-ready {
+  0%, 100% { transform: scale(1); filter: drop-shadow(0 0 0 rgba(255, 255, 255, 0)); }
+  50%      { transform: scale(1.06); filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.85)); }
+}
+.ability-btn:active { transform: translateY(2px) scale(0.96); }
+.ability-btn:active .ability-face { animation: none; }
+
+/* while the move is actually running: the breath stops, because the glow is now
+   saying something different (it is on, not it is available) */
+.ability-btn.active .ability-face { animation: none; }
+.ability-btn.active { filter: drop-shadow(0 0 14px var(--ability, #FFD166)); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ability-btn.ready .ability-face { animation: none; }
+}
+
 #toast-layer {
   position: absolute;
   /* a starting point only: main.js sets `top` against the picture before every
@@ -274,6 +361,44 @@ p.joke { font-size: clamp(13px, 2.4vw, 18px); color: #7A8894; font-style: italic
 .chapter-card span { font-size: 13px; color: #7A8894; }
 .chapter-card .stars { font-size: 17px; letter-spacing: 2px; }
 
+/* who do you want to be? — four cards, not twenty-five (abilities.js), so they
+   can each afford a running picture and a sentence about the move */
+.hero-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 12px 0; }
+.hero-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  padding: 10px 12px;
+  background: #fff;
+  border: 3px solid var(--blue-light);
+  border-radius: 20px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: transform 0.14s ease-out, border-color 0.14s ease-out, box-shadow 0.14s ease-out;
+}
+.hero-card:hover { transform: translateY(-2px); box-shadow: 0 6px 0 rgba(0, 0, 0, 0.07); }
+.hero-card:active { transform: translateY(1px) scale(0.99); }
+/* the one already being played as: a ring and a tick, so the answer to "who am
+   I?" is on the screen that asks it */
+.hero-card.chosen { border-color: var(--orange); box-shadow: 0 0 0 3px rgba(242, 153, 74, 0.35); }
+.hero-card.chosen b::after { content: " ✓"; color: #3AA17E; }
+.hero-card canvas { width: 74px; height: 74px; flex: none; }
+.hero-copy { display: flex; flex-direction: column; min-width: 0; }
+.hero-copy b { font-size: clamp(15px, 2.6vw, 20px); color: var(--blue); }
+.hero-role { font-size: 12px; color: #8A98A6; }
+.hero-move { font-size: 13px; font-weight: 700; color: var(--red); margin-top: 2px; }
+.hero-blurb { font-size: 12px; color: #7A8894; line-height: 1.35; }
+/* the menu's tagline, once somebody has been picked: it *replaces* the tagline
+   rather than being a line under it, because the menu fits a 390px window
+   exactly (#266) and a fifth line puts ▶ Play off the bottom */
+.playing-as b { color: var(--blue); }
+.playing-as .link-btn { margin-left: 6px; font-size: inherit; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-card, .hero-card:hover { transition: none; transform: none; }
+}
+
 /* character gallery */
 .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; margin: 10px 0; }
 .char-card {
@@ -345,6 +470,12 @@ table.stats td:last-child, table.stats th:last-child { text-align: right; }
   p.story { font-size: clamp(14px, 2.4vw, 18px); margin: 5px 0; }
   .tap-hint { margin-top: 2px; font-size: 12px; }
   .credits { margin: 6px 0 0; font-size: 11px; line-height: 1.35; }
+  /* who you are playing as is one more line on a menu that already fits exactly
+     (#266): at the full rhythm it put the panel 27px past the bottom */
+  .hero-list { gap: 8px; margin: 6px 0; }
+  .hero-card { padding: 6px 8px; gap: 8px; }
+  .hero-card canvas { width: 52px; height: 52px; }
+  .hero-blurb { display: none; }
 }
 
 /* ------------------------------------------------- credits & attribution -- */

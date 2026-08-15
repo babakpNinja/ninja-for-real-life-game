@@ -26,6 +26,13 @@
         <button id="btn-pause" class="icon-btn" aria-label="Pause">⏸</button>
       </div>
       <div id="hud-progress"><div id="hud-progress-fill"></div><div id="hud-progress-dog">🐾</div></div>
+      <!-- the special move. Bottom right, clear of the progress bar in the
+           middle: the two are the only things pinned to the bottom edge, and a
+           thumb reaching for one must not find the other. -->
+      <button id="btn-ability" class="ability-btn hidden" aria-label="Special move">
+        <span class="ability-face"><span id="ability-emoji">✨</span></span>
+        <span id="ability-name" class="ability-name"></span>
+      </button>
       <div id="toast-layer"></div>
     </div>
 

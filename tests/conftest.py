@@ -166,6 +166,67 @@ RUNNING_GAME = """
 """
 
 
+def page_census(subject=None, open_pages=None) -> list[dict]:
+    """Every *other* page this session still has open, and what it is animating.
+
+    The frame floor (#275) decides that a page short of frames beside a healthy
+    blank one is being starved by a loop somebody walked away from (#182) — and
+    until #302 it decided that by elimination, without ever asking the browser
+    what was open. It fired once that way during a ship, on a suite that ran green
+    on either side of it, so the one thing the message asserted was the one thing
+    nothing had established.
+
+    `pages` is the same list the leak guard below reads, so this is that guard's
+    question asked of the whole session rather than of one test's teardown. The
+    subject is left out: the page being measured is *allowed* to be animating —
+    the phone is mid-chapter by the time the floor is taken, on purpose.
+
+    A page that cannot be asked is its own row (`running` is the string), not a
+    quiet no: "nothing else is animating" is about to be the reason a reading is
+    excused, and an unanswered question must not be able to say it (#40).
+    """
+    rows = []
+    for page in (pages if open_pages is None else open_pages):
+        if page is subject or page.is_closed():
+            continue
+        try:
+            running = page.evaluate(RUNNING_GAME)
+        except Exception as e:  # noqa: BLE001 — a closed/crashed page is 'could not ask'
+            running = f"could not ask ({type(e).__name__})"
+        rows.append({"where": describe_page(page), "running": running})
+    return rows
+
+
+def describe_page(page) -> str:
+    """A page named the way the suite names them: by the viewport it was opened at."""
+    size = page.viewport_size or {}
+    where = f"{size.get('width')}x{size.get('height')}" if size else "no viewport"
+    return f"{where} {page.url}"
+
+
+def census_phrase(rows: list[dict]) -> str:
+    """What the census found, in the sentence a failure will carry.
+
+    Never silence: an empty census and a census nobody took read identically in a
+    message, and they are opposite findings (#40).
+    """
+    busy = [r for r in rows if isinstance(r["running"], dict)]
+    unknown = [r for r in rows if isinstance(r["running"], str)]
+    if not rows:
+        return "no other page in this run is open"
+    said = []
+    if busy:
+        said.append("still animating: " + "; ".join(
+            f"{r['where']} (mode={r['running'].get('mode')}"
+            + (f", {r['running']['chapter']}" if r["running"].get("chapter") else "") + ")"
+            for r in busy))
+    if unknown:
+        said.append("could not be asked: " + "; ".join(r["where"] for r in unknown))
+    if not said:
+        said.append("none of them animating")
+    return f"{len(rows)} other page(s) open, " + ", ".join(said)
+
+
 def leak_message(left: dict, nodeid: str, which_page: str) -> str:
     """What to say about a game loop a test walked away from.
 
