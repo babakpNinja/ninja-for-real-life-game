@@ -4020,6 +4020,93 @@ def test_the_canvas_fills_the_viewport(phone):
     assert width >= vp["width"] - 2, f"{width} < {vp['width']}"
 
 
+# The colour the engine clears the canvas to before it draws anything, and the
+# only place in the app it appears: no chapter's sky, ground, water or sprite
+# palette is this navy, so a row of it in the middle of the picture is the empty
+# frame showing through. Read out of the source rather than typed, so a repaint
+# of the page background cannot leave this test measuring a colour nothing draws.
+LETTERBOX = re.search(r'ctx\.clearRect\(0, 0, w, h\);\s*ctx\.fillStyle = "(#[0-9A-Fa-f]{6})";',
+                      (APP / "public" / "js" / "game.js").read_text())
+
+
+# Down the middle of the canvas, in device pixels, per chapter: how much of the
+# screen the scene actually covers. The centre column is the honest place to ask
+# — it misses the left and right bars entirely and sees every horizontal band.
+PAINTED_COLUMN = """
+async ({ hex, frames }) => {
+  const { CHAPTERS } = await import('/js/chapters.js');
+  const g = window.game;
+  const c = g.canvas, ctx = c.getContext('2d');
+  const rgb = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const x = Math.floor(c.width / 2);
+  document.getElementById('overlay').classList.add('hidden');
+  g.toast = () => {};
+
+  const look = () => {
+    const d = ctx.getImageData(x, 0, 1, c.height).data;
+    let bare = 0, first = null, last = null;
+    for (let y = 0; y < c.height; y++) {
+      const i = y * 4;
+      if (d[i] === rgb[0] && d[i + 1] === rgb[1] && d[i + 2] === rgb[2]) {
+        bare++;
+        if (first === null) first = y;
+        last = y;
+      }
+    }
+    return { bare, height: c.height, first, last };
+  };
+
+  const out = { idle: look() };
+  for (let i = 0; i < CHAPTERS.length; i++) {
+    g.start(i);
+    for (let n = 0; n < frames; n++) g.step(1 / 60);   // a way into the chapter
+    g.render();
+    out[CHAPTERS[i].id] = look();
+    g.stop();     // shared browser: a loop left painting costs every later test
+  }
+  return out;
+}
+"""
+
+
+@pytest.mark.parametrize("viewport,touch", [(IPHONE, True), (DESKTOP, False)],
+                         ids=["iphone", "desktop"])
+def test_the_scene_fills_the_screen_top_to_bottom(make_page, viewport, touch):
+    """#251: held upright, the game was a strip in the middle of a dark screen.
+
+    The measurement is the one the report was written from — the canvas is
+    780x1688 device px on an iPhone and the scene ran y=624..1063, *439 of 1688
+    rows, 26% of the screen*. The rest was the navy the frame is cleared to.
+
+    The cause is letterboxing: the world is 16:9 and the phone held upright is
+    not, so fitting the world by `min(w/W, h/H)` leaves two thick bars. The fix
+    does not crop or zoom — the camera still shows exactly the same world, so
+    what a player can see coming is unchanged — it draws the sky and the ground
+    out to the edges of whatever screen it was given, and drops the ground line
+    to `GROUND_ON_SCREEN` so the extra room lands in the sky where the story is.
+
+    Its own page, both because the numbers depend on the viewport and because it
+    starts every chapter; the desktop arm is here so the fix cannot pay for
+    portrait by breaking the landscape view that was already right.
+    """
+    assert LETTERBOX, ("game.js no longer clears the frame to a flat colour, so this "
+                       "test cannot tell a drawn screen from an empty one — find what "
+                       "render() now starts with and re-point the pattern at it.")
+    page = make_page(viewport, touch=touch)
+    try:
+        seen = page.evaluate(PAINTED_COLUMN, {"hex": LETTERBOX.group(1), "frames": 120})
+        assert len(seen) == 6, f"only {len(seen)} screens measured: {sorted(seen)}"
+        for where, m in sorted(seen.items()):
+            painted = (m["height"] - m["bare"]) / m["height"]
+            assert painted > 0.99, (
+                f"{where} on {viewport['width']}x{viewport['height']}: only "
+                f"{painted:.0%} of the middle of the screen is drawn on "
+                f"({m['bare']} of {m['height']} device rows are the empty frame, "
+                f"y={m['first']}..{m['last']}). That is the letterbox of #251.")
+    finally:
+        page.context.close()
+
+
 def test_no_console_errors_on_touch(phone):
     assert not phone.errors, str(phone.errors[:3])
 

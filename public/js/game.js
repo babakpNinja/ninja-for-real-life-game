@@ -37,6 +37,16 @@ const CAM_X = 300;
 export const CAM_BLEND = 0.3;   // seconds; exponential, so frame-rate independent
 export const CAM_SLACK = 200;   // px, against CAM_X = 300
 
+// How far down the canvas the world's ground line sits once the screen is taller
+// than the world is (#251). The world is 16:9 and a phone held upright is not, so
+// fitting it by width leaves 600px of spare height; painting that as sky and ground
+// is what stops it being a navy wall, and this is where the horizon lands in what
+// is left. Three quarters down, the way a photograph of a backyard is mostly sky —
+// centred would put as much flat grass under the player as sky over her.
+// Only ever a *lower* bound on the centred position, so a screen with a little
+// spare height (a 16:10 laptop) does not move at all.
+export const GROUND_ON_SCREEN = 0.74;
+
 export class Game {
   constructor(canvas, characters) {
     this.canvas = canvas;
@@ -74,7 +84,20 @@ export class Game {
     this.canvas.height = Math.round(h * dpr);
     this.scale = Math.min(w / WORLD_W, h / WORLD_H);
     this.offX = (w - WORLD_W * this.scale) / 2;
-    this.offY = (h - WORLD_H * this.scale) / 2;
+    // Where the world band sits vertically. Centred while there is little spare
+    // height, and pushed down once there is a lot, so the extra becomes sky rather
+    // than being split evenly with the grass. `Math.max` against the centred
+    // position is what keeps every screen that is roughly 16:9 exactly where it was.
+    const slack = h - WORLD_H * this.scale;
+    const centred = slack / 2;
+    this.offY = slack <= 0 ? centred
+      : Math.min(slack, Math.max(centred, h * GROUND_ON_SCREEN - GROUND_Y * this.scale));
+    // What the canvas actually shows, in world units — past the top and bottom of
+    // the world wherever the band does not reach. Every fill that used to stop dead
+    // at 0 or WORLD_H reads these instead, which is the whole of #251: the bars were
+    // never *drawn* navy, they were the one colour under the canvas showing through.
+    this.viewTop = Math.min(0, -this.offY / this.scale);
+    this.viewBot = Math.max(WORLD_H, (h - this.offY) / this.scale);
     this.dpr = dpr;
     if (this.mode !== "playing") this.render();
   }
@@ -466,7 +489,7 @@ export class Game {
     ctx.scale(this.scale, this.scale);
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, 0, WORLD_W, WORLD_H);
+    ctx.rect(0, this.viewTop, WORLD_W, this.viewBot - this.viewTop);
     ctx.clip();
 
     if (this.mode === "idle" || !this.ch) {
@@ -491,11 +514,14 @@ export class Game {
     g.addColorStop(0, "#8FD3F4");
     g.addColorStop(1, "#E8F7FF");
     ctx.fillStyle = g;
-    ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+    // Past both ends of the world where the screen is taller than it (#251). A canvas
+    // gradient clamps to its end colours outside its own range, so the sky above y=0
+    // is the sky's own top colour and no seam appears at the join.
+    ctx.fillRect(0, this.viewTop, WORLD_W, this.viewBot - this.viewTop);
     const t = performance.now() / 1000;
     for (let i = 0; i < 5; i++) drawCloud(ctx, ((i * 260 + t * 12) % 1200) - 120, 80 + i * 40, 1 + (i % 3) * 0.3, 0.85);
     ctx.fillStyle = "#7FBF6A";
-    ctx.fillRect(0, GROUND_Y, WORLD_W, WORLD_H - GROUND_Y);
+    ctx.fillRect(0, GROUND_Y, WORLD_W, this.viewBot - GROUND_Y);
   }
 
   renderBackground(ctx, camX) {
@@ -504,7 +530,7 @@ export class Game {
     g.addColorStop(0, ch.sky[0]);
     g.addColorStop(1, ch.sky[1]);
     ctx.fillStyle = g;
-    ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+    ctx.fillRect(0, this.viewTop, WORLD_W, this.viewBot - this.viewTop);
 
     if (ch.id === "sleepytime") {
       // stars + a big friendly moon. The field stops short of the cloud sea
@@ -555,7 +581,7 @@ export class Game {
       // shelving itself, so anything standing in the middle distance was
       // standing on a line the background does not draw.
       ctx.fillStyle = "#BDB5AA";
-      ctx.fillRect(-600, GROUND_Y, 7200, WORLD_H - GROUND_Y);
+      ctx.fillRect(-600, GROUND_Y, 7200, this.viewBot - GROUND_Y);
       for (let i = 0; i < 14; i++) {
         const x = i * 420;
         ctx.fillStyle = "#E4DED4";
@@ -578,7 +604,7 @@ export class Game {
       // planet's foot, i.e. a planet sunk in the cloud rather than resting on
       // it — the clip is what keeps that from depending on where it lands.
       ctx.fillStyle = "#4A4788";
-      ctx.fillRect(-600, CLOUD_TOP + 14, 7200, WORLD_H - CLOUD_TOP - 14);
+      ctx.fillRect(-600, CLOUD_TOP + 14, 7200, this.viewBot - CLOUD_TOP - 14);
       const haze = ctx.createLinearGradient(0, CLOUD_TOP, 0, CLOUD_TOP + 14);
       haze.addColorStop(0, "rgba(74,71,136,0)");   // the sea, fading up into sky
       haze.addColorStop(1, "rgba(74,71,136,1)");
@@ -586,7 +612,7 @@ export class Game {
       ctx.fillRect(-600, CLOUD_TOP, 7200, 14);
       ctx.save();
       ctx.beginPath();
-      ctx.rect(-600, CLOUD_TOP, 7200, WORLD_H - CLOUD_TOP);
+      ctx.rect(-600, CLOUD_TOP, 7200, this.viewBot - CLOUD_TOP);
       ctx.clip();
       for (let i = 0; i < 22; i++) {
         // moonlight along the tops, and a darker roll under it
@@ -640,7 +666,7 @@ export class Game {
     // water under the gaps (creek + beach)
     if (ch.water) {
       ctx.fillStyle = ch.water;
-      ctx.fillRect(left, GROUND_Y + 6, right - left, WORLD_H - GROUND_Y);
+      ctx.fillRect(left, GROUND_Y + 6, right - left, this.viewBot - GROUND_Y);
       ctx.fillStyle = "rgba(255,255,255,0.35)";
       for (let x = Math.floor(left / 90) * 90; x < right; x += 90) {
         ctx.fillRect(x + Math.sin(this.t * 2 + x) * 8, GROUND_Y + 24, 46, 5);
@@ -654,7 +680,7 @@ export class Game {
       grad.addColorStop(0, ch.ground[0]);
       grad.addColorStop(1, ch.ground[1]);
       ctx.fillStyle = grad;
-      const h = s.y >= GROUND_Y ? WORLD_H - s.y + 20 : 34;
+      const h = s.y >= GROUND_Y ? this.viewBot - s.y + 20 : 34;
       roundRect(ctx, s.x, s.y, s.w, h, s.y >= GROUND_Y ? 10 : 14);
       ctx.fill();
       // a lighter lip so the landing edge is obvious
