@@ -15,6 +15,9 @@ export class Sound {
     this.musicGain = null;
     this.sfxGain = null;
     this.muted = false;
+    // set by the UI: called with the new mute whenever it changes, so nothing
+    // has to keep a second copy of "is the sound off" in step (#296)
+    this.onmute = null;
     this.timer = null;
     this.step = 0;
     this.theme = null;
@@ -64,6 +67,10 @@ export class Sound {
     // speech does not go through the master gain, so muting has to reach it
     // by hand — otherwise the story keeps talking over a silenced game
     if (m) this.hush();
+    // the screen is told by whoever is silent, rather than by each caller
+    // remembering to redraw afterwards: a mute the UI did not initiate used to
+    // leave a 🔊 on the HUD over a silent game (#296)
+    if (this.onmute) this.onmute(m);
   }
 
   /* ------------------------------------------------- reading out loud -- */

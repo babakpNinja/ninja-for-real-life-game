@@ -435,6 +435,25 @@ function play(index) {
   updateHud();
 }
 
+/**
+ * The HUD's speaker icon, asked of the thing that is actually silent.
+ *
+ * Same pair as the story card's read button (#294), one level up: `save.muted`
+ * is what is *persisted*, `sound.muted` is what refuses to make a noise. Boot
+ * used to render this icon from the save one line before handing the same value
+ * to the mixer, so the icon was a second opinion about a fact the mixer owns —
+ * and it was already wrong for anything that mutes the mixer without writing the
+ * save (#296).
+ *
+ * Subscribed to the mixer rather than called at each site that mutes: the two
+ * literal sites were both "remember to redraw after setMuted", and a third
+ * caller — `play()`, or a test — got no redraw at all. As `sound.onmute` it
+ * reports the mute that took effect, from whoever took it.
+ */
+function muteIcon() {
+  el("btn-mute").textContent = sound.muted ? "🔇" : "🔊";
+}
+
 function updateHud() {
   if (!game || game.mode !== "playing") return;
   el("hud-score").textContent = game.score;
@@ -686,8 +705,7 @@ function wireInput() {
     save.muted = !save.muted;
     store();
     sound.unlock();
-    sound.setMuted(save.muted);
-    el("btn-mute").textContent = save.muted ? "🔇" : "🔊";
+    sound.setMuted(save.muted);      // which redraws the icon
     // muting stops the story mid-sentence, so the card's speaker button is now
     // describing a read that is over (#290)
     setReadLabel();
@@ -747,7 +765,7 @@ async function boot() {
                                             // *without* writing the save (#294)
   window.__ready = true;
 
-  el("btn-mute").textContent = save.muted ? "🔇" : "🔊";
+  sound.onmute = muteIcon;   // before the first setMuted, so it draws the icon
   // the mixer was only told about a saved mute on the way into a chapter, and
   // the story card is reached before that: a game saved muted read the story out
   // loud on the first tap after a reload (#290)

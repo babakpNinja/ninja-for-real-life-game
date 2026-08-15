@@ -653,6 +653,12 @@ def story_button(page):
     return page.locator("#btn-read").inner_text().strip()
 
 
+def hud_speaker(page):
+    # textContent, not inner_text: the HUD is hidden on the menu, and an
+    # invisible element's inner_text is "" whatever the icon says
+    return page.evaluate("() => document.getElementById('btn-mute').textContent")
+
+
 def test_the_story_can_be_read_again_from_the_card(own_page):
     """The replay itself: the same lines, asked for a second time."""
     page = own_page
@@ -809,6 +815,44 @@ def test_a_browser_with_no_speech_at_all_says_so_rather_than_offering_a_replay(o
     page.click("#btn-read")
     assert story_button(page) == "🔇 No voice here", (
         f"tapping it changed the answer to {story_button(page)!r}")
+
+
+def test_the_hud_speaker_shows_the_mixers_mute_not_the_saved_one(own_page):
+    """The same two-source pair as the read button, one level up (#296).
+
+    The HUD icon was drawn from `save.muted` at two literal sites, and the thing
+    that is silent is the mixer. Muting it without writing the save — which is
+    exactly what `play()` and every test seam do — left a 🔊 over a game that
+    makes no noise. The icon is now `sound.onmute`, so the redraw belongs to the
+    fact rather than to each caller's memory.
+    """
+    page = own_page
+    assert hud_speaker(page) == "🔊", "the game did not start audible"
+    page.evaluate("() => window.__sound.setMuted(true)")     # save untouched
+    assert page.evaluate("() => JSON.parse(localStorage.getItem("
+                         "'forreallife.save.v1') || '{}').muted") is not True, (
+        "the save was written after all — this no longer drives the two apart")
+    assert hud_speaker(page) == "🔇", (
+        f"the mixer is muted and the HUD shows {hud_speaker(page)!r}")
+    page.evaluate("() => window.__sound.setMuted(false)")
+    assert hud_speaker(page) == "🔊", (
+        f"the sound came back and the HUD still shows {hud_speaker(page)!r}")
+
+
+def test_the_hud_speaker_still_answers_its_own_button(own_page):
+    """The toggle used to redraw the icon itself; now the mixer does it for it.
+
+    Worth its own test because the two are indistinguishable while nothing else
+    mutes: if the subscription is never wired, this still passes only if someone
+    put the literal back.
+    """
+    page = own_page
+    page.evaluate("() => document.getElementById('btn-mute').click()")
+    assert hud_speaker(page) == "🔇"
+    assert page.evaluate("() => window.__sound.muted") is True
+    page.evaluate("() => document.getElementById('btn-mute').click()")
+    assert hud_speaker(page) == "🔊"
+    assert page.evaluate("() => window.__sound.muted") is False
 
 
 def test_this_browser_cannot_speak(own_page):
