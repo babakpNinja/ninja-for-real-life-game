@@ -77,6 +77,28 @@ export class Sound {
    * Speech needs the same user gesture WebAudio does, and every screen that
    * calls this was reached by a tap. A browser with no `speechSynthesis` (or a
    * muted one) is not an error: it gets the same silent card it has now.
+   *
+   * **No test here can hear this.** Measured in the suite's own browser
+   * (headless Chromium 1217, 2026-08-15, #289):
+   *
+   *     getVoices()  -> 0
+   *     speak(u)     -> onerror 'synthesis-failed', no onstart, no onend
+   *     speaking / pending stay false at 50, 200, 800 and 2000ms
+   *
+   * So every assertion in the suite is about what this method *asked for* — the
+   * utterance texts, the rate, that `cancel()` was called — and nothing would
+   * notice if a real browser rejected them. A voice can be made to exist in the
+   * container, but not in the browser the game is tested in: it took
+   * `espeak-ng` + `speech-dispatcher` (with an ALSA null sink, since there is no
+   * audio device), a *headed* Chromium under Xvfb, and `SPEECHD_ADDRESS`
+   * pointing at a hand-started daemon — headless or without either one gives 0
+   * voices — and even then `speak()` still ended in 'synthesis-failed'.
+   *
+   * What would change the answer: a browser build that speaks without an audio
+   * device, or a check that reads the espeak module's output rather than the
+   * page's events. Until then `test_this_browser_cannot_speak` in test_game.py
+   * pins the numbers above, so the day the environment gains a voice the suite
+   * says so instead of quietly staying green over a stub.
    */
   read(lines) {
     const synth = window.speechSynthesis;

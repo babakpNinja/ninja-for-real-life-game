@@ -629,6 +629,41 @@ def test_muting_while_the_story_is_being_read_stops_it(own_page):
     page.evaluate("() => document.getElementById('btn-mute').click()")
 
 
+def test_this_browser_cannot_speak(own_page):
+    """The gap the tests above cannot cover, pinned so it stays visible (#289).
+
+    Every speech assertion in this file stubs `speak`/`cancel` and is about what
+    the game *asked for*. That is not a choice: this browser has no voice, so
+    nothing here would notice if a real one rejected the utterances. The numbers
+    are in `audio.js` beside `read()`, along with what it took to get a voice
+    into the container at all (espeak-ng + speech-dispatcher + a headed Chromium
+    under Xvfb + SPEECHD_ADDRESS — and `speak()` still failed).
+
+    Asserted rather than written down, because a documented gap goes stale
+    silently. If this test fails, the environment has changed in the one way
+    that matters: reopen #289 and write the real check — drive `read()` and wait
+    for a genuine `onstart` — then delete this.
+    """
+    page = own_page
+    got = page.evaluate("""() => new Promise(res => {
+        const ev = [];
+        const u = new SpeechSynthesisUtterance('Chapter one. The great cardboard box.');
+        u.onstart = () => ev.push('start');
+        u.onend = () => ev.push('end');
+        u.onerror = e => ev.push('error:' + e.error);
+        speechSynthesis.speak(u);
+        setTimeout(() => res({voices: speechSynthesis.getVoices().length, ev,
+                              speaking: speechSynthesis.speaking}), 1500);
+    })""")
+    assert got["voices"] == 0, (
+        f"this browser now has {got['voices']} voice(s) — the stubbed speech tests are no "
+        f"longer the best available check. Write the real one (#289) and delete this test")
+    assert "start" not in got["ev"], (
+        f"an utterance actually started here: {got['ev']} — a real voice can be driven "
+        f"after all (#289)")
+    assert got["speaking"] is False, "speechSynthesis reports it is speaking with no voices"
+
+
 def test_the_gallery_shows_every_character_with_a_bio(desktop):
     desktop.click("#btn-gallery")
     desktop.wait_for_selector(".char-card")
