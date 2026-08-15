@@ -102,6 +102,20 @@ export class Game {
     if (this.mode !== "playing") this.render();
   }
 
+  // Where the picture is on the page, in CSS pixels. The canvas is the whole
+  // window, but the world is drawn into a band inside it — upright that band is
+  // a fifth of a tall phone, sitting low. Anything the *page* puts over the game
+  // and means to be about the game belongs against this rect rather than the
+  // window, or it lands in the empty sky above Bluey (#254).
+  sceneRect() {
+    const r = this.canvas.getBoundingClientRect();
+    const width = WORLD_W * this.scale;
+    const height = WORLD_H * this.scale;
+    const left = r.left + this.offX;
+    const top = r.top + this.offY;
+    return { left, top, width, height, right: left + width, bottom: top + height };
+  }
+
   palette(id) {
     const c = this.characters.find((x) => x.id === id) || this.characters[0];
     return c.palette;

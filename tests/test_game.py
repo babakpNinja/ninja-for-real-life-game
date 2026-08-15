@@ -5163,6 +5163,88 @@ def test_no_console_errors_on_touch(phone):
     assert not phone.errors, str(phone.errors[:3])
 
 
+# --- and the words about the picture, over the picture (#254) -----------------
+
+# Raised through the engine's own event, which is the path the game uses when
+# Bluey lands in the creek, and measured off the *layer* rather than the pill:
+# `@keyframes pop` scales and lifts each pill for its whole 1.5s, so a rect read
+# off a pill is a reading of the clock. The layer is where the toast was put.
+TOAST_PLACE = """
+(text) => {
+  window.game.onEvent({ type: 'toast', text });
+  const layer = document.querySelector('#toast-layer');
+  if (!layer) throw new Error('no #toast-layer on the page to measure');
+  const b = layer.getBoundingClientRect();
+  const pills = [...layer.querySelectorAll('.toast')];
+  return {
+    pills: pills.map((p) => p.textContent.trim()),
+    layer: { top: b.top, bottom: b.bottom, left: b.left, right: b.right,
+             width: b.width, height: b.height },
+    scene: window.game.sceneRect(),
+    view: { w: window.innerWidth, h: window.innerHeight },
+  };
+}
+"""
+
+
+@pytest.mark.parametrize("viewport,touch,screen", SCREENS, ids=SCREEN_IDS)
+def test_a_toast_lands_on_the_picture_not_in_the_sky(make_page, viewport, touch, screen):
+    """#254: "Whoops!" 456px down a 1680px phone, with the scene starting at 624.
+
+    `#toast-layer` was `top: 26%` of the *window*. On a laptop the picture fills
+    the window and 26% is over the game; on a phone held upright the world band
+    is about a fifth of the screen and sits low, so the message about the thing
+    that just happened floated alone in the navy sky, a long way above the thing
+    that just happened.
+
+    So every window is asked the question the stylesheet could not: is the toast
+    inside the picture — not merely inside the page, which it always was.
+    """
+    assert TOASTS, "no toasts found in game.js, so there is nothing to raise"
+    page = make_page(viewport, touch=touch)
+    try:
+        page.click("#btn-play")
+        page.wait_for_selector("#btn-go")
+        page.click("#btn-go")
+        page.wait_for_timeout(400)
+        assert page.evaluate("window.game.mode") == "playing", (
+            f"{screen}: never got into a chapter, so there is no game to talk about")
+
+        said = max(TOASTS, key=len)
+        m = page.evaluate(TOAST_PLACE, said)
+        scene, layer, view = m["scene"], m["layer"], m["view"]
+        # a layer with nothing in it is a rect at the placed top and no height,
+        # which sits inside any band — so the pill has to be there to be measured
+        assert m["pills"] == [said], (
+            f"{screen}: raised {said!r} and the layer holds {m['pills']} — nothing "
+            f"was measured")
+        assert layer["height"] > 1 and layer["width"] > 1, (
+            f"{screen}: the toast layer is {layer['width']:.0f}x{layer['height']:.0f}, "
+            f"which is not a pill a player can read")
+        # the band really is the smaller half of the story on a phone: if it ever
+        # fills every window here, this test stops being about anything
+        assert scene["height"] <= view["h"] + 0.5 and scene["width"] <= view["w"] + 0.5, (
+            f"{screen}: the picture ({scene['width']:.0f}x{scene['height']:.0f}) is "
+            f"bigger than the {view['w']}x{view['h']} window it is drawn in")
+
+        assert layer["top"] >= scene["top"] - 1 and layer["bottom"] <= scene["bottom"] + 1, (
+            f"{screen}: {said!r} sits at y {layer['top']:.0f}..{layer['bottom']:.0f}, "
+            f"outside the picture at y {scene['top']:.0f}..{scene['bottom']:.0f} of a "
+            f"{view['w']}x{view['h']} window — that is #254's message in the sky")
+        middle = (layer["left"] + layer["right"]) / 2
+        assert scene["left"] - 1 <= middle <= scene["right"] + 1, (
+            f"{screen}: {said!r} is centred at x {middle:.0f}, beside the picture at x "
+            f"{scene['left']:.0f}..{scene['right']:.0f}")
+        # and near the top of it, where Bluey is — the bottom of the band is the
+        # grass, and a pill down there covers what it is talking about
+        assert layer["bottom"] <= scene["top"] + scene["height"] * 0.6, (
+            f"{screen}: {said!r} reaches y {layer['bottom']:.0f}, past the top half of "
+            f"the picture (y {scene['top']:.0f}..{scene['bottom']:.0f})")
+    finally:
+        page.evaluate("() => window.game && window.game.stop()")
+        page.context.close()
+
+
 # --- the suite's own guard --------------------------------------------------
 # `own_page` fails a test that walks away from a running game loop (#182). That
 # is a claim about pytest's report, not about the game, so it is asked the only

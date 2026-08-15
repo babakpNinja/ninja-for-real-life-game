@@ -362,9 +362,27 @@ const TOAST_MAX = 3;
 const TOAST_REPEAT_MS = 1200;
 const toastSeen = new Map();
 
+// How far down the *picture* a toast sits. It was 26% of the window in the CSS,
+// which is the same place on a laptop — there the picture fills the window — and
+// nowhere near the game on a phone held upright, where the band is about a fifth
+// of the screen and sits low (#254).
+const TOAST_BAND = 0.26;
+
+// Set from here rather than the stylesheet: only the engine knows where the band
+// ended up, and it moves with every resize and rotate.
+function placeToasts() {
+  const layer = el("toast-layer");
+  if (!layer || !game) return;
+  const scene = game.sceneRect();
+  layer.style.top = `${Math.round(scene.top + scene.height * TOAST_BAND)}px`;
+}
+
 function toast(text) {
   const layer = el("toast-layer");
   if (!layer) return;
+  // before the pill goes in, so the first toast after a rotate is already in the
+  // right place — a listener alone would put it right one frame late
+  placeToasts();
   // the same message can fire many times in a row (splashing, stumbling) —
   // repeat it sparingly and never let more than a few stack up on screen.
   const now = performance.now();
@@ -595,6 +613,12 @@ function wireInput() {
   window.addEventListener("resize", checkOrientation);
   window.addEventListener("orientationchange", () => setTimeout(checkOrientation, 250));
   checkOrientation();
+
+  // a toast already on screen when the window changes shape: the engine has moved
+  // the picture, so the words about it move too. The 250ms is the engine's own
+  // delay after a rotate — measured before it, the band is still the old one.
+  window.addEventListener("resize", placeToasts);
+  window.addEventListener("orientationchange", () => setTimeout(placeToasts, 250));
 
   // never let the page itself scroll or zoom under little fingers
   document.addEventListener("gesturestart", (e) => e.preventDefault());
