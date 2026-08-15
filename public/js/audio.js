@@ -57,6 +57,46 @@ export class Sound {
   setMuted(m) {
     this.muted = m;
     if (this.master) this.master.gain.value = m ? 0 : 0.9;
+    // speech does not go through the master gain, so muting has to reach it
+    // by hand — otherwise the story keeps talking over a silenced game
+    if (m) this.hush();
+  }
+
+  /* ------------------------------------------------- reading out loud -- */
+
+  /**
+   * Say a few lines out loud, in the browser's own voice.
+   *
+   * The player this is built for is three, and the story card is three
+   * paragraphs of grey text she cannot read (#255). Nothing is synthesised
+   * here — this is the one part of the audio stack that is not WebAudio, which
+   * is why mute is checked in this method rather than at a gain node, and why
+   * `hush()` exists at all: a queued utterance outlives the screen that asked
+   * for it and would go on talking over the next one.
+   *
+   * Speech needs the same user gesture WebAudio does, and every screen that
+   * calls this was reached by a tap. A browser with no `speechSynthesis` (or a
+   * muted one) is not an error: it gets the same silent card it has now.
+   */
+  read(lines) {
+    const synth = window.speechSynthesis;
+    if (!synth || this.muted) return false;
+    synth.cancel();
+    let said = false;
+    for (const line of lines) {
+      const text = String(line).replace(/\s+/g, " ").trim();
+      if (!text) continue;
+      const say = new SpeechSynthesisUtterance(text);
+      say.rate = 0.92;              // slower than default: it is being read to a child
+      say.pitch = 1.1;
+      synth.speak(say);
+      said = true;
+    }
+    return said;
+  }
+
+  hush() {
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
   }
 
   /* ------------------------------------------------------------ voices -- */

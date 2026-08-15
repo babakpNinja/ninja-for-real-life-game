@@ -47,6 +47,8 @@
               <button class="med-btn" id="btn-stats">Stats</button>
             </div>
           </div>
+          <p class="tap-hint">Tap anywhere to jump &middot; hold to float<br />
+          <button class="link-btn" id="btn-story">The story &rarr;</button></p>
           <p class="credits">Fan-made, unofficial and non-commercial. Bluey &copy; Ludo Studio Pty Ltd.</p>
         </div>
       </div>
@@ -61,7 +63,7 @@
        there (#284). -->
   <script>
     window.__earlyTap = null;
-    for (const id of ["btn-play", "btn-chapters", "btn-gallery", "btn-stats"]) {
+    for (const id of ["btn-play", "btn-story", "btn-chapters", "btn-gallery", "btn-stats"]) {
       const node = document.getElementById(id);
       if (node) node.addEventListener("click", () => {
         window.__earlyTap = id;

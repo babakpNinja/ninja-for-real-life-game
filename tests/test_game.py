@@ -521,6 +521,114 @@ def test_chapter_select_lists_five_chapters_with_four_locked(desktop):
     assert locked == 4, f"got {locked}"
 
 
+# --- the story, and getting past it (#255) -----------------------------------
+# The player this is built for is three. Between the menu and a moving dog there
+# used to be two taps and three paragraphs of grey text she cannot read, so the
+# card moved out of the way and learned to read itself out loud. These four say
+# both halves of that: nothing to read on the way in, and the story still there
+# — spoken — for whoever wants it.
+
+# Speech is stubbed rather than listened to: a headless browser has the API and
+# no voices, so `speak()` is a call that makes no sound and fires no events. What
+# is asserted is what the game asked for, which is the part the game controls.
+SPY_ON_SPEECH = """
+() => {
+  window.__said = [];
+  window.__hushes = 0;
+  const synth = window.speechSynthesis;
+  synth.speak = (u) => window.__said.push(u.text);
+  synth.cancel = () => { window.__hushes += 1; };
+}
+"""
+
+
+def test_play_puts_nothing_to_read_between_the_menu_and_the_game(own_page):
+    """The complaint itself: one tap, and the dog is moving."""
+    page = own_page
+    assert page.locator("p.story").count() == 0, "the menu is showing story text"
+    page.click("#btn-play")
+    page.wait_for_timeout(400)
+    assert page.evaluate("window.game.mode") == "playing", (
+        "▶ Play did not start a chapter")
+    assert page.locator("p.story").count() == 0, (
+        "there is still story text on screen after ▶ Play — it is a stop on the "
+        "way in again (#255)")
+    assert page.locator("#overlay").is_hidden(), "an overlay is still up over the game"
+    page.evaluate("() => window.game.stop()")
+
+
+def test_the_story_is_still_one_tap_away_and_still_leads_into_the_chapter(own_page):
+    """Moved, not deleted. The card is what the chapters mean to whoever reads
+    them, and it is reached from the menu and from chapter select."""
+    page = own_page
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-go")
+    assert "Keepy Uppy" in page.locator("h2").inner_text()
+    assert page.locator("p.story").count() >= 2, "the story text itself went missing"
+    page.click("#btn-go")
+    page.wait_for_timeout(400)
+    assert page.evaluate("window.game.mode") == "playing"
+    page.evaluate("() => window.game.stop()")
+
+
+def test_the_story_card_reads_itself_out_loud(own_page):
+    """The other half of the fix, and the one that serves the reason: a card
+    nobody in the room can read is worth nothing sitting there silently."""
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-go")
+    said = page.evaluate("() => window.__said")
+    assert said, "the story card said nothing out loud"
+    shown = [t.strip() for t in page.locator("p.story, p.joke").all_inner_texts()]
+    spoken = " ".join(said)
+    assert "Keepy Uppy" in spoken, f"the chapter was never named: {said}"
+    missing = [t for t in shown if t and t not in spoken]
+    assert not missing, f"on the card and never read out: {missing}"
+    # a queued utterance outlives the screen that asked for it. Counted from
+    # *here*, not from zero: `read()` clears the queue before it starts talking,
+    # so a card that has been opened has already hushed once and `>= 1` would be
+    # true whatever leaving the card does
+    hushed = page.evaluate("() => window.__hushes")
+    page.click("#btn-go")
+    page.wait_for_timeout(300)
+    assert page.evaluate("() => window.__hushes") > hushed, (
+        "leaving the card left the story talking over the chapter")
+    page.evaluate("() => window.game.stop()")
+
+
+def test_a_muted_game_reads_nothing_out_loud(own_page):
+    """The speaker button is on the HUD and means the whole game, speech
+    included — speech does not go through the mixer, so muting has to reach it
+    by hand."""
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    # the HUD is hidden on the menu; this is still its own listener, clicked
+    page.evaluate("() => document.getElementById('btn-mute').click()")
+    assert page.evaluate("() => document.getElementById('btn-mute').textContent") == "🔇"
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-go")
+    assert page.evaluate("() => window.__said") == [], (
+        "a muted game read the story out loud anyway")
+    page.evaluate("() => document.getElementById('btn-mute').click()")
+
+
+def test_muting_while_the_story_is_being_read_stops_it(own_page):
+    """Mute is pressed *because* something is talking, and the thing talking is
+    the one sound in the game that is not on the mixer — silencing the master
+    gain leaves the story reading on over a quiet game."""
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-go")
+    assert page.evaluate("() => window.__said"), "nothing was being read to interrupt"
+    before = page.evaluate("() => window.__hushes")
+    page.evaluate("() => document.getElementById('btn-mute').click()")
+    assert page.evaluate("() => window.__hushes") > before, (
+        "the mute button silenced the game and left the story talking")
+    page.evaluate("() => document.getElementById('btn-mute').click()")
+
+
 def test_the_gallery_shows_every_character_with_a_bio(desktop):
     desktop.click("#btn-gallery")
     desktop.wait_for_selector(".char-card")
@@ -567,14 +675,18 @@ def test_the_stats_screen_opens(desktop):
 
 @pytest.mark.leaves_a_game_running(reason="test_tapping_the_canvas_makes_the_player_jump "
                                           "jumps the player this starts")
-def test_the_story_card_leads_into_chapter_one(desktop):
+def test_play_leads_straight_into_chapter_one(desktop):
+    """One tap from the menu to a moving dog (#255).
+
+    This used to go via the story card and assert its heading, and the player it
+    is for is three: three paragraphs she cannot read stood between ▶ Play and
+    the game. The card is still there — the test below opens it — it is just no
+    longer the gate."""
     desktop.click("#btn-play")
-    desktop.wait_for_selector("#btn-go")
-    assert "Keepy Uppy" in desktop.locator("h2").inner_text()
-    desktop.click("#btn-go")
     desktop.wait_for_timeout(500)
     assert desktop.locator("#hud").is_visible()
     assert desktop.evaluate("window.game.mode") == "playing"
+    assert desktop.evaluate("window.game.ch.title") == "Keepy Uppy"
 
 
 @pytest.mark.leaves_a_game_running(reason="test_the_score_climbs_while_the_level_runs "
@@ -3991,8 +4103,6 @@ def test_the_rotate_pill_never_covers_the_progress_bar(make_page):
             "the pill is already gone before the chapter starts, so this test "
             "would pass without the game doing anything about it")
         page.click("#btn-play")
-        page.wait_for_selector("#btn-go")
-        page.click("#btn-go")
         page.wait_for_timeout(400)
         assert page.evaluate("window.game.mode") == "playing"
 
@@ -4142,8 +4252,6 @@ def test_nothing_on_the_hud_sits_on_top_of_anything_else(make_page, viewport, to
     page = make_page(viewport, touch=touch)
     try:
         page.click("#btn-play")
-        page.wait_for_selector("#btn-go")
-        page.click("#btn-go")
         page.wait_for_timeout(400)
         assert page.evaluate("window.game.mode") == "playing", (
             f"{screen}: never got into a chapter, so there is no HUD to measure")
@@ -4233,8 +4341,8 @@ MAY_SCROLL = {
     "characters": "one card per character, and the cast only grows",
     "a character's bio": "a portrait, a personality, a fun fact and the artwork source",
     "chapter select": "one card per chapter",
-    "the story card": "three paragraphs and a joke — #255 is about whether that is "
-                      "right, but it is deliberate today",
+    "the story card": "three paragraphs and a joke, read out loud — it is a page "
+                      "of story by design, and since #255 nothing is behind it",
     "results": "a stats table, the outro and four buttons",
     "stats": "a row per chapter",
 }
@@ -4244,8 +4352,8 @@ def overlay_screens(page):
     """Walk the overlay screens the way a player reaches them, naming each.
 
     A generator rather than a table of selectors because getting to a screen *is*
-    the navigation — the story card is behind Play, the results are behind a
-    chapter played to the end — and a table would either duplicate that or hide
+    the navigation — the story card is behind the menu's story link, the results
+    are behind a chapter played to the end — and a table would either duplicate that or hide
     it behind a lambda. It yields between screens, so the test measures each one
     while it is up and a failure names it.
     """
@@ -4279,8 +4387,8 @@ def overlay_screens(page):
     yield "about & credits"
 
     page.click("#btn-back")
-    page.wait_for_selector("#btn-play")
-    page.click("#btn-play")
+    page.wait_for_selector("#btn-story")
+    page.click("#btn-story")
     page.wait_for_selector("#btn-go")
     yield "the story card"
 
@@ -4804,8 +4912,6 @@ def test_the_pill_rule_notices_the_pill_back_over_the_way_out(make_page):
                                           "this starts, and stops it afterwards")
 def test_it_plays_on_touch(phone):
     phone.click("#btn-play")
-    phone.wait_for_selector("#btn-go")
-    phone.click("#btn-go")
     phone.wait_for_timeout(400)
     assert phone.evaluate("window.game.mode") == "playing"
     assert phone.evaluate("window.game && !!document.querySelector('canvas')")
@@ -5181,8 +5287,11 @@ SLOW_NET = {"offline": False, "latency": 700,
 # What each dead button should turn out to have done. The menu is the only screen
 # with an `h1.title`; every screen behind these buttons has an `h2`, so the
 # heading is how the test says "the tap was honoured" without knowing the shapes.
+# ▶ Play is the exception since #255: it opens no screen at all, it starts the
+# chapter, so what it left behind is a running game (`heading` of None).
 EARLY_TAPS = [
-    ("btn-play", "Chapter 1"),
+    ("btn-play", None),
+    ("btn-story", "Chapter 1"),
     ("btn-gallery", "Everyone you'll meet"),
     ("btn-stats", "Stats"),
 ]
@@ -5230,11 +5339,19 @@ def test_a_tap_before_boot_finishes_is_not_lost(browser, base_url, button, headi
             f"tells the player it was heard")
 
         page.wait_for_function("window.__ready === true", timeout=20000)
-        page.wait_for_selector("#overlay h2", timeout=5000)
-        got = page.text_content("#overlay h2")
-        assert heading in got, (
-            f"tapping {button} before boot finished left {got!r} on the screen — "
-            f"the tap was swallowed (#284)")
+        if heading is None:
+            with contextlib.suppress(PlaywrightTimeout):
+                page.wait_for_function(
+                    "() => window.game && window.game.mode === 'playing'", timeout=5000)
+            assert page.evaluate("() => window.game && window.game.mode") == "playing", (
+                f"tapping {button} before boot finished left the menu up rather than a "
+                f"chapter — the tap was swallowed (#284)")
+        else:
+            page.wait_for_selector("#overlay h2", timeout=5000)
+            got = page.text_content("#overlay h2")
+            assert heading in got, (
+                f"tapping {button} before boot finished left {got!r} on the screen — "
+                f"the tap was swallowed (#284)")
     finally:
         # `window.game` is the canvas until the module names it: a page caught
         # mid-boot has an element there, not a Game
@@ -5285,8 +5402,6 @@ def test_a_toast_lands_on_the_picture_not_in_the_sky(make_page, viewport, touch,
     page = make_page(viewport, touch=touch)
     try:
         page.click("#btn-play")
-        page.wait_for_selector("#btn-go")
-        page.click("#btn-go")
         page.wait_for_timeout(400)
         assert page.evaluate("window.game.mode") == "playing", (
             f"{screen}: never got into a chapter, so there is no game to talk about")

@@ -129,6 +129,9 @@ function hideOverlay() {
   overlay.classList.add("hidden");
   stage.appendChild(hint);
   overlay.innerHTML = "";
+  // a queued utterance outlives the card that asked for it, and the screen it
+  // would talk over is the chapter (#255)
+  sound.hush();
 }
 
 function on(id, fn) {
@@ -194,6 +197,11 @@ function replayEarlyTap() {
 
 /* ------------------------------------------------------------------ menu -- */
 
+/** The chapter ▶ Play means: the furthest one unlocked, clamped to the last. */
+function currentChapter() {
+  return Math.min(save.unlocked, CHAPTERS.length - 1);
+}
+
 function menu() {
   if (game) game.stop();
   hud.classList.add("hidden");
@@ -210,13 +218,19 @@ function menu() {
         <button class="med-btn" id="btn-stats">Stats</button>
       </div>
     </div>
-    <p class="tap-hint">Tap anywhere to jump · hold to float</p>
+    <p class="tap-hint">Tap anywhere to jump · hold to float<br />
+    <button class="link-btn" id="btn-story">${resume ? "The story so far" : "The story"} →</button></p>
     <p class="credits">${noticeShort() || NOTICE_SHORT}<br />
     A personal project, not for sale.<br />
     <button class="link-btn" id="btn-credits">About &amp; credits →</button></p>
   `);
   drawMenuDogs();
-  on("btn-play", () => storyCard(Math.min(save.unlocked, CHAPTERS.length - 1)));
+  // straight into the chapter. It used to open the story card, so between the
+  // menu and a moving dog there were two taps and three paragraphs of reading —
+  // and the player this is for is three and cannot read them (#255). The story
+  // is one tap away below, and it is read out loud when it gets there.
+  on("btn-play", () => play(currentChapter()));
+  on("btn-story", () => storyCard(currentChapter()));
   on("btn-chapters", chapterSelect);
   on("btn-gallery", gallery);
   on("btn-stats", stats);
@@ -324,7 +338,7 @@ function chapterSelect() {
 
 /* ------------------------------------------------------------ story card -- */
 
-function storyCard(index) {
+function storyCard(index, { speak = true } = {}) {
   const ch = CHAPTERS[index];
   const hero = characters.find((c) => c.id === ch.hero);
   // fetch this chapter's cast while the story is being read, so the cameo is
@@ -346,14 +360,24 @@ function storyCard(index) {
   `);
   const node = overlay.querySelector("#story-dog canvas");
   if (node && hero) portrait(node, hero, "cheer");
+  // read to whoever is holding the phone, because the reason this card is no
+  // longer in the way of ▶ Play is that they cannot read it (#255)
+  if (speak) sound.read([`Chapter ${ch.n}. ${ch.title}.`, ...ch.story, ch.joke]);
   on("btn-go", () => play(index));
-  on("btn-auto", () => { save.walk = !save.walk; store(); storyCard(index); });
+  // re-rendered for a one-word label change, so it does not start the story
+  // over from the top halfway through hearing it
+  on("btn-auto", () => { save.walk = !save.walk; store(); storyCard(index, { speak: false }); });
   on("btn-back", menu);
 }
 
 /* ------------------------------------------------------------------ play -- */
 
 function play(index) {
+  // the story card used to do this on the way past, and ▶ Play no longer goes
+  // through it: without it the hero and the cameo are drawn as the fallback dog
+  // for the first second of the chapter (#255)
+  const ch = CHAPTERS[index];
+  if (ch) preload([ch.hero, ch.cameo].filter(Boolean));
   hideOverlay();
   rotateHint(false);        // the bottom of the screen belongs to the HUD now (#252)
   hud.classList.remove("hidden");
@@ -443,8 +467,11 @@ function results(r) {
       </div>
     </div>
   `, { transparent: true });
-  on("btn-next", () => storyCard(next));
-  on("btn-again", () => storyCard(0));
+  // the same gate as the menu's, and reached by a player who has just finished a
+  // chapter and wants the next one: straight in, and the story is still one tap
+  // away under Chapters (#255)
+  on("btn-next", () => play(next));
+  on("btn-again", () => play(0));
   on("btn-retry", () => play(r.chapter));
   on("btn-chapters", chapterSelect);
   on("btn-back", menu);
