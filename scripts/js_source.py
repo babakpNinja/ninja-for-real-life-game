@@ -91,6 +91,45 @@ def function_body(src: str, name: str) -> str:
     return m.group(0)
 
 
+def object_block(src: str, name: str) -> str:
+    """The text between the braces of `const name = { ... }`, comments blanked.
+
+    `object_literal` reads flat `key: "value"` tables; this one is for tables
+    whose entries are themselves objects (the themes in `audio.js`, each with a
+    tempo and a written motif), where a non-greedy `\\{(.*?)\\};` stops at the
+    first inner `}` and reports a table with one entry in it.
+
+    Braces are matched by depth, skipping string literals, so a `{` inside a
+    quoted string does not open a level that never closes.
+    """
+    code = code_only(src)
+    m = re.search(r"const " + re.escape(name) + r"\s*=\s*\{", code)
+    if not m:
+        raise ValueError(
+            f"no `const {name} = {{` in this source, so the table it holds was read as "
+            "empty rather than reported as missing")
+    depth, i, n = 0, m.end() - 1, len(code)
+    quote: str | None = None
+    while i < n:
+        c = code[i]
+        if quote is not None:
+            if c == "\\":
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+        elif c in QUOTES:
+            quote = c
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return code[m.end():i]
+        i += 1
+    raise ValueError(f"`const {name} = {{` is never closed")
+
+
 def object_literal(src: str, name: str) -> dict[str, str]:
     """`const name = { key: "value", ... };` as a dict, comments blanked.
 

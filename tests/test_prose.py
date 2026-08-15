@@ -23,7 +23,7 @@ import pytest
 APP = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(APP / "scripts"))
-from js_source import code_only, function_body, object_literal  # noqa: E402
+from js_source import code_only, function_body, object_block, object_literal  # noqa: E402
 
 SCRIPTS = [
     ("fetch_assets.py", "the artwork is credited and the notice has not drifted"),
@@ -1197,6 +1197,24 @@ def test_a_function_body_stops_at_its_own_closing_brace():
     assert len(body) < len(src) / 2, (
         f"poseFor's body is {len(body)} of {len(src)} characters, which is not a "
         "function — it is most of the file")
+
+
+def test_a_nested_table_is_read_whole_and_not_to_its_first_inner_brace():
+    """`object_block` exists because the non-greedy `\\{(.*?)\\};` that reads a
+    flat table stops at the first `}` — on `audio.js`'s themes, whose entries
+    are themselves objects, that is one entry of six, and a check over it would
+    pass by only ever looking at `menu`."""
+    src = (APP / "public" / "js" / "audio.js").read_text()
+    block = object_block(src, "themes")
+    assert block.count("motif:") == 6, f"read {block.count('motif:')} motifs, not six"
+    assert "sleepytime" in block, "the read stopped before the last theme"
+    assert "playTheme" not in block.replace("themes[name]", ""), "the read ran past the table"
+    quoted = object_block('const t = { a: { b: "{" }, c: { d: 1 } };\n', "t")
+    assert "c:" in quoted, f"a brace inside a string opened a level that never closed: {quoted!r}"
+    with pytest.raises(ValueError, match="THEMES"):
+        object_block("const other = { a: 1 };\n", "THEMES")
+    with pytest.raises(ValueError, match="never closed"):
+        object_block("const t = { a: { b: 1 };\n", "t")
 
 
 def test_a_region_that_is_not_there_is_reported_rather_than_read_as_empty():

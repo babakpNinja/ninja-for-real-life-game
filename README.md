@@ -30,7 +30,9 @@ artwork and would rather it were not here, it comes down — open an issue.
 
 Everything else is original: the props, the backdrops and the parallax are drawn
 from scratch on a `<canvas>` at runtime, and all music and sound effects are
-synthesised in the browser with the WebAudio API.
+synthesised in the browser with the WebAudio API — each chapter has its own
+written melody, every note is drawn a little off the pitch and a little off the
+beat, and everything decays into one small room.
 
 ## The game
 
@@ -264,7 +266,10 @@ public/data/rigs.json            neck/hip/leg pivots per character
 scripts/fetch_assets.py  fetches the artwork and writes the credits file
 scripts/build_rigs.py    derives the rigs, with hand-measured overrides
 scripts/shots.py         walks the screens and writes shots/
+scripts/render_audio.py  renders every cue offline to WAV and measures it
+scripts/audio_metrics.py attack, brightness, fizz — the numbers the audio suite asserts
 tests/test_game.py      end-to-end suite (pytest, --base-url)
 tests/test_prose.py     runs the --check scripts, and proves the pixel half can fail
+tests/test_audio.py     what the game sounds like: renders the cues and bounds them
 tests/conftest.py       browser + page fixtures
 ```
