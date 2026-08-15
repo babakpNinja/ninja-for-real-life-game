@@ -4425,6 +4425,8 @@ ACTION_BLOCK = """
              top: r.top, bottom: r.bottom, left: r.left, right: r.right,
              width: r.width, height: r.height };
   };
+  const panel = document.querySelector(sels.panel);
+  const high = (n) => (n ? n.getBoundingClientRect().height : 0);
   return {
     block: box(a),
     buttons: [...a.querySelectorAll('button')].map(box),
@@ -4433,10 +4435,42 @@ ACTION_BLOCK = """
     inTheScrollingPart: a.closest(sels.body) !== null,
     over: body ? body.scrollHeight - body.clientHeight : 0,
     scrollTop: body ? body.scrollTop : 0,
+    // the three heights the split is made of: what a player reads through, what
+    // the pinning costs, and the whole thing it is divided out of (#274)
+    bodyHigh: high(body), footHigh: high(panel && panel.querySelector(':scope > .panel-foot')),
+    panelHigh: high(panel),
     view: { w: window.innerWidth, h: window.innerHeight },
   };
 }
 """
+
+# The share of the panel that has to be left for reading through. Pinning the
+# buttons is paid for out of the body (#269): put four buttons and a paragraph of
+# fine print under a list and the list is read through a slot. Half is not a
+# guess about taste — it is the point where the screen is more chrome than screen,
+# and the worst real case today is the results on a 844x390 phone at 224/367 =
+# 61%, so there is room before an honest layout trips it.
+PEEPHOLE = 0.5
+
+
+def peephole(m) -> str:
+    """Why this screen is being read through a slot, or "".
+
+    Only asked of a screen with something hidden below the fold. A menu is
+    mostly buttons and that is what a menu is: measured across 9 screens x 4
+    viewports, every screen whose foot outweighs its body has nothing hidden at
+    all (`over` 0), so a bare `body >= foot` would fail eight screens a player
+    can see all of. What cannot be right is a screen that *does* continue past
+    the fold and gives the continuation less than half the panel (#274).
+    """
+    if m["over"] <= 1 or m["panelHigh"] <= 0:
+        return ""
+    share = m["bodyHigh"] / m["panelHigh"]
+    if share >= PEEPHOLE:
+        return ""
+    return (f"{m['bodyHigh']:.0f}px of a {m['panelHigh']:.0f}px panel is left to read "
+            f"through ({share:.0%}, floor {PEEPHOLE:.0%}) with {m['over']:.0f}px still "
+            f"below the fold — the buttons pinned under it take {m['footHigh']:.0f}px")
 
 
 @pytest.mark.parametrize("viewport,touch,screen", SCREENS, ids=SCREEN_IDS)
@@ -4459,7 +4493,8 @@ def test_the_buttons_that_end_a_screen_are_on_the_screen(make_page, viewport, to
     try:
         for name in overlay_screens(page):
             where = f"{screen}, {name}"
-            found = page.evaluate(ACTION_BLOCK, {"actions": ACTIONS, "body": SCROLLER})
+            found = page.evaluate(ACTION_BLOCK,
+                                  {"actions": ACTIONS, "body": SCROLLER, "panel": PANEL})
             assert found, (
                 f"{where}: no block of buttons on this screen at all — every screen "
                 f"ends in one, and a screen that has lost its way out is what this "
@@ -4483,16 +4518,68 @@ def test_the_buttons_that_end_a_screen_are_on_the_screen(make_page, viewport, to
                     f"arrival, and nothing on the screen says to scroll for it")
             if found["over"] > 1:
                 needed_it.append(f"{name} (+{found['over']:.0f}px)")
+                assert not (slot := peephole(found)), (
+                    f"{where}: {slot}. Pinning the way out is worth doing, but not at "
+                    f"this price — what is left of the screen is a slot")
             measured.append(name)
     finally:
         page.evaluate("() => window.game && window.game.stop()")
         page.context.close()
     assert len(measured) == 9, f"only measured {measured}"
     # a screen shorter than the window would pass this without the pinning doing
-    # anything, so at least one has to have been the hard case
+    # anything, so at least one has to have been the hard case — and the same
+    # screens are the only ones the peephole rule is asked about, so an empty
+    # list means that rule ran nowhere either
     assert needed_it, (
         f"no screen on {screen} was taller than its window ({len(measured)} measured), "
         f"so nothing here checked what happens when one is")
+
+
+def test_the_peephole_rule_notices_a_screen_squeezed_to_a_slot(make_page):
+    """Prove the rule above can go red, by building the failure it is about.
+
+    No screen ships in that state — the tightest is 61% of the panel — so left
+    alone the peephole rule is a line nothing in the app can currently falsify,
+    which reads exactly like a rule that works. So the state is built here on the
+    real page: the characters screen on a phone held sideways has 543px below the
+    fold, and a fat block dropped into the pinned foot is what a fourth button and
+    a paragraph of fine print would do to it (#274).
+    """
+    page = make_page({"width": 844, "height": 390}, touch=True)
+    try:
+        page.wait_for_selector("#btn-gallery")
+        page.click("#btn-gallery")
+        page.wait_for_selector(".char-card")
+        sels = {"actions": ACTIONS, "body": SCROLLER, "panel": PANEL}
+
+        before = page.evaluate(ACTION_BLOCK, sels)
+        assert before["over"] > 1, (
+            f"the characters screen fits this window ({before['over']:.0f}px over), so "
+            f"the rule would not be asked about it either way and this drill proves "
+            f"nothing")
+        assert not peephole(before), (
+            f"the drill starts from a screen that already fails: {peephole(before)}")
+
+        page.evaluate(
+            """(sel) => {
+              const fat = document.createElement('div');
+              fat.style.height = '250px';
+              document.querySelector(sel).appendChild(fat);
+            }""", f"{PANEL} > .panel-foot")
+        page.wait_for_timeout(120)
+
+        after = page.evaluate(ACTION_BLOCK, sels)
+        assert after["over"] > 1, (
+            f"the squeezed screen stopped having anything below the fold "
+            f"({after['over']:.0f}px), so it is not the failure this is about")
+        assert (said := peephole(after)), (
+            f"250px of pinned block took the body from {before['bodyHigh']:.0f}px to "
+            f"{after['bodyHigh']:.0f}px of a {after['panelHigh']:.0f}px panel and the "
+            f"rule said nothing")
+        assert f"{PEEPHOLE:.0%}" in said and "below the fold" in said, (
+            f"the complaint does not say what the floor was or what is hidden: {said}")
+    finally:
+        page.context.close()
 
 
 @pytest.mark.leaves_a_game_running(reason="test_a_tap_jumps_on_touch taps the player "
