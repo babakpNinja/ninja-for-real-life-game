@@ -193,6 +193,12 @@ PARTS: dict[str, dict] = {
     },
     # Below here the boxes were proposed by `--suggest` and then looked at, one
     # character at a time, on the contact sheet and in a rendered blink (#139).
+    # The pale fan at Socks' right hip, with a tan wedge where it joins her, is
+    # her tail — every official upright render of her draws it that way
+    # (Socks.png, Socks-Standing, Socks-Official Profile, Socks Website2), and
+    # the tan is her own marking rather than a colour borrowed from Chilli. #253
+    # read it as an orange spare limb; the rig adds nothing to it, and it roots
+    # on top of her hind paw, so it stays unboxed like Muffin's.
     "socks": {
         "ears": [
             {"box": [0.083, 0.0, 0.346, 0.186], "pivot": [0.212, 0.186]},
