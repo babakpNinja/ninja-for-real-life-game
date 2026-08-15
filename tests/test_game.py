@@ -4022,12 +4022,12 @@ SCREENS = [
     ({"width": 1024, "height": 420}, False, "laptop, short window"),
 ]
 
-# The same names with no spaces in them. A parametrised id is how one case is
-# named on a command line — `pytest 'file::test[phone sideways]'`, and
-# `mutate --prove-with`, which splits what it is given on whitespace — so an id
-# with a space in it is a case that cannot be re-run on its own. The readable
-# name is still what the failures say; this is only the handle.
-SCREEN_IDS = [name.replace(", ", "-").replace(" ", "-") for _, _, name in SCREENS]
+# A parametrised id is how one case is named on a command line, so it is worth
+# keeping readable: `pytest 'test_game.py::test_x[phone sideways]'`. These were
+# hyphenated for a while because `mutate --prove-with` split what it was given on
+# whitespace and re-ran half an id (#270); it carries a list now, so the names
+# the failures use and the names the command line uses are the same again.
+SCREEN_IDS = [name for _, _, name in SCREENS]
 
 # The longest thing the game ever says, taken from the engine rather than
 # retyped: a toast is furniture too, and the widest one is the one that would
