@@ -276,6 +276,31 @@ table.stats td:last-child, table.stats th:last-child { text-align: right; }
 /* the tap-to-play nudge on the very first screen */
 .tap-hint { font-size: clamp(13px, 2.4vw, 18px); color: #7A8894; margin-top: 6px; }
 
+/* ------------------------------------------------------- a short window -- */
+
+/*
+ * A phone held sideways is about 390px tall — and sideways is the way the game
+ * asks to be held. At the full-size rhythm the menu came to 589px: the Play
+ * button was cut in half by the bottom of the screen and Chapters, Characters
+ * and Stats were below the fold entirely, reachable only by scrolling a panel
+ * that gives no sign it scrolls (#266). Every measurement here is vertical —
+ * type and spacing tighten, nothing narrows — and no button drops under the
+ * 44px tap floor.
+ */
+@media (max-height: 560px) {
+  .panel { padding: 10px 16px; border-radius: 20px; }
+  .title { font-size: clamp(26px, 5vw, 40px); }
+  .subtitle { margin: 2px 0 6px; font-size: clamp(12px, 2vw, 15px); }
+  h2 { font-size: clamp(19px, 3.4vw, 26px); margin: 2px 0 6px; }
+  #menu-dogs { height: clamp(54px, 12vh, 80px); }
+  .big-btn { margin: 8px 0 6px; padding: 10px; font-size: clamp(18px, 3.4vw, 26px); }
+  .med-btn { padding: 10px 8px; }
+  .btn-row { gap: 8px; }
+  p.story { font-size: clamp(14px, 2.4vw, 18px); margin: 5px 0; }
+  .tap-hint { margin-top: 2px; font-size: 12px; }
+  .credits { margin: 6px 0 0; font-size: 11px; line-height: 1.35; }
+}
+
 /* ------------------------------------------------- credits & attribution -- */
 
 .link-btn {

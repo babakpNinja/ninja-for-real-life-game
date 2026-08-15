@@ -4022,6 +4022,13 @@ SCREENS = [
     ({"width": 1024, "height": 420}, False, "laptop, short window"),
 ]
 
+# The same names with no spaces in them. A parametrised id is how one case is
+# named on a command line — `pytest 'file::test[phone sideways]'`, and
+# `mutate --prove-with`, which splits what it is given on whitespace — so an id
+# with a space in it is a case that cannot be re-run on its own. The readable
+# name is still what the failures say; this is only the handle.
+SCREEN_IDS = [name.replace(", ", "-").replace(" ", "-") for _, _, name in SCREENS]
+
 # The longest thing the game ever says, taken from the engine rather than
 # retyped: a toast is furniture too, and the widest one is the one that would
 # reach the pills. The interpolated ones (`${c.name} says g'day!`) are not
@@ -4035,7 +4042,7 @@ TOASTS = re.findall(r'this\.toast\("([^"]+)"\)', (APP / "public" / "js" / "game.
 # other. #game is the world (everything is over it, on purpose) and #overlay is
 # a full-screen screen (it is meant to cover the lot), so the walk skips both.
 FURNITURE = """
-() => {
+(rootSelector) => {
   const alphaOf = (colour) => {
     const parts = colour.match(/[\\d.]+/g) || [];
     return parts.length > 3 ? parseFloat(parts[3]) : 1;
@@ -4055,6 +4062,8 @@ FURNITURE = """
         seen.push({
           what: kid.id || kid.className || kid.tagName.toLowerCase(),
           text: kid.textContent.trim().slice(0, 20),
+          tag: kid.tagName.toLowerCase(),
+          classes: typeof kid.className === 'string' ? kid.className : '',
           tappable: kid.tagName === 'BUTTON' || cs.cursor === 'pointer',
           left: b.left, right: b.right, top: b.top, bottom: b.bottom,
           width: b.width, height: b.height,
@@ -4064,7 +4073,9 @@ FURNITURE = """
       }
     }
   };
-  walk(document.getElementById('stage'));
+  const root = document.querySelector(rootSelector);
+  if (!root) throw new Error('nothing matched ' + rootSelector + ', so there is nothing to measure');
+  walk(root);
   return { seen, view: { w: window.innerWidth, h: window.innerHeight } };
 }
 """
@@ -4079,7 +4090,7 @@ TAP_TARGET = 44
 ALLOWED_TO_OVERLAP: dict[frozenset, str] = {}
 
 
-@pytest.mark.parametrize("viewport,touch,screen", SCREENS, ids=[s[2] for s in SCREENS])
+@pytest.mark.parametrize("viewport,touch,screen", SCREENS, ids=SCREEN_IDS)
 def test_nothing_on_the_hud_sits_on_top_of_anything_else(make_page, viewport, touch, screen):
     """The class #252 belongs to: chrome covering the thing it sits next to.
 
@@ -4107,7 +4118,7 @@ def test_nothing_on_the_hud_sits_on_top_of_anything_else(make_page, viewport, to
                       max(TOASTS, key=len))
         page.wait_for_timeout(300)
 
-        found = page.evaluate(FURNITURE)
+        found = page.evaluate(FURNITURE, "#stage")
         seen, view = found["seen"], found["view"]
         names = sorted(item["what"] for item in seen)
         assert len(seen) >= 5, (
@@ -4141,6 +4152,215 @@ def test_nothing_on_the_hud_sits_on_top_of_anything_else(make_page, viewport, to
     finally:
         page.evaluate("() => window.game && window.game.stop()")
         page.context.close()
+
+
+# --- and the screens all the words are on (#266) ------------------------------
+
+# Rooted at the panel rather than the stage. An overlay covering the game is its
+# whole job, so a check run over the stage has to exempt it — root the walk
+# inside the panel and "the screen covers the game" is true by construction,
+# leaving the three failures that are really about the screen: things inside it
+# on top of each other, the panel running off a short window, and the buttons a
+# player presses first being too small to hit.
+PANEL = "#overlay .panel"
+
+# The floor under the walk. Every one of these screens is a heading, some words
+# and a way back; finding fewer than four things means the walk went wrong, and
+# then every rule below it is being asked about nothing (#258).
+MIN_THINGS = 4
+
+# Text links inside a sentence, exempt from the 44px floor and saying why.
+# WCAG 2.5.5 exempts a target that is "in a sentence or block of text" for
+# exactly this reason: the only way to make an inline link 44px tall is to stop
+# it being inline, and the sentence is what makes it make sense.
+INLINE_TEXT_LINKS = {
+    "a": "a link inside a sentence — the credits list and the artwork sources",
+    "link-btn": "'About & credits →' is the last line of the menu's fine print",
+}
+
+
+def inline_text_link(item) -> str:
+    """Why this tappable thing is exempt from the 44px floor, or "".
+
+    Matched on the tag and the class, not on the id: `btn-credits` and
+    `btn-back` are ids given to particular buttons, and an exemption keyed on
+    one of those exempts *that button*, not the kind of thing it is. The next
+    inline link would be added silently.
+    """
+    tokens = {item["tag"], *item["classes"].split()}
+    return next((why for token, why in INLINE_TEXT_LINKS.items() if token in tokens), "")
+
+# A screen allowed to be taller than the window, and why. Anything not named
+# here has to fit: a panel that overflows without meaning to is the one that
+# hides its own Play button. The named ones still have to be *reachable* —
+# scrolled to the bottom, the lowest thing on them is on screen.
+MAY_SCROLL = {
+    "about & credits": "five links, a takedown offer and the full non-affiliation "
+                       "notice — it is a page of small print by design",
+    "characters": "one card per character, and the cast only grows",
+    "a character's bio": "a portrait, a personality, a fun fact and the artwork source",
+    "chapter select": "one card per chapter",
+    "the story card": "three paragraphs and a joke — #255 is about whether that is "
+                      "right, but it is deliberate today",
+    "results": "a stats table, the outro and four buttons",
+    "stats": "a row per chapter",
+}
+
+
+def overlay_screens(page):
+    """Walk the overlay screens the way a player reaches them, naming each.
+
+    A generator rather than a table of selectors because getting to a screen *is*
+    the navigation — the story card is behind Play, the results are behind a
+    chapter played to the end — and a table would either duplicate that or hide
+    it behind a lambda. It yields between screens, so the test measures each one
+    while it is up and a failure names it.
+    """
+    page.wait_for_selector("#btn-play")
+    yield "menu"
+
+    page.click("#btn-chapters")
+    page.wait_for_selector(".chapter-card")
+    yield "chapter select"
+
+    page.click("#btn-back")
+    page.wait_for_selector("#btn-gallery")
+    page.click("#btn-gallery")
+    page.wait_for_selector(".char-card")
+    yield "characters"
+
+    page.click(".char-card")
+    page.wait_for_selector("#btn-menu")
+    yield "a character's bio"
+
+    page.click("#btn-menu")
+    page.wait_for_selector("#btn-stats")
+    page.click("#btn-stats")
+    page.wait_for_selector("table.stats")
+    yield "stats"
+
+    page.click("#btn-back")
+    page.wait_for_selector("#btn-credits")
+    page.click("#btn-credits")
+    page.wait_for_selector(".credits-body")
+    yield "about & credits"
+
+    page.click("#btn-back")
+    page.wait_for_selector("#btn-play")
+    page.click("#btn-play")
+    page.wait_for_selector("#btn-go")
+    yield "the story card"
+
+    page.click("#btn-go")
+    page.wait_for_timeout(400)
+    page.click("#btn-pause")
+    page.wait_for_selector("#btn-resume")
+    yield "paused"
+
+    page.click("#btn-resume")
+    play_chapter(page, 0)
+    page.wait_for_selector(".stars-big")
+    yield "results"
+
+
+PANEL_FITS = """
+(sel) => {
+  const p = document.querySelector(sel);
+  return { over: p.scrollHeight - p.clientHeight, canScroll: /auto|scroll/.test(getComputedStyle(p).overflowY) };
+}
+"""
+
+
+@pytest.mark.parametrize("viewport,touch,screen", SCREENS, ids=SCREEN_IDS)
+def test_nothing_on_a_menu_sits_on_top_of_anything_else(make_page, viewport, touch, screen):
+    """#258 for the screens with the words on them, which is nearly all of them.
+
+    The HUD is five things; the menus are the story, the chapter cards, the
+    character bios, the stats table, the credits and every button a player
+    presses before they ever see the game. Same walk, same three rules, rooted
+    at the panel — plus the one rule a panel has that the HUD does not: it has
+    to either fit the window or be scrollable to the bottom of itself.
+    """
+    page = make_page(viewport, touch=touch)
+    measured, scrolled = [], []
+    try:
+        for name in overlay_screens(page):
+            found = page.evaluate(FURNITURE, PANEL)
+            seen, view = found["seen"], found["view"]
+            where = f"{screen}, {name}"
+            names = sorted(item["what"] for item in seen)
+            assert len(seen) >= MIN_THINGS, (
+                f"{where}: only {len(seen)} things found on a screen that has a "
+                f"heading, some words and a way back: {names}")
+            assert any(item["tappable"] for item in seen), (
+                f"{where}: nothing tappable found, so the tap-target rule below "
+                f"is being asked about nothing: {names}")
+
+            for a, b in itertools.combinations(seen, 2):
+                why = ALLOWED_TO_OVERLAP.get(frozenset((a["what"], b["what"])))
+                area = overlap(a, b)
+                assert area == 0 or why, (
+                    f"{where}: {a['what']} ({a['text']!r}) covers {area:.0f}px2 of "
+                    f"{b['what']} ({b['text']!r}) — {a['what']} y "
+                    f"{a['top']:.0f}..{a['bottom']:.0f} x {a['left']:.0f}..{a['right']:.0f}, "
+                    f"{b['what']} y {b['top']:.0f}..{b['bottom']:.0f} x "
+                    f"{b['left']:.0f}..{b['right']:.0f}")
+
+            for item in seen:
+                assert item["left"] >= -0.5 and item["right"] <= view["w"] + 0.5, (
+                    f"{where}: {item['what']} ({item['text']!r}) runs off the side of a "
+                    f"{view['w']}x{view['h']} screen — x "
+                    f"{item['left']:.0f}..{item['right']:.0f}. Nothing here scrolls "
+                    f"sideways, so this is off the edge for good")
+
+            for item in seen:
+                if item["tappable"] and not inline_text_link(item):
+                    assert min(item["width"], item["height"]) >= TAP_TARGET, (
+                        f"{where}: {item['what']} ({item['text']!r}) is "
+                        f"{item['width']:.0f}x{item['height']:.0f} — under the "
+                        f"{TAP_TARGET}px a small finger needs to hit it")
+
+            fit = page.evaluate(PANEL_FITS, PANEL)
+            if fit["over"] > 1:
+                assert name in MAY_SCROLL, (
+                    f"{where}: the panel is {fit['over']:.0f}px taller than the "
+                    f"{view['h']}px window and this screen is not one of the ones "
+                    f"that may scroll — whatever is at the bottom of it (the Play "
+                    f"button, the way back) is off the screen")
+                assert fit["canScroll"], (
+                    f"{where}: the panel overflows by {fit['over']:.0f}px and cannot "
+                    f"be scrolled, so the bottom of it cannot be reached at all")
+                scrolled.append(name)
+                lowest = max(seen, key=lambda i: i["bottom"])
+                page.evaluate("(sel) => { const p = document.querySelector(sel); "
+                              "p.scrollTop = p.scrollHeight; }", PANEL)
+                page.wait_for_timeout(120)
+                bottom = page.evaluate(FURNITURE, PANEL)
+                last = max(bottom["seen"], key=lambda i: i["bottom"])
+                assert last["bottom"] <= view["h"] + 0.5, (
+                    f"{where}: scrolled all the way down, {last['what']} "
+                    f"({last['text']!r}) still ends at y {last['bottom']:.0f} on a "
+                    f"{view['h']}px screen — the bottom of this panel cannot be "
+                    f"reached (it was {lowest['what']} before scrolling)")
+            else:
+                for item in seen:
+                    assert item["top"] >= -0.5 and item["bottom"] <= view["h"] + 0.5, (
+                        f"{where}: the panel fits, but {item['what']} "
+                        f"({item['text']!r}) is at y {item['top']:.0f}.."
+                        f"{item['bottom']:.0f} on a {view['h']}px screen")
+            measured.append(name)
+    finally:
+        page.evaluate("() => window.game && window.game.stop()")
+        page.context.close()
+    # the itinerary is a generator: a click that silently stopped working ends
+    # it early, and a check that measured three screens would otherwise pass
+    assert len(measured) == 9, f"only measured {measured}"
+    # and the scrolling half is a branch, so it can quietly stop running: the
+    # gallery is taller than every window here, and if one day nothing overflows
+    # then MAY_SCROLL and the reachability rule are decoration
+    assert scrolled, ("no screen overflowed its window, so nothing checked that a "
+                      f"panel taller than the screen can be scrolled to the bottom "
+                      f"({screen}, {len(measured)} screens)")
 
 
 @pytest.mark.leaves_a_game_running(reason="test_a_tap_jumps_on_touch taps the player "
