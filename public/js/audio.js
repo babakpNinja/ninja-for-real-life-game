@@ -19,6 +19,10 @@ export class Sound {
     this.step = 0;
     this.theme = null;
     this.ready = false;
+    // which read() the utterances now in the queue belong to. cancel() makes the
+    // *previous* read end — as 'canceled'/'interrupted' — and its handlers would
+    // otherwise report that as the outcome of the read that replaced it (#290)
+    this.speechRun = 0;
   }
 
   unlock() {
@@ -78,6 +82,11 @@ export class Sound {
    * calls this was reached by a tap. A browser with no `speechSynthesis` (or a
    * muted one) is not an error: it gets the same silent card it has now.
    *
+   * Returns whether anything was queued, and answers `onend` or `onerror` at
+   * most once, for the read as a whole: the caller is a button that has to say
+   * what it is doing, and "reading" that never comes back is worse than silence
+   * (#290).
+   *
    * **No test here can hear this.** Measured in the suite's own browser
    * (headless Chromium 1217, 2026-08-15, #289):
    *
@@ -100,24 +109,42 @@ export class Sound {
    * pins the numbers above, so the day the environment gains a voice the suite
    * says so instead of quietly staying green over a stub.
    */
-  read(lines) {
+  read(lines, { onend, onerror } = {}) {
     const synth = window.speechSynthesis;
     if (!synth || this.muted) return false;
-    synth.cancel();
-    let said = false;
+    const texts = [];
     for (const line of lines) {
       const text = String(line).replace(/\s+/g, " ").trim();
-      if (!text) continue;
+      if (text) texts.push(text);
+    }
+    if (!texts.length) return false;
+    const run = ++this.speechRun;
+    synth.cancel();
+    // one answer per read, from whichever comes first: `onend` is asked of the
+    // last utterance only, because the caller wants the end of the *story*, not
+    // the end of its first paragraph
+    let answered = false;
+    const once = (fn) => (e) => {
+      if (answered || run !== this.speechRun || !fn) return;
+      answered = true;
+      fn(e);
+    };
+    texts.forEach((text, i) => {
       const say = new SpeechSynthesisUtterance(text);
       say.rate = 0.92;              // slower than default: it is being read to a child
       say.pitch = 1.1;
+      if (i === texts.length - 1) say.onend = once(onend);
+      // a device with the API and no usable voice answers 'synthesis-failed'
+      // here and nothing else ever happens — the one way to tell "it is talking"
+      // from "it will never talk" (#289)
+      say.onerror = once(onerror);
       synth.speak(say);
-      said = true;
-    }
-    return said;
+    });
+    return true;
   }
 
   hush() {
+    this.speechRun++;              // whatever is in the queue is no longer anyone's
     if (window.speechSynthesis) window.speechSynthesis.cancel();
   }
 

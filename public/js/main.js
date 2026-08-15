@@ -338,6 +338,32 @@ function chapterSelect() {
 
 /* ------------------------------------------------------------ story card -- */
 
+/**
+ * What the story card's speaker button says.
+ *
+ * The story is read once when the card opens and there is no way to hear it
+ * again, and nothing on screen says it is talking — so a read that never starts
+ * (muted, or a device with no voice) is indistinguishable from one still going
+ * (#290). Four states, all of them out loud:
+ *
+ *   reading  — the queue is being spoken
+ *   novoice  — the browser answered 'synthesis-failed' (see audio.js)
+ *   muted    — the sound is off; the button says so instead of doing nothing
+ *   idle     — tap it to hear the story again
+ */
+function readLabel(state) {
+  if (state === "reading") return "🔊 Reading…";
+  if (state === "novoice") return "🔇 No voice here";
+  return save.muted ? "🔇 Sound is off" : "🔊 Read it again";
+}
+
+// looked up rather than held: the card is re-rendered whole for Auto-run, and
+// the read that answers may outlive the button that started it
+function setReadLabel(state) {
+  const btn = document.getElementById("btn-read");
+  if (btn) btn.textContent = readLabel(state);
+}
+
 function storyCard(index, { speak = true } = {}) {
   const ch = CHAPTERS[index];
   const hero = characters.find((c) => c.id === ch.hero);
@@ -353,6 +379,7 @@ function storyCard(index, { speak = true } = {}) {
     <div class="actions">
       <button class="big-btn" id="btn-go">▶ Play as ${hero ? hero.name : "Bluey"}</button>
       <div class="btn-row">
+        <button class="med-btn" id="btn-read">${readLabel()}</button>
         <button class="med-btn" id="btn-auto">${save.walk ? "Auto-run: off" : "Auto-run: on"}</button>
         <button class="med-btn" id="btn-back">← Menu</button>
       </div>
@@ -362,7 +389,16 @@ function storyCard(index, { speak = true } = {}) {
   if (node && hero) portrait(node, hero, "cheer");
   // read to whoever is holding the phone, because the reason this card is no
   // longer in the way of ▶ Play is that they cannot read it (#255)
-  if (speak) sound.read([`Chapter ${ch.n}. ${ch.title}.`, ...ch.story, ch.joke]);
+  const lines = [`Chapter ${ch.n}. ${ch.title}.`, ...ch.story, ch.joke];
+  const readOut = () => {
+    const queued = sound.read(lines, {
+      onend: () => setReadLabel(),
+      onerror: () => setReadLabel("novoice"),
+    });
+    setReadLabel(queued ? "reading" : null);
+  };
+  if (speak) readOut();
+  on("btn-read", readOut);
   on("btn-go", () => play(index));
   // re-rendered for a one-word label change, so it does not start the story
   // over from the top halfway through hearing it
@@ -641,6 +677,9 @@ function wireInput() {
     sound.unlock();
     sound.setMuted(save.muted);
     el("btn-mute").textContent = save.muted ? "🔇" : "🔊";
+    // muting stops the story mid-sentence, so the card's speaker button is now
+    // describing a read that is over (#290)
+    setReadLabel();
   });
 
   // a phone held upright still plays, it just gets a nudge — on the way *into*
@@ -696,6 +735,10 @@ async function boot() {
   window.__ready = true;
 
   el("btn-mute").textContent = save.muted ? "🔇" : "🔊";
+  // the mixer was only told about a saved mute on the way into a chapter, and
+  // the story card is reached before that: a game saved muted read the story out
+  // loud on the first tap after a reload (#290)
+  sound.setMuted(!!save.muted);
   wireInput();
   menu();
   replayEarlyTap();          // whatever was pressed while this was loading (#284)

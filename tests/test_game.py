@@ -531,13 +531,26 @@ def test_chapter_select_lists_five_chapters_with_four_locked(desktop):
 # Speech is stubbed rather than listened to: a headless browser has the API and
 # no voices, so `speak()` is a call that makes no sound and fires no events. What
 # is asserted is what the game asked for, which is the part the game controls.
+#
+# The stub also *plays* the two endings a real voice has, because the button that
+# says what the game is doing is driven by them and nothing else here can produce
+# one: `__finish()` for the queue running out, `__fail()` for the
+# 'synthesis-failed' a device with no voice answers with (#289, #290).
 SPY_ON_SPEECH = """
 () => {
   window.__said = [];
   window.__hushes = 0;
+  window.__queued = [];
   const synth = window.speechSynthesis;
-  synth.speak = (u) => window.__said.push(u.text);
+  synth.speak = (u) => { window.__said.push(u.text); window.__queued.push(u); };
   synth.cancel = () => { window.__hushes += 1; };
+  const drain = (ev, arg, n) => {
+    const q = window.__queued.splice(0, n === undefined ? window.__queued.length : n);
+    q.forEach((u) => { if (u[ev]) u[ev](arg); });
+    return q.length;
+  };
+  window.__finish = (n) => drain("onend", {}, n);
+  window.__fail = (n) => drain("onerror", { error: "synthesis-failed" }, n);
 }
 """
 
@@ -626,6 +639,119 @@ def test_muting_while_the_story_is_being_read_stops_it(own_page):
     page.evaluate("() => document.getElementById('btn-mute').click()")
     assert page.evaluate("() => window.__hushes") > before, (
         "the mute button silenced the game and left the story talking")
+    page.evaluate("() => document.getElementById('btn-mute').click()")
+
+
+# --- hearing it again, and being told what is happening (#290) ---------------
+# The read above happens once, when the card opens, and there is nothing on the
+# card about it: a three-year-old who misses the start cannot ask for it back,
+# and a muted game answers the same way a talking one does — by looking exactly
+# like a card with a button that does nothing.
+
+
+def story_button(page):
+    return page.locator("#btn-read").inner_text().strip()
+
+
+def test_the_story_can_be_read_again_from_the_card(own_page):
+    """The replay itself: the same lines, asked for a second time."""
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-read")
+    first = page.evaluate("() => window.__said")
+    assert first, "the story card said nothing out loud"
+    page.evaluate("() => { window.__said = []; }")
+    page.click("#btn-read")
+    page.wait_for_timeout(200)
+    again = page.evaluate("() => window.__said")
+    assert again == first, (
+        f"tapping the speaker did not read the same story again:\n"
+        f"  first: {first}\n  again: {again}")
+    shown = [t.strip() for t in page.locator("p.story, p.joke").all_inner_texts()]
+    missing = [t for t in shown if t and t not in " ".join(again)]
+    assert not missing, f"on the card and not read out on the replay: {missing}"
+
+
+def test_the_speaker_says_it_is_reading_and_stops_saying_so_at_the_end(own_page):
+    """The state, both times it changes. `end` is the queue's, not the first
+    paragraph's — the label going back while three paragraphs are still to come
+    is the same lie as never going back."""
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-read")
+    assert story_button(page) == "🔊 Reading…", (
+        f"the card opened reading the story and the button said {story_button(page)!r}")
+    assert page.evaluate("() => window.__queued.length") > 1, (
+        "the story went out as one utterance — this test cannot tell the queue's "
+        "end from its first line any more")
+    assert page.evaluate("() => window.__finish(1)") == 1
+    assert story_button(page) == "🔊 Reading…", (
+        f"the button stopped saying it was reading after the first line, with the "
+        f"rest of the story still to come: {story_button(page)!r}")
+    assert page.evaluate("() => window.__finish()") > 0, "nothing was queued to finish"
+    assert story_button(page) == "🔊 Read it again", (
+        f"the story ended and the button still says {story_button(page)!r}")
+    page.click("#btn-read")
+    assert story_button(page) == "🔊 Reading…", "the replay said nothing about itself"
+    page.evaluate("() => window.__finish()")
+    assert story_button(page) == "🔊 Read it again"
+
+
+def test_a_device_with_no_voice_says_so_instead_of_reading_forever(own_page):
+    """The case #289 measured: the API is there, `speak()` returns, and the only
+    thing that ever happens is 'synthesis-failed'. A button left on "Reading…"
+    for the rest of the card is a worse answer than the silence it replaced."""
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-read")
+    assert page.evaluate("() => window.__fail()") > 0, "nothing was queued to fail"
+    assert story_button(page) == "🔇 No voice here", (
+        f"speech failed and the button says {story_button(page)!r}")
+
+
+def test_a_game_saved_muted_says_so_on_the_button_and_reads_nothing(own_page):
+    """The muted save, from the reload it survives — not from a mute pressed in
+    this session. The mixer was only told about a saved mute on the way into a
+    chapter, and the story card is reached first, so this card used to read
+    itself out loud on a game that had been silenced days ago."""
+    page = own_page
+    page.evaluate("() => localStorage.setItem('forreallife.save.v1',"
+                  " JSON.stringify({muted: true}))")
+    page.reload(wait_until="domcontentloaded")
+    page.wait_for_function("window.__ready === true", timeout=20000)
+    page.evaluate(SPY_ON_SPEECH)
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-read")
+    assert page.evaluate("() => window.__said") == [], (
+        "a game saved muted read the story out loud after a reload")
+    assert story_button(page) == "🔇 Sound is off", (
+        f"the muted card says {story_button(page)!r} — a speaker button that does "
+        f"nothing and does not say why")
+    page.click("#btn-read")
+    page.wait_for_timeout(200)
+    assert page.evaluate("() => window.__said") == []
+    assert story_button(page) == "🔇 Sound is off"
+
+
+def test_muting_mid_read_leaves_the_button_muted_not_broken(own_page):
+    """Mute cancels the queue, and a cancelled utterance ends with an error. It
+    belongs to the read that was silenced, not to the device: reporting it as
+    "no voice on this device" would libel a phone that speaks perfectly well."""
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-read")
+    assert story_button(page) == "🔊 Reading…"
+    page.evaluate("() => document.getElementById('btn-mute').click()")
+    assert story_button(page) == "🔇 Sound is off", (
+        f"muting mid-story left the button saying {story_button(page)!r}")
+    page.evaluate("() => window.__fail()")     # the cancelled utterances, arriving late
+    assert story_button(page) == "🔇 Sound is off", (
+        f"a cancelled read was reported as a device with no voice: "
+        f"{story_button(page)!r}")
     page.evaluate("() => document.getElementById('btn-mute').click()")
 
 
