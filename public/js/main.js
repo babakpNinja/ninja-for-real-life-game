@@ -176,6 +176,22 @@ function portrait(node, ch, state = "idle", facing = 1) {
   draw();
 }
 
+/* ------------------------------------------------- the tap before the menu -- */
+
+// index.html paints a real menu so there is something to look at while this
+// module and the artwork arrive — but `menu()` throws those buttons away and
+// re-renders them, and on mobile data the module itself is seconds behind the
+// markup. A tap in that window simply vanished (#284). The catcher therefore
+// cannot live here: it is inline in index.html, running the moment the buttons
+// exist, and it leaves the id in `window.__earlyTap` for this end of it.
+function replayEarlyTap() {
+  const id = window.__earlyTap;
+  window.__earlyTap = null;
+  // `menu()` has just rebuilt these, so this presses the *new* button with a
+  // live handler on it, not the dead one the player tapped
+  if (id && el(id)) el(id).click();
+}
+
 /* ------------------------------------------------------------------ menu -- */
 
 function menu() {
@@ -655,6 +671,7 @@ async function boot() {
   el("btn-mute").textContent = save.muted ? "🔇" : "🔊";
   wireInput();
   menu();
+  replayEarlyTap();          // whatever was pressed while this was loading (#284)
 }
 
 boot();

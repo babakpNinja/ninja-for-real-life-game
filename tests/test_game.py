@@ -25,6 +25,7 @@ import math
 import re
 import subprocess
 import sys
+import time
 import urllib.request
 import warnings
 from pathlib import Path
@@ -5161,6 +5162,86 @@ def test_the_scene_fills_the_screen_top_to_bottom(make_page, viewport, touch):
 
 def test_no_console_errors_on_touch(phone):
     assert not phone.errors, str(phone.errors[:3])
+
+
+# --- the tap that arrives before the game does (#284) -------------------------
+
+# Every other test in this file starts from `make_page`, which waits for
+# `window.__ready` — so the whole of boot is a place the suite cannot see. These
+# open their own page on purpose, on a slow connection: the window a player taps
+# in is the one where the markup has painted and the fetches have not landed, and
+# on a phone on mobile data it is seconds wide.
+#
+# Slowed with CDP rather than a held `page.route`, because a route handler that
+# sleeps blocks the same thread the test drives the page on — the whole delay
+# then elapses inside `wait_for_selector`, and the tap lands after boot.
+SLOW_NET = {"offline": False, "latency": 700,
+            "downloadThroughput": 500 * 1024, "uploadThroughput": 500 * 1024}
+
+# What each dead button should turn out to have done. The menu is the only screen
+# with an `h1.title`; every screen behind these buttons has an `h2`, so the
+# heading is how the test says "the tap was honoured" without knowing the shapes.
+EARLY_TAPS = [
+    ("btn-play", "Chapter 1"),
+    ("btn-gallery", "Everyone you'll meet"),
+    ("btn-stats", "Stats"),
+]
+
+
+@pytest.mark.parametrize("button,heading", EARLY_TAPS, ids=[b for b, _ in EARLY_TAPS])
+def test_a_tap_before_boot_finishes_is_not_lost(browser, base_url, button, heading):
+    """#284: ▶ Play visible at 0.35s on the live phone, and dead until 1.13s.
+
+    `index.html` ships a real menu so the page has something to show while
+    `main.js` fetches the cast and the artwork — but `menu()` re-renders those
+    buttons, and until it runs nothing is listening. A tap in that window went
+    nowhere: a full-size, perfectly ordinary ▶ Play that does not work.
+
+    So this taps in exactly that window — the first fetch is held open to make
+    it wide, and the tap is only counted if `window.__ready` is still false when
+    it lands — and asks for the screen the button names. It also asks that the
+    button *looked* pressed, because a second of silence after a tap is what
+    makes a kid tap again.
+    """
+    ctx = browser.new_context(viewport=IPHONE, has_touch=True, is_mobile=True,
+                              device_scale_factor=2)
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    try:
+        cdp = ctx.new_cdp_session(page)
+        cdp.send("Network.enable")
+        cdp.send("Network.emulateNetworkConditions", SLOW_NET)
+
+        page.goto(base_url + "/", wait_until="commit")
+        page.wait_for_selector(f"#{button}", state="visible", timeout=20000)
+        assert page.evaluate("() => window.__ready !== true"), (
+            f"boot finished before the {button} was even visible, so this tap is "
+            f"not the one #284 is about — slow SLOW_NET down further")
+
+        page.click(f"#{button}")
+        # the guard that keeps this honest: a tap that lands *after* boot is a
+        # tap on a live button, and would pass whatever the fix does
+        assert page.evaluate("() => window.__ready !== true"), (
+            f"boot finished while the {button} tap was being delivered — the "
+            f"window this measures was not open")
+        assert "waiting" in page.get_attribute(f"#{button}", "class"), (
+            f"{button} took the tap and looked exactly as it did before: nothing "
+            f"tells the player it was heard")
+
+        page.wait_for_function("window.__ready === true", timeout=20000)
+        page.wait_for_selector("#overlay h2", timeout=5000)
+        got = page.text_content("#overlay h2")
+        assert heading in got, (
+            f"tapping {button} before boot finished left {got!r} on the screen — "
+            f"the tap was swallowed (#284)")
+    finally:
+        # `window.game` is the canvas until the module names it: a page caught
+        # mid-boot has an element there, not a Game
+        page.evaluate("() => window.game instanceof Object && "
+                      "typeof window.game.stop === 'function' && window.game.stop()")
+        ctx.close()
+    assert not errors, str(errors[:3])
 
 
 # --- and the words about the picture, over the picture (#254) -----------------

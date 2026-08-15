@@ -53,6 +53,22 @@
     </div>
   </div>
 
+  <!-- The menu above is real markup, so the page has something to show while the
+       module and the artwork arrive; nothing is listening on it until main.js has
+       run, and on mobile data that is seconds. This is inline and not a module so
+       that it runs the moment those buttons exist: it remembers the tap, makes the
+       button look pressed, and main.js presses it for real once the live menu is
+       there (#284). -->
+  <script>
+    window.__earlyTap = null;
+    for (const id of ["btn-play", "btn-chapters", "btn-gallery", "btn-stats"]) {
+      const node = document.getElementById(id);
+      if (node) node.addEventListener("click", () => {
+        window.__earlyTap = id;
+        node.classList.add("waiting");
+      });
+    }
+  </script>
   <script type="module" src="js/main.js"></script>
 </body>
 </html>
