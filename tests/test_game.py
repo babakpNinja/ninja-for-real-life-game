@@ -249,6 +249,74 @@ def test_every_character_image_is_actually_served(base_url, art_credits):
     assert not bad, f"not served: {bad}"
 
 
+def test_every_character_ships_a_smaller_copy_too(base_url, art_credits):
+    """The WebP beside each PNG is what nearly every browser is actually sent.
+
+    Three ways it can be shipped and still be no use: absent, served as
+    octet-stream (which no <img> will decode), or a different number of bytes
+    from the one the credits — and the budget below — are counted in.
+    """
+    bad = []
+    for cid, entry in sorted(art_credits["assets"].items()):
+        small = entry.get("webp")
+        if not small:
+            bad.append(f"{cid}: no webp credited")
+            continue
+        try:
+            # GET, not HEAD: the bytes are the point. A HEAD would be answered
+            # by the same code without ever reading the file, and the length is
+            # counted off the body rather than a header no hop has to send.
+            with urllib.request.urlopen(f"{base_url}/{small}", timeout=15) as resp:
+                body = resp.read()
+                if resp.status != 200:
+                    bad.append(f"{cid}:{resp.status}")
+                elif resp.headers.get("content-type") != "image/webp":
+                    bad.append(f"{cid}: served as {resp.headers.get('content-type')}")
+                elif len(body) != entry.get("webp_bytes"):
+                    bad.append(f"{cid}: {len(body)} bytes, "
+                               f"credited as {entry.get('webp_bytes')}")
+                elif not body.startswith(b"RIFF") or body[8:12] != b"WEBP":
+                    bad.append(f"{cid}: served {body[:12]!r}, which is not a webp")
+        except Exception as exc:
+            bad.append(f"{cid}:{exc}")
+    assert not bad, f"small copies not served: {bad}"
+
+
+# What the gallery is allowed to pull down. Measured, not chosen: the 25 WebPs
+# are 593KB on disk and ~610KB with their headers, against 2224KB of PNG (run
+# `scripts/fetch_assets.py --webp` to print both totals). Each character that
+# regressed to its PNG would add ~65KB, so this trips once about seven of them
+# have — well before the whole page is back where it started, and well clear of
+# the artwork growing by a character or two.
+GALLERY_BUDGET = 1_000_000
+
+
+def test_the_gallery_stays_inside_its_transfer_budget(own_page):
+    """25 characters at once, on a phone, in a car. Nothing else measures this:
+    every other test here asks whether the artwork arrived, and a page that
+    pulls 2.2 MB to show the same pictures passes all of them (#138)."""
+    page = own_page
+    page.click("#btn-gallery")
+    page.wait_for_selector(".char-card")
+    page.wait_for_function("() => window.__art().loaded.length >= 25", timeout=30000)
+    got = page.evaluate(
+        """() => performance.getEntriesByType('resource')
+             .filter((e) => e.name.includes('/assets/characters/'))
+             .map((e) => ({ name: e.name.split('/').pop(), size: e.transferSize }))"""
+    )
+    page.click("#btn-back")
+    # A page whose cache served everything reports transferSize 0 and would pass
+    # an empty budget for free; this page is opened for this test and has none.
+    assert len(got) >= 25, f"only {len(got)} character files were fetched at all"
+    assert all(e["size"] > 0 for e in got), (
+        f"transferSize is not being reported: {[e for e in got if not e['size']][:3]}")
+    total = sum(e["size"] for e in got)
+    assert total <= GALLERY_BUDGET, (
+        f"the gallery pulled {total // 1024}KB over {GALLERY_BUDGET // 1024}KB in "
+        f"{len(got)} files; the biggest are "
+        f"{sorted(got, key=lambda e: -e['size'])[:5]}")
+
+
 def test_the_rigs_cover_every_character(base_url, art_credits):
     with urllib.request.urlopen(f"{base_url}/data/rigs.json", timeout=15) as resp:
         rigs = json.loads(resp.read())["rigs"]
@@ -559,6 +627,80 @@ def test_every_cameo_is_painted_from_its_own_artwork(own_page, art_credits):
         assert drawn.get(cameo) in ("rig", "pose"), (
             f"chapter {i + 1}: {cameo} drew as {drawn.get(cameo)}")
     page.evaluate("() => window.game.stop()")
+
+
+# --- the other copy of the artwork ------------------------------------------
+# Everything above runs in headless Chromium, which reads WebP, so every one of
+# those tests covers exactly one of the two files each character ships. These
+# two are the other one: the browser that cannot read the small copy, and the
+# small copy that is not there.
+
+NO_WEBP = """
+// what Safari before 14 did: asked for a WebP data URL, it hands back a PNG one
+const real = HTMLCanvasElement.prototype.toDataURL;
+HTMLCanvasElement.prototype.toDataURL = function (type, ...rest) {
+  return String(type).includes("webp") ? real.call(this, "image/png")
+                                       : real.call(this, type, ...rest);
+};
+"""
+
+
+def test_a_browser_that_cannot_read_webp_gets_the_pngs(own_page):
+    """The fallback is the whole reason the PNGs are still shipped, and it is
+    the branch this suite's own browser can never take."""
+    page = own_page
+    asked = []
+    page.on("request", lambda r: asked.append(r.url) if "/assets/characters/" in r.url else None)
+    page.add_init_script(NO_WEBP)
+    page.reload(wait_until="domcontentloaded")
+    page.wait_for_function("window.__ready === true", timeout=20000)
+    page.click("#btn-gallery")
+    page.wait_for_selector(".char-card")
+    page.wait_for_function("() => window.__art().loaded.length >= 25", timeout=30000)
+    art = page.evaluate("window.__art()")
+    page.click("#btn-back")
+    assert art["webp"] is False, "the page still thinks it can read webp; test proves nothing"
+    assert not art["failed"], f"failed to load: {art['failed']}"
+    fell_back = [k for k, v in art["drawn"].items() if v != "rig"]
+    assert not fell_back, f"drawn without artwork: {fell_back}"
+    webp = [u for u in asked if u.endswith(".webp")]
+    assert not webp, f"asked for {len(webp)} files it cannot decode: {webp[:3]}"
+    assert len(asked) >= 25, f"only {len(asked)} character files were asked for"
+
+
+def test_a_missing_small_copy_falls_back_to_the_png(own_page):
+    """A deploy that ships the WebPs badly — or drops them — takes the artwork
+    away from nearly every browser, while the PNG beside it is fine and every
+    other test in this file passes. So the give-up is per file, not per
+    character: spend the retries on the small copy, then ask for the big one."""
+    page = own_page
+    # ...and every retry of it: `load()` asks again as `<file>.webp?retry=N`, so
+    # a pattern anchored at .webp blocks the first attempt and lets the second
+    # through — which looks exactly like a working fallback and proves nothing.
+    page.route("**/assets/characters/*.webp*", lambda route: route.abort())
+    page.reload(wait_until="domcontentloaded")
+    page.wait_for_function("window.__ready === true", timeout=20000)
+    page.click("#btn-gallery")
+    page.wait_for_selector(".char-card")
+    try:
+        # ~5s of retries, then the switch. Waited for by the mechanism rather
+        # than by `loaded`, so a fallback that never happens is reported as
+        # itself instead of as a page that timed out with nothing to say.
+        page.wait_for_function(
+            "() => window.__art().webpFellBack.length >= 25", timeout=20000)
+    except PlaywrightTimeout:
+        art = page.evaluate("window.__art()")
+        pytest.fail(f"only {len(art['webpFellBack'])} of 25 characters moved to their "
+                    f"png when the webp would not come: {len(art['gaveUp'])} gave up "
+                    f"altogether and {len(art['loaded'])} are showing artwork",
+                    pytrace=False)
+    page.wait_for_function("() => window.__art().loaded.length >= 25", timeout=20000)
+    art = page.evaluate("window.__art()")
+    page.click("#btn-back")
+    assert art["webp"] is True, "this browser never asked for a webp; test proves nothing"
+    assert not art["failed"], f"still showing nothing: {art['failed']}"
+    fell_back = [k for k, v in art["drawn"].items() if v != "rig"]
+    assert not fell_back, f"drawn without artwork: {fell_back}"
 
 
 # --- when the pictures never arrive -----------------------------------------

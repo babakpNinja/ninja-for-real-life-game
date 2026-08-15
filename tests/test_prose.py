@@ -869,3 +869,149 @@ def test_the_walk_is_given_the_separated_prefix(shots):
     assert "separated(a.prefix)" in body
     assert re.search(r"walk\(page, url, prefix\)", body)
     assert re.search(r'walk\(mob, url, prefix \+ "mobile-"', body)
+
+
+# ------------------------------------ the small copy of the artwork (#138)
+# Every character ships twice: the PNG `normalise` wrote, and a WebP of the same
+# picture that nearly every browser is the one actually sent. Which makes the
+# WebP the file with no natural check on it — the e2e suite can load a stale,
+# wrong or half-written one and see a character, the rigs are measured off the
+# PNG, and a --check that only ever looked at PNGs would go on passing while the
+# picture on the screen came from somewhere else.
+
+@pytest.fixture
+def one_character(fetch_assets, tmp_path, monkeypatch):
+    """A public/ tree of its own with one character encoded both ways.
+
+    Built rather than borrowed: these tests break the pair on purpose, and the
+    real 25 are what the rest of the suite is asserting on.
+    """
+    from PIL import Image
+
+    mod = fetch_assets
+    out = tmp_path / "public" / "assets" / "characters"
+    out.mkdir(parents=True)
+    png = out / "bluey.png"
+    im = Image.new("RGBA", (16, 16), (30, 120, 200, 255))
+    for x in range(8):
+        im.putpixel((x, 0), (0, 0, 0, 0))      # a silhouette to lose
+    im.save(png, "PNG")
+    monkeypatch.setattr(mod, "APP", tmp_path)
+    return mod, png, {"assets": {"bluey": {"file": "assets/characters/bluey.png",
+                                           **mod.encode_webp(png)}}}
+
+
+def test_a_matching_pair_is_no_problem(one_character):
+    """The healthy case, first: a check that cannot pass is not a check."""
+    mod, _, credits = one_character
+    assert mod.webp_problems(credits) == []
+
+
+def test_a_character_with_no_small_copy_is_a_problem(one_character):
+    mod, _, credits = one_character
+    del credits["assets"]["bluey"]["webp"]
+    problem, = mod.webp_problems(credits)
+    assert "--webp" in problem, problem
+
+
+def test_a_small_copy_that_is_not_on_disk_is_a_problem(one_character):
+    mod, png, credits = one_character
+    png.with_suffix(".webp").unlink()
+    problem, = mod.webp_problems(credits)
+    assert "missing on disk" in problem, problem
+
+
+def test_a_small_copy_of_the_wrong_size_is_a_problem(one_character):
+    """The credited byte count is what the gallery's transfer budget is spent
+    in, and what the served-file test compares against."""
+    mod, _, credits = one_character
+    credits["assets"]["bluey"]["webp_bytes"] += 1
+    problem, = mod.webp_problems(credits)
+    assert "credited as" in problem, problem
+
+
+def test_a_small_copy_made_from_an_older_png_is_a_problem(one_character):
+    """The one that would really happen: a re-fetched character rewrites the
+    PNG, the WebP beside it still shows the picture from before, and it is the
+    WebP nearly everyone is served. Nothing else in the repo compares them.
+    """
+    from PIL import Image
+
+    mod, png, credits = one_character
+    Image.new("RGBA", (16, 16), (200, 30, 30, 255)).save(png, "PNG")
+    problem, = mod.webp_problems(credits)
+    assert "stale" in problem, problem
+
+
+def test_a_small_copy_that_lost_the_silhouette_is_a_problem(one_character):
+    """Every rig fraction, every cutout score and every blink box was measured
+    off the PNG's alpha channel. WebP keeps alpha losslessly — that is why q90
+    is safe at all — so this asserts the property rather than trusting it: a
+    quality, a mode or an encoder that flattened the cut-out would move joints
+    on twenty-five characters and nothing would say so.
+    """
+    from PIL import Image
+
+    mod, png, credits = one_character
+    small = png.with_suffix(".webp")
+    Image.new("RGBA", (16, 16), (30, 120, 200, 255)).save(  # no transparent pixels
+        small, "WEBP", quality=mod.WEBP_QUALITY, method=mod.WEBP_METHOD)
+    entry = credits["assets"]["bluey"]
+    entry["webp_bytes"] = small.stat().st_size            # so only the alpha is wrong
+    problem, = mod.webp_problems(credits)
+    assert "alpha" in problem, problem
+
+
+def test_a_stale_small_copy_makes_the_command_itself_exit_non_zero(
+        fetch_assets, tmp_path, monkeypatch, capsys):
+    """`check()` has to actually call it, on the real 25.
+
+    Every test above hands `webp_problems` its argument directly, so all of them
+    pass just as well with the call deleted out of `check()` — and the exit code
+    is the only thing `test_the_asset_scripts_self_check` and ship ever read.
+    """
+    mod = fetch_assets
+    doc = json.loads(mod.CREDITS.read_text())
+    doc["assets"]["bluey"]["webp_bytes"] += 1
+    bad = tmp_path / "asset-credits.json"
+    bad.write_text(json.dumps(doc))
+    monkeypatch.setattr(mod, "CREDITS", bad)
+    assert mod.check() == 1
+    assert "bluey" in capsys.readouterr().out
+
+
+def test_the_check_says_it_looked_at_the_small_copies(fetch_assets, capsys):
+    """Not-checked must not read as checked-and-clean: a run that says nothing
+    about the WebPs is indistinguishable from one that never looked."""
+    mod = fetch_assets
+    assert mod.check() == 0
+    out = capsys.readouterr().out
+    assert re.search(r"\+ \d+ webp, \d+KB, alpha checked against each png", out), out
+
+
+def test_a_readme_that_misstates_what_the_artwork_costs_is_a_problem(
+        fetch_assets, tmp_path, monkeypatch):
+    """The two numbers in the layout line are the whole reason for shipping two
+    encodings, and nothing else in the repo would ever correct them: they were
+    typed once, off a measurement, and every later character makes them wronger.
+    """
+    mod = fetch_assets
+    fake = tmp_path / "README.md"
+    fake.write_text(mod.README.read_text().replace("PNG (~2.2 MB)", "PNG (~9.9 MB)"))
+    monkeypatch.setattr(mod, "README", fake)
+    credits = json.loads(mod.CREDITS.read_text())
+    problem, = [p for p in mod.prose_problems(credits, 25) if "MB" in p]
+    assert "9.9" in problem and "pngs" in problem, problem
+
+
+def test_a_layout_line_that_stopped_naming_the_two_encodings_is_a_problem(
+        fetch_assets, tmp_path, monkeypatch):
+    """Not-stated must not read as correct. A README rewritten around the line
+    would otherwise take the measurement with it and leave a passing check."""
+    mod = fetch_assets
+    fake = tmp_path / "README.md"
+    fake.write_text(mod.README.read_text().replace("PNG (~2.2 MB) + WebP (~0.6 MB)",
+                                                   "the character artwork"))
+    monkeypatch.setattr(mod, "README", fake)
+    credits = json.loads(mod.CREDITS.read_text())
+    assert [p for p in mod.prose_problems(credits, 25) if "no longer says" in p]

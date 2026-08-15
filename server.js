@@ -17,6 +17,9 @@ const TYPES = {
   ".json": "application/json; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
+  // ...and the smaller copy of every character beside it. Served as
+  // application/octet-stream a browser will not decode it into an <img>.
+  ".webp": "image/webp",
   ".ico": "image/x-icon",
   ".webmanifest": "application/manifest+json",
 };

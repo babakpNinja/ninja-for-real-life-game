@@ -6,11 +6,13 @@ came from in public/data/asset-credits.json so the credits screen can show it.
 
   python3 scripts/fetch_assets.py            # fetch anything missing
   python3 scripts/fetch_assets.py --force    # re-fetch everything
+  python3 scripts/fetch_assets.py --webp     # re-encode the PNGs on disk, no network
   python3 scripts/fetch_assets.py --check    # verify assets + credits agree
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import io
 import json
@@ -295,6 +297,11 @@ STALE_CLAIMS = (
     ("no copyrighted", None),
 )
 
+# ...and the one claim in there that is a measurement: what the artwork costs to
+# send, in the layout list, both ways round. Rounded to a tenth of a MiB, which
+# is the precision the line is written to.
+README_SIZES = re.compile(r"PNG \(~([\d.]+) MB\) \+ WebP \(~([\d.]+) MB\)")
+
 
 def _get(url: str, tries: int = 3) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": UA})
@@ -464,6 +471,120 @@ def cutout_score(im) -> float:
     return round(clear / n, 3)
 
 
+# --- the same picture, smaller ----------------------------------------------
+# The gallery asks for all 25 characters at once, and this is played on a phone
+# in a car: 2.28 MB of PNG is most of a minute on a bad connection, during which
+# every character is the procedural dog. So each PNG gets a WebP written beside
+# it — 0.61 MB for the same 25 — and sprites.js asks for that one where the
+# browser can read it. The PNG stays the record and stays shipped: it is what
+# `normalise` wrote, what the rigs were measured off, and what a browser that
+# cannot read WebP gets.
+#
+# Lossy, at a quality picked against this artwork rather than a habit. WebP
+# stores alpha losslessly, so the silhouette every rig and every cutout score
+# was derived from comes back byte-identical (`webp_problems` asserts exactly
+# that, per character, rather than trusting the claim). What moves is colour,
+# inside the shape: at q90 the worst character differs by more than 8/255 on
+# 0.35% of its pixels. Lossless WebP was measured too — it only reaches 1.47 MB,
+# which does not buy back a difference nothing can see.
+WEBP_QUALITY = 90
+WEBP_METHOD = 6  # slowest encoder, ~8% smaller than the default; this runs rarely
+
+
+def png_fingerprint(png: Path) -> str:
+    return hashlib.sha256(png.read_bytes()).hexdigest()[:12]
+
+
+def encode_webp(png: Path) -> dict:
+    """Write `<id>.webp` beside a character PNG. Returns the credit fields."""
+    from PIL import Image
+
+    dest = png.with_suffix(".webp")
+    with Image.open(png) as im:
+        im.convert("RGBA").save(dest, "WEBP", quality=WEBP_QUALITY, method=WEBP_METHOD)
+    return {
+        "webp": f"assets/characters/{dest.name}",
+        "webp_bytes": dest.stat().st_size,
+        # ...and what it was made from. A re-fetched character rewrites the PNG;
+        # without this, the stale WebP beside it keeps being served to everyone
+        # whose browser prefers it, and the PNG the tests check is fine.
+        "webp_from": png_fingerprint(png),
+    }
+
+
+def reencode(force: bool) -> int:
+    """Re-encode the PNGs already on disk. No network: --force re-fetches, this
+    is for changing the encoding, or for filling in a character fetched before
+    the small copy existed."""
+    if not CREDITS.exists():
+        print("no asset-credits.json — run without --webp first")
+        return 1
+    credits = json.loads(CREDITS.read_text())
+    assets = credits.get("assets", {})
+    problems, done, kept, before, after = [], 0, 0, 0, 0
+    for cid, entry in sorted(assets.items()):
+        png = APP / "public" / entry["file"]
+        if not png.exists():
+            problems.append(f"{cid}: {entry['file']} missing on disk")
+            continue
+        before += png.stat().st_size
+        fresh = entry.get("webp_from") == png_fingerprint(png)
+        if fresh and not force and (APP / "public" / entry.get("webp", "x")).exists():
+            after += entry["webp_bytes"]
+            kept += 1
+            continue
+        entry.update(encode_webp(png))
+        after += entry["webp_bytes"]
+        done += 1
+        print(f"  webp  {cid}  {png.stat().st_size // 1024}KB -> "
+              f"{entry['webp_bytes'] // 1024}KB")
+    credits["assets"] = dict(sorted(assets.items()))
+    CREDITS.write_text(json.dumps(credits, indent=2) + "\n")
+    print(f"{done} encoded, {kept} already current, "
+          f"{before // 1024}KB of PNG -> {after // 1024}KB over the wire")
+    for p in problems:
+        print(f"  MISS  {p}")
+    return 1 if problems else 0
+
+
+def webp_problems(credits: dict) -> list[str]:
+    """The small copy must be the same picture as the file it was made from."""
+    from PIL import Image, ImageChops
+
+    problems = []
+    for cid, entry in sorted(credits.get("assets", {}).items()):
+        png = APP / "public" / entry["file"]
+        if not png.exists():
+            continue  # already reported as a missing render; one problem, once
+        if not entry.get("webp"):
+            problems.append(f"{cid}: no webp — run scripts/fetch_assets.py --webp")
+            continue
+        small = APP / "public" / entry["webp"]
+        if not small.exists():
+            problems.append(f"{cid}: {entry['webp']} missing on disk")
+            continue
+        if small.stat().st_size != entry.get("webp_bytes"):
+            problems.append(
+                f"{cid}: {entry['webp']} is {small.stat().st_size} bytes, credited as "
+                f"{entry.get('webp_bytes')}"
+            )
+        if entry.get("webp_from") != png_fingerprint(png):
+            problems.append(
+                f"{cid}: {entry['webp']} was made from a different {png.name} — it is "
+                "the picture most browsers will actually be shown, and it is stale"
+            )
+            continue
+        with Image.open(small) as a, Image.open(png) as b:
+            a, b = a.convert("RGBA"), b.convert("RGBA")
+            if a.size != b.size:
+                problems.append(f"{cid}: webp is {a.size}, png is {b.size}")
+            elif ImageChops.difference(a.split()[3], b.split()[3]).getbbox():
+                # Every rig fraction and every cutout score was measured off this
+                # channel, so a lossy encoder that touched it would move joints.
+                problems.append(f"{cid}: webp alpha differs from the png's")
+    return problems
+
+
 def load_chars() -> list[dict]:
     d = json.loads(CHARS.read_text())
     return d if isinstance(d, list) else d["characters"]
@@ -495,6 +616,7 @@ def fetch(force: bool) -> int:
                     continue
                 title, url = hit
             info = normalise(_get(url), dest)
+            info.update(encode_webp(dest))
         except Exception as exc:
             problems.append(f"{cid}: {exc}")
             continue
@@ -852,6 +974,22 @@ def prose_problems(credits: dict, shipped: int) -> list[str]:
                         f"{OUT.relative_to(APP)}/"
                     )
 
+    if shipped:
+        # The README's layout line is where anyone reads what the artwork costs
+        # to send, and it is a number nothing else would ever correct: the whole
+        # point of shipping two encodings is the difference between these two.
+        m = README_SIZES.search(README.read_text())
+        if not m:
+            problems.append(
+                "README.md's layout line no longer says what each encoding costs — "
+                f"expected {README_SIZES.pattern!r} under {OUT.relative_to(APP)}/")
+        else:
+            for claim, ext in zip(m.groups(), ("png", "webp")):
+                mb = round(sum(f.stat().st_size for f in OUT.glob(f"*.{ext}")) / 1048576, 1)
+                if float(claim) != mb:
+                    problems.append(f"README.md says the {ext}s are ~{claim} MB; "
+                                    f"{len(list(OUT.glob(f'*.{ext}')))} of them are {mb} MB")
+
     splash = _tag_text(r'<p class="credits">(.*?)</p>', INDEX)
     if splash is None:
         problems.append('index.html has no <p class="credits"> — the boot splash lost its notice')
@@ -906,15 +1044,18 @@ def check() -> int:
         if cid not in {c["id"] for c in load_chars()}:
             problems.append(f"{cid}: credited but not a character")
     shipped = len(list(OUT.glob("*.png"))) if OUT.exists() else 0
+    small = sum(f.stat().st_size for f in OUT.glob("*.webp")) if OUT.exists() else 0
+    problems += webp_problems(credits)
     problems += prose_problems(credits, shipped)
     problems += name_problems()
     problems += pose_problems()
     problems += coverage_problems()
     frames = sum(len(f) for s in json.loads(POSES_JSON.read_text())["frames"].values()
                  for f in s.values()) if POSES_JSON.exists() else 0
-    print(f"{len(assets)} assets, {total // 1024}KB total, {shipped} renders on disk, "
-          f"{frames} pose frames, {len(RIG_OK)} states left to the rig on purpose, "
-          f"and every visible copy of {GAME_NAME!r} checked")
+    print(f"{len(assets)} assets, {total // 1024}KB total, {shipped} renders on disk "
+          f"(+ {len(list(OUT.glob('*.webp')))} webp, {small // 1024}KB, alpha checked "
+          f"against each png), {frames} pose frames, {len(RIG_OK)} states left to the "
+          f"rig on purpose, and every visible copy of {GAME_NAME!r} checked")
     for p in problems:
         print(f"  PROBLEM {p}")
     return 1 if problems else 0
@@ -925,9 +1066,13 @@ def main() -> int:
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--poses", action="store_true", help="fetch the action-pose frames")
+    ap.add_argument("--webp", action="store_true",
+                    help="re-encode the character PNGs already on disk (no network)")
     a = ap.parse_args()
     if a.check:
         return check()
+    if a.webp:
+        return reencode(a.force)
     if a.poses:
         return fetch_poses(a.force)
     return fetch(a.force)

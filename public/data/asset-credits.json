@@ -9,7 +9,10 @@
       "h": 512,
       "bytes": 99668,
       "cutout": 0.396,
-      "shadow_px": 41086
+      "shadow_px": 41086,
+      "webp": "assets/characters/bandit.webp",
+      "webp_bytes": 32274,
+      "webp_from": "2dd885e38962"
     },
     "bingo": {
       "file": "assets/characters/bingo.png",
@@ -20,7 +23,10 @@
       "h": 512,
       "bytes": 106407,
       "cutout": 0.456,
-      "shadow_px": 29772
+      "shadow_px": 29772,
+      "webp": "assets/characters/bingo.webp",
+      "webp_bytes": 31378,
+      "webp_from": "ba5bb1fde5cf"
     },
     "bluey": {
       "file": "assets/characters/bluey.png",
@@ -31,7 +37,10 @@
       "h": 512,
       "bytes": 91297,
       "cutout": 0.513,
-      "shadow_px": 15245
+      "shadow_px": 15245,
+      "webp": "assets/characters/bluey.webp",
+      "webp_bytes": 26710,
+      "webp_from": "b646f3838be9"
     },
     "bob": {
       "file": "assets/characters/bob.png",
@@ -42,7 +51,10 @@
       "h": 512,
       "bytes": 89862,
       "cutout": 0.399,
-      "shadow_px": 2447
+      "shadow_px": 2447,
+      "webp": "assets/characters/bob.webp",
+      "webp_bytes": 24424,
+      "webp_from": "21d5c482edbe"
     },
     "calypso": {
       "file": "assets/characters/calypso.png",
@@ -53,7 +65,10 @@
       "h": 445,
       "bytes": 99571,
       "cutout": 0.448,
-      "shadow_px": 1962
+      "shadow_px": 1962,
+      "webp": "assets/characters/calypso.webp",
+      "webp_bytes": 19202,
+      "webp_from": "b57e94918ffa"
     },
     "chattermax": {
       "file": "assets/characters/chattermax.png",
@@ -64,7 +79,10 @@
       "h": 512,
       "bytes": 160466,
       "cutout": 0.306,
-      "shadow_px": 72
+      "shadow_px": 72,
+      "webp": "assets/characters/chattermax.webp",
+      "webp_bytes": 39540,
+      "webp_from": "7bafde32e4ae"
     },
     "chilli": {
       "file": "assets/characters/chilli.png",
@@ -75,7 +93,10 @@
       "h": 512,
       "bytes": 72119,
       "cutout": 0.425,
-      "shadow_px": 19291
+      "shadow_px": 19291,
+      "webp": "assets/characters/chilli.webp",
+      "webp_bytes": 24714,
+      "webp_from": "bcec1bcb4698"
     },
     "chloe": {
       "file": "assets/characters/chloe.png",
@@ -86,7 +107,10 @@
       "h": 512,
       "bytes": 86873,
       "cutout": 0.501,
-      "shadow_px": 19888
+      "shadow_px": 19888,
+      "webp": "assets/characters/chloe.webp",
+      "webp_bytes": 23898,
+      "webp_from": "89191a3cb384"
     },
     "coco": {
       "file": "assets/characters/coco.png",
@@ -97,7 +121,10 @@
       "h": 512,
       "bytes": 88962,
       "cutout": 0.428,
-      "shadow_px": 469
+      "shadow_px": 469,
+      "webp": "assets/characters/coco.webp",
+      "webp_bytes": 30208,
+      "webp_from": "6138a1696832"
     },
     "frisky": {
       "file": "assets/characters/frisky.png",
@@ -108,7 +135,10 @@
       "h": 512,
       "bytes": 91137,
       "cutout": 0.464,
-      "shadow_px": 17670
+      "shadow_px": 17670,
+      "webp": "assets/characters/frisky.webp",
+      "webp_bytes": 30554,
+      "webp_from": "5bf227f49b6b"
     },
     "honey": {
       "file": "assets/characters/honey.png",
@@ -119,7 +149,10 @@
       "h": 451,
       "bytes": 52316,
       "cutout": 0.398,
-      "shadow_px": 1303
+      "shadow_px": 1303,
+      "webp": "assets/characters/honey.webp",
+      "webp_bytes": 19238,
+      "webp_from": "49c8860792e2"
     },
     "indy": {
       "file": "assets/characters/indy.png",
@@ -130,7 +163,10 @@
       "h": 512,
       "bytes": 136805,
       "cutout": 0.437,
-      "shadow_px": 91
+      "shadow_px": 91,
+      "webp": "assets/characters/indy.webp",
+      "webp_bytes": 37916,
+      "webp_from": "deb59dbad9ff"
     },
     "jean_luc": {
       "file": "assets/characters/jean_luc.png",
@@ -141,7 +177,10 @@
       "h": 512,
       "bytes": 87643,
       "cutout": 0.409,
-      "shadow_px": 13428
+      "shadow_px": 13428,
+      "webp": "assets/characters/jean_luc.webp",
+      "webp_bytes": 19936,
+      "webp_from": "1f1fcc98062c"
     },
     "judo": {
       "file": "assets/characters/judo.png",
@@ -152,7 +191,10 @@
       "h": 512,
       "bytes": 111764,
       "cutout": 0.365,
-      "shadow_px": 40923
+      "shadow_px": 40923,
+      "webp": "assets/characters/judo.webp",
+      "webp_bytes": 27414,
+      "webp_from": "1738ab4950ed"
     },
     "lucky": {
       "file": "assets/characters/lucky.png",
@@ -163,7 +205,10 @@
       "h": 512,
       "bytes": 68421,
       "cutout": 0.395,
-      "shadow_px": 31303
+      "shadow_px": 31303,
+      "webp": "assets/characters/lucky.webp",
+      "webp_bytes": 21494,
+      "webp_from": "100181349dd2"
     },
     "mackenzie": {
       "file": "assets/characters/mackenzie.png",
@@ -174,7 +219,10 @@
       "h": 512,
       "bytes": 76837,
       "cutout": 0.529,
-      "shadow_px": 38489
+      "shadow_px": 38489,
+      "webp": "assets/characters/mackenzie.webp",
+      "webp_bytes": 21850,
+      "webp_from": "cfd59b38b4f6"
     },
     "muffin": {
       "file": "assets/characters/muffin.png",
@@ -185,7 +233,10 @@
       "h": 425,
       "bytes": 105224,
       "cutout": 0.392,
-      "shadow_px": 119
+      "shadow_px": 119,
+      "webp": "assets/characters/muffin.webp",
+      "webp_bytes": 15016,
+      "webp_from": "1bd2113e716b"
     },
     "nana_chris": {
       "file": "assets/characters/nana_chris.png",
@@ -196,7 +247,10 @@
       "h": 512,
       "bytes": 94119,
       "cutout": 0.408,
-      "shadow_px": 1233
+      "shadow_px": 1233,
+      "webp": "assets/characters/nana_chris.webp",
+      "webp_bytes": 24454,
+      "webp_from": "a3c07577084b"
     },
     "rad": {
       "file": "assets/characters/rad.png",
@@ -207,7 +261,10 @@
       "h": 512,
       "bytes": 89963,
       "cutout": 0.357,
-      "shadow_px": 27552
+      "shadow_px": 27552,
+      "webp": "assets/characters/rad.webp",
+      "webp_bytes": 26618,
+      "webp_from": "f776a6f3629e"
     },
     "rusty": {
       "file": "assets/characters/rusty.png",
@@ -218,7 +275,10 @@
       "h": 512,
       "bytes": 69040,
       "cutout": 0.475,
-      "shadow_px": 16940
+      "shadow_px": 16940,
+      "webp": "assets/characters/rusty.webp",
+      "webp_bytes": 22988,
+      "webp_from": "1982a9ea0605"
     },
     "snickers": {
       "file": "assets/characters/snickers.png",
@@ -229,7 +289,10 @@
       "h": 437,
       "bytes": 66011,
       "cutout": 0.418,
-      "shadow_px": 428
+      "shadow_px": 428,
+      "webp": "assets/characters/snickers.webp",
+      "webp_bytes": 14522,
+      "webp_from": "eb00b94a0d2f"
     },
     "socks": {
       "file": "assets/characters/socks.png",
@@ -240,7 +303,10 @@
       "h": 306,
       "bytes": 62415,
       "cutout": 0.414,
-      "shadow_px": 10
+      "shadow_px": 10,
+      "webp": "assets/characters/socks.webp",
+      "webp_bytes": 11148,
+      "webp_from": "b8a62fed53c8"
     },
     "stripe": {
       "file": "assets/characters/stripe.png",
@@ -251,7 +317,10 @@
       "h": 512,
       "bytes": 106337,
       "cutout": 0.458,
-      "shadow_px": 4
+      "shadow_px": 4,
+      "webp": "assets/characters/stripe.webp",
+      "webp_bytes": 23574,
+      "webp_from": "a3ff95616eb2"
     },
     "trixie": {
       "file": "assets/characters/trixie.png",
@@ -262,7 +331,10 @@
       "h": 512,
       "bytes": 82084,
       "cutout": 0.46,
-      "shadow_px": 2149
+      "shadow_px": 2149,
+      "webp": "assets/characters/trixie.webp",
+      "webp_bytes": 22592,
+      "webp_from": "d77ce510a0e7"
     },
     "winton": {
       "file": "assets/characters/winton.png",
@@ -273,7 +345,10 @@
       "h": 402,
       "bytes": 82350,
       "cutout": 0.266,
-      "shadow_px": 2020
+      "shadow_px": 2020,
+      "webp": "assets/characters/winton.webp",
+      "webp_bytes": 15856,
+      "webp_from": "65144490b5d3"
     }
   },
   "notice": "Fan-made, unofficial and non-commercial. Bluey \u00a9 Ludo Studio Pty Ltd. Character names and artwork are the property of their respective owners. Artwork retrieved from the community Bluey wiki; each image links to its source page.",

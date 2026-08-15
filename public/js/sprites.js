@@ -72,7 +72,52 @@ if (typeof window !== "undefined" && window.addEventListener) {
   window.addEventListener("online", () => {
     art.failed.clear();
     poseArt.failed.clear();
+    // ...including the characters that gave up on their small copy. Five
+    // failures in a tunnel are not evidence that the .webp is missing.
+    webpGaveUp.clear();
   });
+}
+
+/*
+ * Each character ships twice: the PNG `normalise` wrote, and a WebP of the same
+ * picture beside it (see scripts/fetch_assets.py). All 25 are asked for at once
+ * when the gallery opens, which is 2.2 MB of PNG against 0.6 MB of WebP, on a
+ * phone, in a car. So ask for the small one where the browser can read it.
+ *
+ * Support is asked of the encoder, not of the user agent string: a canvas that
+ * cannot encode WebP hands back a PNG data URL. Asked once — this is called
+ * from the render loop, 25 characters a frame.
+ */
+let webpOk = null;
+const webpGaveUp = new Set(); // ids whose small copy never arrived; ask for the PNG
+
+function webpSupported() {
+  if (webpOk === null) {
+    try {
+      const c = document.createElement("canvas");
+      c.width = c.height = 1;
+      webpOk = c.toDataURL("image/webp").startsWith("data:image/webp");
+    } catch {
+      webpOk = false;
+    }
+  }
+  return webpOk;
+}
+
+/** Which of a character's two files to ask for. */
+function artUrl(id, entry) {
+  if (!entry.webp || webpGaveUp.has(id) || !webpSupported()) return entry.file;
+  const gone = art.failed.get(id);
+  if (gone && gone.tries >= TRIES) {
+    // The small copy is the one nearly every browser asks for, so if that is
+    // the file that is missing, nearly everyone loses the character while a
+    // perfectly good PNG sits beside it. Spend the retries on the WebP, then
+    // stop asking for it and start asking for the other one.
+    webpGaveUp.add(id);
+    art.failed.delete(id);
+    return entry.file;
+  }
+  return entry.webp;
 }
 
 export function artState() {
@@ -98,6 +143,13 @@ export function artState() {
     // to have stopped changing before it measures anything: a run frame that
     // decodes between two renders swaps the character's drawing under them.
     posePending: [...poseArt.pending],
+    // Which of the two copies of the artwork this browser is being sent, and
+    // the characters that asked for the small one, could not have it, and are
+    // now on the PNG. Both are the mechanism, not the outcome: a test that
+    // only reads `loaded` cannot tell a working fallback from a browser that
+    // never needed one.
+    webp: webpSupported(),
+    webpFellBack: [...webpGaveUp],
     credits,
   };
 }
@@ -163,7 +215,7 @@ function load(store, key, url) {
 export function sprite(id) {
   const entry = creditFor(id);
   if (!entry) return art.images.get(id) || null;
-  return load(art, id, entry.file);
+  return load(art, id, artUrl(id, entry));
 }
 
 /** Warm the cache for characters we know are about to be on screen. */

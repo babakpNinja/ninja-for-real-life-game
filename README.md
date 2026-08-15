@@ -124,8 +124,29 @@ record, so a tunnel is not permanent. This matters more than it sounds: one
 dropped connection used to mean that character stayed a procedural dog until
 someone reloaded the page, and a three-year-old does not reload the page.
 
+**Every character ships twice.** The gallery asks for all twenty-five at once, on
+a phone, in a car: 2.2 MB of PNG is most of a minute on a bad connection, and for
+that minute every character is the procedural dog. So `fetch_assets.py` writes a
+WebP beside each PNG — the same twenty-five come to 0.6 MB — and `sprites.js`
+asks for that one where `canvas.toDataURL("image/webp")` says the browser can
+read it. The PNG is still the record and is still shipped: it is what `normalise`
+wrote, what the rigs were measured off, and what a browser that cannot read WebP
+is sent. If a small copy is missing, the retries are spent on it and then that
+character quietly moves to its PNG, because a WebP that fails to ship takes the
+artwork away from nearly everyone while the file beside it is fine.
+
+The encoding is lossy at quality 90, which is a decision about this artwork and
+not a habit: WebP stores alpha losslessly, so the silhouette every rig, cutout
+score and blink box was measured off comes back byte-identical — `--check`
+asserts that per character rather than trusting it — and what moves is colour,
+inside the shape, by more than 8/255 on 0.35% of the pixels of the worst
+character. Lossless WebP was measured too and only reaches 1.5 MB. The gallery's
+share of it is a test: `test_the_gallery_stays_inside_its_transfer_budget` opens
+the screen on a cold page and sums `transferSize` over the character files.
+
 ```bash
 python3 scripts/fetch_assets.py --check   # credited, a cut-out, and the notice above unchanged
+python3 scripts/fetch_assets.py --webp    # re-encode the small copies from the PNGs on disk
 python3 scripts/build_rigs.py --check     # every joint still cuts the render it was measured on:
                                           #  a derived rig re-derived and compared, a hand-measured
                                           #  one held to the drawing it names, every hip at or above
@@ -214,7 +235,7 @@ public/js/art.js        props, backdrops and the fallback dog, drawn procedurall
 public/js/sprites.js    pose frames + the cut-out rig: loads the artwork and animates it
 public/js/audio.js      WebAudio music + SFX
 public/js/main.js       screens, HUD, gallery, credits, save data
-public/assets/characters/  25 character images (~2.2 MB total)
+public/assets/characters/  25 characters, twice: PNG (~2.2 MB) + WebP (~0.6 MB)
 public/assets/poses/       the side-on action renders, one per character/state
 public/data/characters.json      25 character bios
 public/data/asset-credits.json   where each image came from, and when
