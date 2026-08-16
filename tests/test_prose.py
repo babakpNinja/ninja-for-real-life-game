@@ -1322,32 +1322,144 @@ def test_a_site_that_reads_the_javascript_reads_its_code_and_not_its_prose(
 # to be written in load-bearing: a screen that called `readAloud` first would
 # silence itself, and the only sign would be a card that never speaks. It is a
 # habit across four functions and nothing held it, so it is a rule here.
+#
+# Both lists, checked against each other (#320): the screens are *declared*
+# below, because deciding that a screen reads itself is a decision and it should
+# be written down where the reason is — and they are also *found* in the source,
+# because a declaration alone only guards the direction it names. A fifth screen
+# that learns to read and never arrives here would otherwise be checked by
+# nothing at all, which is the failure this rule exists for, silently uncovered.
 
 MAIN = APP / "public" / "js" / "main.js"
 READING_SCREENS = ("storyCard", "results", "bio", "characterSelect")
 
 
-def test_a_screen_shows_itself_before_it_reads_itself():
-    """Every function that does both, in the order that leaves it talking.
+def screens_that_read(src: str) -> set[str]:
+    """Every top-level function in `src` whose body calls `readAloud`.
 
-    The screens are named rather than discovered: a rename or a fifth reading
-    screen has to arrive here, where the reason is written, instead of quietly
-    reducing this to a check over three. `function_body` bounds each one at its
-    own closing brace, so the call found is the screen's own and not the next
-    function's.
+    Comments are blanked first (`function_body` does it), so the JSDoc above
+    `readAloud` that talks about who calls it is not read as a caller — the #233
+    defect, one file over. `readAloud` itself is left out: it is the thing being
+    called, not a screen.
     """
-    src = MAIN.read_text()
-    checked = []
-    for name in READING_SCREENS:
+    code = code_only(src)
+    names = [m.group(1) for m in re.finditer(r"^function (\w+)\(", code, re.M)]
+    return {n for n in names
+            if n != "readAloud" and "readAloud(" in function_body(src, n)}
+
+
+def reading_screen_problems(src: str, declared=READING_SCREENS) -> list[str]:
+    """Everything wrong with how `src`'s screens read themselves, as sentences.
+
+    One function so that the check and its own drill ask the same question of
+    different sources: the real one is main.js, and the synthetic ones below are
+    each written to be wrong in exactly one way.
+    """
+    found = screens_that_read(src)
+    problems = [
+        f"{name}() calls readAloud and is not in READING_SCREENS — a screen that "
+        f"reads itself is a decision, and nobody made it here. If it should read "
+        f"itself, declare it; the order rule then applies to it too (#320)"
+        for name in sorted(found - set(declared))
+    ] + [
+        f"{name}() is declared as a screen that reads itself and calls no readAloud "
+        f"— either it went silent (#293) or it was renamed, and this rule is now "
+        f"about {len(declared) - 1} screens"
+        for name in sorted(set(declared) - found)
+    ]
+    for name in declared:
+        if name not in found:
+            continue
         body = function_body(src, name)
         shows, reads = body.find("showOverlay("), body.find("readAloud(")
-        assert reads >= 0, (
-            f"{name}() no longer calls readAloud — either it stopped reading itself "
-            f"(#293) or it was renamed, and this check is now about three screens")
-        assert shows >= 0, f"{name}() no longer calls showOverlay"
-        assert shows < reads, (
-            f"{name}() calls readAloud before showOverlay, and showOverlay hushes "
-            f"(#301) — the screen cancels the read it just started, and the only "
-            f"symptom is a screen that says nothing")
-        checked.append(name)
-    assert checked == list(READING_SCREENS), checked
+        if shows < 0:
+            problems.append(f"{name}() no longer calls showOverlay")
+        elif shows > reads:
+            problems.append(
+                f"{name}() calls readAloud before showOverlay, and showOverlay "
+                f"hushes (#301) — the screen cancels the read it just started, and "
+                f"the only symptom is a screen that says nothing")
+    return problems
+
+
+def test_a_screen_shows_itself_before_it_reads_itself():
+    """The rule, over the game's own source."""
+    problems = reading_screen_problems(MAIN.read_text())
+    assert not problems, "\n".join(problems)
+    assert screens_that_read(MAIN.read_text()) == set(READING_SCREENS)
+
+
+# One source per way of being wrong. `showOverlay`/`readAloud` are the only
+# calls that matter here, so these are the smallest files that can hold the
+# question — and each is checked to produce exactly the one complaint, so a
+# message that fires on everything cannot pass as a message that fires on this.
+FOUR_SCREENS = """\
+function storyCard(i) {
+  showOverlay(`<h2>Chapter</h2>`);
+  readAloud(["Chapter one."]);
+}
+function readAloud(lines, { speak = true } = {}) {
+  placeReadButton();
+}
+"""
+UNDECLARED = FOUR_SCREENS + """\
+function creditsCard() {
+  showOverlay(`<h2>Credits</h2>`);
+  readAloud(["Credits."]);
+}
+"""
+WENT_SILENT = """\
+function storyCard(i) {
+  showOverlay(`<h2>Chapter</h2>`);
+}
+function readAloud(lines) {
+  placeReadButton();
+}
+"""
+READS_FIRST = """\
+function storyCard(i) {
+  readAloud(["Chapter one."]);
+  showOverlay(`<h2>Chapter</h2>`);
+}
+function readAloud(lines) {
+  placeReadButton();
+}
+"""
+TALKS_IN_A_COMMENT = """\
+function storyCard(i) {
+  showOverlay(`<h2>Chapter</h2>`);
+  readAloud(["Chapter one."]);
+}
+// the gallery does not readAloud( anything: a bio is what answers the tap
+function gallery() {
+  showOverlay(`<div class="gallery"></div>`);
+}
+function readAloud(lines) {
+  placeReadButton();
+}
+"""
+
+
+@pytest.mark.parametrize("src,says", [
+    (UNDECLARED, "creditsCard() calls readAloud and is not in READING_SCREENS"),
+    (WENT_SILENT, "storyCard() is declared as a screen that reads itself and calls no"),
+    (READS_FIRST, "storyCard() calls readAloud before showOverlay"),
+], ids=["a fifth screen nobody declared", "a declared screen went silent",
+        "a screen that reads before it shows"])
+def test_the_reading_screen_rule_can_fail(src, says):
+    """Each way past this check, taken.
+
+    Without these the rule is three assertions nothing has ever seen fail — and
+    the one it was written for (an undeclared fifth screen) is exactly the one a
+    hand-maintained list cannot produce on its own.
+    """
+    problems = reading_screen_problems(src, declared=("storyCard",))
+    assert len(problems) == 1, problems
+    assert problems[0].startswith(says), problems[0]
+
+
+def test_the_rule_reads_the_calls_and_not_the_prose():
+    """A comment naming `readAloud(` is not a screen that reads itself."""
+    assert reading_screen_problems(FOUR_SCREENS, declared=("storyCard",)) == []
+    assert screens_that_read(TALKS_IN_A_COMMENT) == {"storyCard"}, (
+        "the gallery's comment about not reading was read as a call")
