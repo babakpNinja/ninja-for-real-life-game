@@ -512,6 +512,8 @@ export const CHAPTERS = [
     deep: { fill: ["#3F5A50", "#1E2E2A"], grit: "#8FB0A0", kind: "stone" },
     water: "#7FA9BD",
     rain: true,
+    // it is pouring: the sun is behind all that, not blazing through it (#355)
+    overcast: true,
     story: [
       "It is pouring. Mum says a bit of rain never hurt anybody and hands out the umbrellas.",
       "Hold on tight — the gusts come up the street in swirls of leaves, and Nana wants the reddest ones for her table.",

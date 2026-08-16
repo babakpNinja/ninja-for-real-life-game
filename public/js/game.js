@@ -1195,10 +1195,26 @@ export class Game {
       ctx.arc(770, 110, 86, 0, Math.PI * 2);
       ctx.fill();
     } else {
-      ctx.fillStyle = "#FFE9A8";
-      ctx.beginPath();
-      ctx.arc(820, 96, 46, 0, Math.PI * 2);
-      ctx.fill();
+      // What is up there is the chapter's business (#355). Every chapter but the
+      // night one used to get the same yellow disc, so the rain chapter walked
+      // home under a downpour, past a lit street lamp, in full sun — which reads
+      // as a bug in the drawing rather than as weather. `overcast` swaps the disc
+      // for the sun *behind* the cloud: a soft brightening around the same point,
+      // no edge anywhere in it. Chapters that say nothing keep the disc, so this
+      // is one chapter's change and not a new sky for the other nine.
+      if (ch.overcast) {
+        const glow = ctx.createRadialGradient(820, 96, 0, 820, 96, 210);
+        glow.addColorStop(0, "rgba(255,255,255,0.30)");
+        glow.addColorStop(0.55, "rgba(255,255,255,0.12)");
+        glow.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.fillStyle = glow;
+        ctx.fillRect(820 - 210, 96 - 210, 420, 420);
+      } else {
+        ctx.fillStyle = "#FFE9A8";
+        ctx.beginPath();
+        ctx.arc(820, 96, 46, 0, Math.PI * 2);
+        ctx.fill();
+      }
       for (let i = 0; i < 6; i++) {
         const x = ((i * 320 - camX * 0.18) % 1600 + 1600) % 1600 - 200;
         drawCloud(ctx, x, 70 + (i % 3) * 46, 1 + (i % 3) * 0.35, 0.9);

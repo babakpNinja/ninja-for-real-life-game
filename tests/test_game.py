@@ -7499,6 +7499,150 @@ def test_the_menu_sky_was_added_above_the_old_picture_not_over_it(make_page):
         page.context.close()
 
 
+# --- what is in each chapter's sky (#355) ------------------------------------
+# The sun was drawn by the shared background pass for every chapter that is not
+# the night one, so the rain chapter walked home in a downpour, past a lit street
+# lamp, under a blazing yellow disc — shots/05-ch8.png, and it reads as a mistake
+# in the drawing rather than as weather. A chapter can now say `overcast: true`
+# and get the sun behind the cloud instead: brighter around the same point, with
+# no edge in it.
+#
+# Asked of the pixels, because "the field is set" is a statement about a JSON
+# file and the complaint was about a picture. The colour is the disc's own fill
+# and the tolerance is tight: the clouds over it are white (blue 255 against the
+# sun's 168) and the moon is #FFF3C4, so neither can answer for a sun.
+SUN_COUNT = """
+(rgb) => {
+  const g = window.game, c = g.canvas, ctx = c.getContext("2d");
+  const out = [];
+  for (let i = 0; i < window.__cast.length; i++) {
+    g.start(i);
+    g.running = false;
+    g.mode = "playing";
+    g.t = 3; g.player.x = 900; g.camSlack = 0;
+    g.render();
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    // the sky only — down at the ground the rain chapter has a lit street lamp,
+    // and a lamp is allowed to be that colour at night in the rain
+    const yEnd = Math.round((300 * g.scale + g.offY) * g.dpr);
+    let sun = 0;
+    for (let p = 0; p < d.length; p += 4) {
+      if (Math.floor(p / 4 / c.width) >= yEnd) continue;
+      if (Math.abs(d[p] - rgb[0]) <= 10 && Math.abs(d[p + 1] - rgb[1]) <= 10
+          && Math.abs(d[p + 2] - rgb[2]) <= 10) sun++;
+    }
+    out.push({ id: g.ch.id, n: g.ch.n, sun, overcast: !!g.ch.overcast,
+               swim: !!g.ch.swim });
+  }
+  g.stop();
+  return out;
+}
+"""
+
+
+def test_the_rain_chapter_has_no_sun_in_its_sky(own_page):
+    """The complaint, counted: pixels of the sun's own yellow, per chapter.
+
+    Both halves are asserted. A chapter that says it is overcast must have none —
+    that is the fix. Every other daylight chapter must have thousands, or this
+    test would pass just as happily on a build where the sun was deleted from the
+    whole game, which is the other way to make chapter 8 look wrong.
+    """
+    page = own_page
+    seen = page.evaluate(SUN_COUNT, [255, 233, 168])
+    assert len(seen) >= 10, f"only {len(seen)} chapters were looked at"
+    overcast = [r for r in seen if r["overcast"]]
+    assert [r["id"] for r in overcast] == ["rain"], (
+        f"the chapters calling themselves overcast are {[r['id'] for r in overcast]}")
+    for r in overcast:
+        assert r["sun"] == 0, (
+            f"chapter {r['n']} ({r['id']}) is overcast and still has {r['sun']} pixels "
+            "of the sun's yellow in it")
+    # Two chapters cannot answer, for reasons that have nothing to do with #355:
+    # the night one draws a moon instead, and chapter 9 is *under* the water, so
+    # its whole picture — sun included — is behind a wash of pool blue (#351).
+    lit = [r for r in seen
+           if not r["overcast"] and r["id"] != "sleepytime" and not r["swim"]]
+    assert len(lit) >= 7, f"only {len(lit)} chapters are left to compare against: {seen}"
+    dark = [r for r in lit if r["sun"] < 2000]
+    assert not dark, (
+        f"chapters with no sun and nothing saying they are overcast: "
+        f"{[(r['n'], r['id'], r['sun']) for r in dark]} — the sun has gone missing from "
+        "the daylight chapters, so the count above proves nothing")
+
+
+def test_the_overcast_sky_is_still_lighter_where_the_sun_is(own_page):
+    """Behind the cloud, not painted out (#355).
+
+    "No yellow disc" is satisfied by drawing nothing at all, and a flat grey lid
+    is a different wrong picture: you should still be able to tell where the sun
+    is. Asked as a difference of two renders of the same frame rather than as
+    "brighter here than over there", because the clouds drift across that corner
+    and a white cloud would answer for the sun. Switching the canvas's radial
+    gradients off leaves everything else in the frame — sky, clouds, rain —
+    exactly where it was, so every pixel that changes is the glow.
+    """
+    page = own_page
+    seen = page.evaluate("""
+    () => {
+      const g = window.game, c = g.canvas, ctx = c.getContext("2d");
+      const shot = () => ctx.getImageData(0, 0, c.width, c.height).data.slice();
+      const frame = () => { g.t = 3; g.player.x = 900; g.camSlack = 0; g.render(); };
+      const out = [];
+      for (let i = 0; i < window.__cast.length; i++) {
+        g.start(i);
+        g.running = false;
+        g.mode = "playing";
+        if (!g.ch.overcast) continue;   // the glow is one chapter's, for now
+        frame();
+        const before = shot();
+        const real = ctx.createRadialGradient.bind(ctx);
+        ctx.createRadialGradient = () => {
+          const flat = ctx.createLinearGradient(0, 0, 0, 1);
+          flat.addColorStop(0, "rgba(0,0,0,0)");
+          flat.addColorStop(1, "rgba(0,0,0,0)");
+          return flat;
+        };
+        frame();
+        const flatFrame = shot();
+        ctx.createRadialGradient = real;
+        // The top of the sky only. Lower down this chapter has lit street lamps,
+        // which are radial gradients too and would answer this question for the
+        // sun; nothing but sky is above world y=200 in the rain chapter.
+        let lit = 0, weight = 0, sumX = 0;
+        const yEnd = Math.round((200 * g.scale + g.offY) * g.dpr);
+        for (let p = 0; p < before.length; p += 4) {
+          const row = Math.floor(p / 4 / c.width);
+          if (row >= yEnd) continue;
+          const d = (before[p] + before[p + 1] + before[p + 2]
+                     - flatFrame[p] - flatFrame[p + 1] - flatFrame[p + 2]) / 3;
+          if (d <= 3) continue;
+          // where the light is, by its centre of mass — the peak of a soft field
+          // is a plateau of equal bytes, and "the first pixel of the plateau" is
+          // an answer about scan order
+          lit++;
+          weight += d;
+          sumX += d * (((p / 4) % c.width) / g.dpr - g.offX) / g.scale;
+        }
+        out.push({
+          id: g.ch.id, overcast: !!g.ch.overcast, lit,
+          x: lit ? sumX / weight : null,
+        });
+      }
+      g.stop();
+      return out;
+    }
+    """)
+    assert [r["id"] for r in seen] == ["rain"], seen
+    for r in seen:
+        assert r["lit"] > 4000, (
+            f"{r['id']}: only {r['lit']} pixels of its sky come from the glow — the sun "
+            "is not behind that cloud, it is simply gone")
+        assert 700 < r["x"] < 940, (
+            f"{r['id']}: the light in its sky sits at world x={r['x']:.0f}, nowhere near "
+            "where the other chapters put the sun")
+
+
 def test_the_menus_sky_is_its_own_field_not_chapter_ones(make_page):
     """`IDLE_SKY` is a palette in a chapter's shape, and it obeys the band (#329).
 
