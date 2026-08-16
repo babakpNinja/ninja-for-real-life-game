@@ -8809,7 +8809,8 @@ def test_leaving_full_screen_some_other_way_still_turns_the_button_around(make_p
     try:
         page.click("#btn-full-menu")
         page.wait_for_function("() => !!document.fullscreenElement", timeout=5000)
-        assert page.get_attribute("#btn-full", "aria-label") == "Leave full screen"
+        assert settled_label(page) == "Leave full screen", (
+            "the screen is full and the button does not offer the way back")
         assert page.evaluate(SAVED_FULLSCREEN) is True, (
             "went full-screen and the save does not remember it")
         assert page.locator("#btn-full-menu").inner_text().strip() == "Leave full screen", (
@@ -8817,13 +8818,30 @@ def test_leaving_full_screen_some_other_way_still_turns_the_button_around(make_p
 
         page.evaluate("() => document.exitFullscreen()")
         page.wait_for_function("() => !document.fullscreenElement", timeout=5000)
-        page.wait_for_timeout(200)
-        assert page.get_attribute("#btn-full", "aria-label") == "Full screen", (
+        assert settled_label(page) == "Full screen", (
             "left full screen and the button still says it is the way out of it")
         assert page.evaluate(SAVED_FULLSCREEN) is False, (
             "the player left full screen and the save still asks for it next visit")
     finally:
         page.context.close()
+
+
+def settled_label(page, timeout=3000):
+    """The full-screen button's label once it has stopped changing.
+
+    `document.fullscreenElement` is true a moment before the `fullscreenchange`
+    listener that repaints the button has run, and reading the label right after
+    waiting on the element is a race the live site lost once in a full run.
+    Waiting for the label to stop matching what it said is not the same as
+    asserting it: after `timeout` this returns whatever is there, and the
+    caller's assertion is what fails.
+    """
+    was = page.get_attribute("#btn-full", "aria-label")
+    with contextlib.suppress(PlaywrightTimeout):
+        page.wait_for_function(
+            "was => document.getElementById('btn-full').getAttribute('aria-label') !== was",
+            arg=was, timeout=timeout)
+    return page.get_attribute("#btn-full", "aria-label")
 
 
 SAVED_FULLSCREEN = """
