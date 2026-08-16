@@ -59,6 +59,9 @@ GAME_NAME = re.search(r'^GAME_NAME = "(.*)"$',
 
 IPHONE = {"width": 390, "height": 844}
 PIXEL = {"width": 412, "height": 915}
+# The same phone turned, which is the way the game asks to be held — one name for
+# the number four parametrisations had been carrying as a literal (#339).
+LANDSCAPE = {"width": 844, "height": 390}
 
 # Read from the tree, not from the server, because it decides how many tests
 # there are: a rig that lost its eyes should make this file shorter in the diff
@@ -196,6 +199,19 @@ def desktop(make_page):
 
 @pytest.fixture(scope="module", params=[IPHONE, PIXEL], ids=["iphone", "pixel"])
 def phone(request, make_page):
+    return make_page(request.param, touch=True)
+
+
+@pytest.fixture(scope="module", params=[IPHONE, LANDSCAPE], ids=["upright", "sideways"])
+def held(request, make_page):
+    """One phone both ways round, for a claim about the screen rather than a tap.
+
+    `phone` cannot be the fixture for this: it is the page the touch chain hands
+    on test to test, and half of what it carries is upright by construction —
+    `test_upright_the_view_stops_exactly_at_the_world` asserts `viewLeft == 0`,
+    which is false sideways on purpose (#337). So a test whose claim holds
+    whichever way the phone is held takes this one instead and gets both (#339).
+    """
     return make_page(request.param, touch=True)
 
 
@@ -649,7 +665,7 @@ def test_the_pre_boot_menu_does_not_write_a_controls_hint_of_its_own():
 # The longest line this can produce is Bandit's: "E for Bandit's Big Bounce 🦘".
 # Which hero is chosen is not something a layout is allowed to depend on, so the
 # sweep is all four of them rather than the one that happens to be on screen.
-@pytest.mark.parametrize("viewport,touch", [({"width": 844, "height": 390}, True),
+@pytest.mark.parametrize("viewport,touch", [(LANDSCAPE, True),
                                             ({"width": 1024, "height": 420}, False)],
                          ids=["phone sideways", "laptop, short window"])
 def test_a_longer_hint_does_not_push_the_menu_off_the_screen(make_page, viewport, touch):
@@ -4786,6 +4802,13 @@ def test_no_console_errors_on_desktop(desktop):
 # --- phones: the only way it is really played -------------------------------
 
 def test_the_menu_fits_without_scrolling(phone):
+    # Upright only, and not for want of trying (#339): switching the entire
+    # `@media (max-height: 560px)` block off — the rhythm that makes the menu fit
+    # a sideways phone at all — leaves this green at 844x390 *and* at 390x844,
+    # because the panel scrolls its own insides and the document never grows.
+    # That is #269's finding; `PANEL_FITS` is the measurement that sees it, and
+    # the tests that use it (#266, #269, #274) already cover sideways. Filed
+    # rather than patched here: this line needs replacing, not parametrising.
     assert phone.evaluate("document.body.scrollHeight <= window.innerHeight + 2")
 
 
@@ -4869,7 +4892,7 @@ def test_the_rotate_pill_never_covers_the_progress_bar(make_page):
 # meet.
 SCREENS = [
     (IPHONE, True, "phone upright"),
-    ({"width": 844, "height": 390}, True, "phone sideways"),
+    (LANDSCAPE, True, "phone sideways"),
     (DESKTOP, False, "laptop"),
     ({"width": 1024, "height": 420}, False, "laptop, short window"),
 ]
@@ -5395,7 +5418,7 @@ def test_the_peephole_rule_notices_a_screen_squeezed_to_a_slot(make_page):
     fold, and a fat block dropped into the pinned foot is what a fourth button and
     a paragraph of fine print would do to it (#274).
     """
-    page = make_page({"width": 844, "height": 390}, touch=True)
+    page = make_page(LANDSCAPE, touch=True)
     try:
         page.wait_for_selector("#btn-gallery")
         page.click("#btn-gallery")
@@ -5991,10 +6014,15 @@ def test_a_tap_jumps_on_touch(phone):
     phone.evaluate("() => window.game.stop()")
 
 
-def test_the_canvas_fills_the_viewport(phone):
-    vp = phone.viewport_size
-    width = phone.evaluate("document.getElementById('game').clientWidth")
-    assert width >= vp["width"] - 2, f"{width} < {vp['width']}"
+def test_the_canvas_fills_the_viewport(held):
+    # Sideways too (#339): the element the picture is drawn on has to be the size
+    # of the window before any of the fills below can reach the edges of it.
+    vp = held.viewport_size
+    box = held.evaluate("() => { const r = document.getElementById('game')"
+                        ".getBoundingClientRect(); return {w: r.width, h: r.height}; }")
+    assert box["w"] >= vp["width"] - 2 and box["h"] >= vp["height"] - 2, (
+        f"the canvas is {box['w']:.0f}x{box['h']:.0f} in a "
+        f"{vp['width']}x{vp['height']} window")
 
 
 # The colour the engine clears the canvas to before it draws anything, and the
@@ -6046,9 +6074,10 @@ async ({ hex, frames }) => {
 """
 
 
-@pytest.mark.parametrize("viewport,touch", [(IPHONE, True), (DESKTOP, False)],
+@pytest.mark.parametrize("viewport,touch,screen",
+                         [(IPHONE, True, "phone upright"), (DESKTOP, False, "laptop")],
                          ids=["iphone", "desktop"])
-def test_the_scene_fills_the_screen_top_to_bottom(make_page, viewport, touch):
+def test_the_scene_fills_the_screen_top_to_bottom(make_page, viewport, touch, screen):
     """#251: held upright, the game was a strip in the middle of a dark screen.
 
     The measurement is the one the report was written from — the canvas is
@@ -6067,6 +6096,18 @@ def test_the_scene_fills_the_screen_top_to_bottom(make_page, viewport, touch):
     Its own page, both because the numbers depend on the viewport and because it
     starts every chapter; the desktop arm is here so the fix cannot pay for
     portrait by breaking the landscape view that was already right.
+
+    Upright and the laptop, and deliberately *not* the two screens that fit by
+    their height. #339 added them and then measured what they could catch: a
+    height-bound screen has no spare rows — the world's own 540 covers it exactly
+    — so a row scan has nothing to find there. Three mutations were run against
+    those arms on 2026-08-16 and all three survived at 844x390 and 1024x420:
+    fitting the world to `0.9 * h / WORLD_H`, clipping to `0, 0, WORLD_W,
+    WORLD_H`, and making the high-sky pass draw nothing. The clip one is caught
+    upright on the spot — *39% of the middle column drawn, 1029 of 1688 rows the
+    empty frame* — which is the whole point: sideways the bars are down the
+    sides, and that is `test_sideways_no_column_of_the_screen_is_the_bare_frame`
+    below, not this.
     """
     assert LETTERBOX, ("game.js no longer clears the frame to a flat colour, so this "
                        "test cannot tell a drawn screen from an empty one — find what "
@@ -6078,7 +6119,7 @@ def test_the_scene_fills_the_screen_top_to_bottom(make_page, viewport, touch):
         for where, m in sorted(seen.items()):
             painted = (m["height"] - m["bare"]) / m["height"]
             assert painted > 0.99, (
-                f"{where} on {viewport['width']}x{viewport['height']}: only "
+                f"{where} on {screen} ({viewport['width']}x{viewport['height']}): only "
                 f"{painted:.0%} of the middle of the screen is drawn on "
                 f"({m['bare']} of {m['height']} device rows are the empty frame, "
                 f"y={m['first']}..{m['last']}). That is the letterbox of #251.")
@@ -6205,7 +6246,7 @@ def test_sideways_no_column_of_the_screen_is_the_bare_frame(make_page):
     assert LETTERBOX, ("game.js no longer clears the frame to a flat colour, so this "
                        "test cannot tell a drawn screen from an empty one — find what "
                        "render() now starts with and re-point the pattern at it.")
-    page = make_page({"width": 844, "height": 390}, touch=True)
+    page = make_page(LANDSCAPE, touch=True)
     try:
         seen = page.evaluate(SIDEWAYS_FRAME, {"hex": LETTERBOX.group(1), "frames": 120})
         assert len(seen) == 6, f"only {len(seen)} screens measured: {sorted(seen)}"
@@ -6431,7 +6472,7 @@ def test_upright_the_world_is_drawn_bigger_than_the_screen_is_wide(make_page):
 
 
 @pytest.mark.parametrize("viewport,touch,screen",
-                         [({"width": 844, "height": 390}, True, "phone sideways"),
+                         [(LANDSCAPE, True, "phone sideways"),
                           (DESKTOP, False, "laptop")],
                          ids=["phone sideways", "laptop"])
 def test_a_wide_screen_is_drawn_exactly_as_it_was_before_the_zoom(make_page, viewport,
@@ -8082,7 +8123,8 @@ def test_the_move_button_says_whose_move_it_is_and_fills_back_up(own_page):
         f"so a ring standing still is the HUD not being redrawn.")
 
 
-@pytest.mark.parametrize("viewport", [IPHONE, PIXEL], ids=["iphone", "pixel"])
+@pytest.mark.parametrize("viewport", [IPHONE, PIXEL, LANDSCAPE],
+                         ids=["iphone", "pixel", "phone sideways"])
 def test_a_thumb_on_the_move_button_does_not_also_jump(make_page, viewport):
     """One tap, one thing. The button sits over the canvas, and the canvas is
     the jump: a tap counted by both is a move that always costs a jump.
@@ -8091,6 +8133,10 @@ def test_a_thumb_on_the_move_button_does_not_also_jump(make_page, viewport):
     be the same whether she happens to be on the ground at the time. Its own page
     because it starts from the menu — the shared phone is already mid-chapter by
     the time this runs, handed on by the tap tests.
+
+    Sideways as well since #339: it is a tap target read off the live rect, and
+    the sideways HUD has a 390px-tall window to fit in rather than an 844px one,
+    which is where a button first has nowhere to go.
     """
     page = make_page(viewport, touch=True)
     try:
