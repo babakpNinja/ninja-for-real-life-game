@@ -33,6 +33,23 @@ export const SEA_TOP = GROUND_Y - 120;
 export const CLOUD_TOP = GROUND_Y - 88;
 
 /**
+ * How far above the world the sky is drawn out to, in world units (#326).
+ *
+ * The world is 540 tall and 16:9; a phone held upright is not, so `resize()`
+ * hands the renderer a `viewTop` of about -573 and everything above y=0 was one
+ * flat colour — the top 45% of the screen, measured, with no cloud, no star and
+ * no gradient in it. A canvas gradient clamps to its end colour, so the sky's
+ * own top colour was simply extended forever.
+ *
+ * Content up there is authored against *this* number rather than against
+ * `viewTop`, so the picture at a given world y is the same on every screen and a
+ * taller phone sees more of the same sky rather than a different one. Deeper
+ * than the reference iPhone's band on purpose, and the cloud field tiles past
+ * it, so a screen taller still does not run out.
+ */
+export const SKY_TOP = -600;
+
+/**
  * The narrowest gap the beach parts its sand by — a rock pool, not a channel.
  *
  * Exported so the test that says "ch4 reads as a beach" can measure against the
@@ -86,6 +103,7 @@ export const CHAPTERS = [
     length: 5200,
     speed: 236,
     sky: ["#8FD3F4", "#CFF0FF"],
+    skyHigh: "#4FA8DC",
     ground: ["#7FBF6A", "#5E9E52"],
     story: [
       "Bluey's favourite toy, Floppy the bunny, has gone missing!",
@@ -127,6 +145,7 @@ export const CHAPTERS = [
     length: 5600,
     speed: 244,
     sky: ["#9FE0D0", "#E7FBF3"],
+    skyHigh: "#59B8AC",
     ground: ["#87B96A", "#5E8F4C"],
     water: "#5EC5D6",
     story: [
@@ -175,6 +194,7 @@ export const CHAPTERS = [
     length: 6000,
     speed: 292,
     sky: ["#FFD9A0", "#FFF1DC"],
+    skyHigh: "#EBB273",
     ground: ["#C9C3BA", "#A8A199"],
     story: [
       "Everyone piles into Hammerbarn. Dad only came for one thing and has already forgotten what it was.",
@@ -221,6 +241,7 @@ export const CHAPTERS = [
     length: 6200,
     speed: 268,
     sky: ["#7FD8F7", "#FFF3D6"],
+    skyHigh: "#3EA9DE",
     ground: ["#F3DCA8", "#DFC085"],
     water: "#3FB8D8",
     story: [
@@ -285,6 +306,7 @@ export const CHAPTERS = [
     speed: 220,
     gravityScale: 0.66,     // dreams are floaty
     sky: ["#2B2E68", "#6E5FA8"],
+    skyHigh: "#14163C",
     ground: ["#4C4A8C", "#343266"],
     story: [
       "In the car on the way home Bingo falls asleep with Floppy under one arm.",
@@ -377,6 +399,59 @@ export function sceneryFor(ch) {
     for (let i = 0; i < 9; i++) {
       out.push({ kind: kinds[i % kinds.length], x: 300 + i * 400, y,
                  scale: 0.9 + (i % 3) * 0.15 });
+    }
+  }
+  return out;
+}
+
+/** The x period the high sky repeats over — it has to tile, the world does not. */
+export const SKY_TILE = 1600;
+
+/** The band the high sky is authored in: above the world, clear of the old art. */
+export const SKY_BAND = [SKY_TOP + 40, -90];
+
+/**
+ * What is up in the sky above the world, for a phone held upright (#326).
+ *
+ * The old sky was authored entirely inside 0..540 — clouds at y 70..162, a sun at
+ * 96, stars stopping at the cloud sea. Upright, the renderer is handed a `viewTop`
+ * near -573, and the topmost drawn thing sat 390px down an 844px screen: the top
+ * 46% was one flat colour. This fills that band, and only that band — the lowest
+ * item is at -90, so a laptop (which sees to about -30) is not shown anything new.
+ *
+ * Deterministic per chapter, and a function of world position only, so the same
+ * chapter draws the same sky on every screen: a taller phone sees further up the
+ * same picture rather than a different one.
+ *
+ * Placed rather than random: x is one item per even slot across the tile, and the
+ * heights are a permutation (step 5, coprime with 14) of evenly spaced bands. A
+ * plain `rng()` for both put the whole top third of some tiles empty, which is
+ * the bug this is fixing, one screen along.
+ */
+export function highSky(ch) {
+  const rng = makeRng(ch.n * 7919 + 13);
+  const [top, bot] = SKY_BAND;
+  const out = [];
+  const night = ch.id === "sleepytime";
+  const n = night ? 70 : 14;
+  for (let i = 0; i < n; i++) {
+    const slot = night ? (i * 29) % n : (i * 5) % n;
+    const x = ((i + 0.15 + rng() * 0.7) / n) * SKY_TILE;
+    const y = top + ((slot + rng() * 0.9) / n) * (bot - top);
+    const depth = (y - top) / (bot - top);   // 0 at the top of the band, 1 at the bottom
+    if (night) {
+      out.push({ kind: "star", x, y, scale: 0.7 + depth * 0.9, alpha: 0.45 + depth * 0.45 });
+    } else {
+      // Higher is further, so it is smaller and thinner — the band has to read as
+      // depth rather than as a second row of the clouds already down at y=70.
+      out.push({ kind: "cloud", x, y, scale: 0.45 + depth * 0.6, alpha: 0.3 + depth * 0.35 });
+    }
+  }
+  if (!night) {
+    // Three birds, because a sky of nothing but haze is still a gradient with
+    // lumps in it. High, small, and not on the clouds' rhythm.
+    for (let i = 0; i < 3; i++) {
+      out.push({ kind: "bird", x: (i + 0.4) / 3 * SKY_TILE, y: top + 30 + i * 96, scale: 0.8 + (i % 2) * 0.5, alpha: 0.5 });
     }
   }
   return out;

@@ -6386,6 +6386,294 @@ def test_no_console_errors_on_touch(phone):
     assert not phone.errors, str(phone.errors[:3])
 
 
+# --- and what is in the sky the zoom left over her head (#326) ----------------
+
+# The chapters' own numbers, asked of the module that runs rather than parsed
+# out of the file it lives in: `SKY_BAND`'s top is written as an expression, and
+# a regex for it is a regex that stops matching the moment the expression is
+# edited — which turns a failing assertion into a module that will not import,
+# and a red suite that says nothing about the picture.
+SKY_CONSTS = """
+async () => {
+  const m = await import("./js/chapters.js");
+  return { top: m.SKY_TOP, band: m.SKY_BAND, tile: m.SKY_TILE };
+}
+"""
+
+# How far down an upright screen the topmost drawn thing is allowed to be, as a
+# share of that screen. Before this issue it was 0.46 — 390px of an 844px phone
+# with nothing above it but one flat colour, which is what "the sky has nothing
+# in it" measures out as. A sixth of the screen is the loose end of "the top of
+# the picture is part of the picture": it is four times better than it was and
+# it does not pin the art to any one cloud.
+SKY_CEILING = 1 / 6
+
+# What "the same picture at two sizes" is allowed to come to when it is sampled
+# on a grid: a colour distance, and the share of the 352 shared sample points
+# that may exceed it. Measured across the five chapters at this grid on
+# 2026-08-16: 4, 7, 3, 3 and 1 points, so 2.0% is the worst of them and the
+# bound is a little over twice that. Not tighter, because these are points that
+# landed on the edge of a cloud, where 0.61 and 1.48 world px per pixel really
+# do disagree; not looser, because a sky that was genuinely arranged differently
+# moves whole clouds and fails this by a hundred points, not by three.
+SAMPLE_TOL = 16
+SAMPLE_OFF = 0.05
+
+# The topmost row of the canvas that is not a horizontal band of one colour —
+# i.e. the first row with something *drawn* in it. A vertical gradient is
+# constant along any row, so the scan cannot mistake the sky for content, and
+# the HUD is DOM rather than canvas so it is not in this picture at all.
+TOPMOST_DRAWN = """
+(thr) => {
+  const c = document.querySelector("canvas");
+  const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+  for (let y = 0; y < c.height; y++) {
+    let mn = [255, 255, 255], mx = [0, 0, 0];
+    for (let x = 0; x < c.width; x += 2) {
+      const i = (y * c.width + x) * 4;
+      for (let k = 0; k < 3; k++) {
+        const v = d[i + k];
+        if (v < mn[k]) mn[k] = v;
+        if (v > mx[k]) mx[k] = v;
+      }
+    }
+    if (Math.max(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]) > thr) {
+      return { row: y, css: y / (c.height / c.clientHeight), h: c.clientHeight };
+    }
+  }
+  return { row: null, css: null, h: c.clientHeight };
+}
+"""
+
+# One frame of a chapter, with the loop stopped and the clock and the camera put
+# where the caller says — `stop()` would drop the game back to the idle screen,
+# which draws a different sky entirely and would let every test below pass
+# against a picture no player ever sees.
+FRAME = """
+({ ch, x, t }) => {
+  const g = window.game;
+  g.start(ch);
+  g.running = false;
+  g.mode = "playing";
+  g.t = t;
+  g.player.x = x;
+  g.camSlack = 0;
+  g.render();
+  return { camX: g.camAt(), viewTop: g.viewTop, scale: g.scale, offX: g.offX, offY: g.offY };
+}
+"""
+
+
+@pytest.mark.parametrize("chapter", range(5))
+def test_upright_the_top_of_the_screen_is_part_of_the_picture(make_page, chapter):
+    """The sky a phone's spare height turns into, chapter by chapter (#326).
+
+    The world is 960x540 and a phone held upright is not, so the renderer is
+    handed a `viewTop` near -573 and draws the sky out to it. Everything the game
+    ever drew in the sky, though, was authored inside 0..540 — clouds at y 70 to
+    162, a sun at 96, a star field stopping at the cloud sea — and a canvas
+    gradient clamps to its end colour, so all 573 world px above the world were
+    one flat blue. Measured: the topmost drawn thing sat 390px down an 844px
+    screen, and the top 46% of the phone was a swatch.
+
+    This asks the picture the same question and expects an answer in the top
+    `SKY_CEILING` of it.
+    """
+    page = make_page(IPHONE, touch=True)
+    try:
+        band = page.evaluate(SKY_CONSTS)["band"]
+        m = page.evaluate(FRAME, {"ch": chapter, "x": 900, "t": 3.0})
+        assert m["viewTop"] < band[1], (
+            f"this screen only sees up to y={m['viewTop']:.0f}, which is below the "
+            f"{band[1]:.0f} the high sky starts at — nothing here is upright")
+        top = page.evaluate(TOPMOST_DRAWN, 6)
+        assert top["row"] is not None, "nothing at all is drawn on this screen"
+        assert top["css"] <= SKY_CEILING * top["h"], (
+            f"the topmost drawn thing on chapter {chapter + 1} is {top['css']:.0f}px "
+            f"down an {top['h']}px screen ({top['css'] / top['h']:.0%}), against a "
+            f"ceiling of {SKY_CEILING:.0%} — the sky above it is one flat colour")
+    finally:
+        page.context.close()
+
+
+def test_the_high_sky_is_authored_where_only_a_tall_screen_can_see_it(make_page):
+    """The rule that keeps every other screen's picture exactly as it was (#326).
+
+    A laptop sees to about y=-30 and a landscape phone to y=0, so the way to add
+    a sky for upright screens without redrawing theirs is to put all of it above
+    a line no other screen reaches. That line is `SKY_BAND`'s lower end, and this
+    is the test that it is honoured — a cloud that drifts below it is a change to
+    a picture this issue was not about.
+
+    Also the scroll: the field tiles over `SKY_TILE` and only 960 of it is on
+    screen at once, so "there is something near the top of the band" has to hold
+    at every camera position, not at the one the test above happened to
+    photograph.
+    """
+    page = make_page(IPHONE, touch=True)
+    try:
+        sky = page.evaluate("""
+        async () => {
+          const m = await import("./js/chapters.js");
+          const out = {};
+          for (const ch of m.CHAPTERS) out[ch.id] = m.highSky(ch);
+          return { sky: out, band: m.SKY_BAND, tile: m.SKY_TILE, top: m.SKY_TOP };
+        }
+        """)
+        assert sky["band"][1] <= 0 and sky["band"][0] < sky["band"][1], sky["band"]
+        for ch, items in sky["sky"].items():
+            assert len(items) >= 14, f"{ch}: {len(items)} things in the sky is not a sky"
+            low = max(it["y"] for it in items)
+            assert low <= sky["band"][1], (
+                f"{ch} draws something at y={low:.0f}, below the band's "
+                f"{sky['band'][1]:.0f} — a laptop's sky has been repainted by a fix "
+                "for a phone's")
+            high = min(it["y"] for it in items)
+            assert high <= sky["top"] + 90, (
+                f"{ch}'s highest thing is at y={high:.0f}, and the sky is drawn from "
+                f"{sky['top']:.0f} — the top of the band is empty")
+            # every camera position, in steps small enough that no window is skipped
+            top = sky["band"][0]
+            depth = sky["band"][1] - top
+            worst = 0
+            for cam in range(0, int(sky["tile"]), 40):
+                # what the tiling puts on screen: x wraps into [-320, tile-320)
+                seen = [it for it in items
+                        if -200 <= ((it["x"] - cam * 0.09) % sky["tile"] + sky["tile"])
+                        % sky["tile"] - 320 <= 960]
+                assert seen, f"{ch}: the sky is empty at camera {cam}"
+                worst = max(worst, (min(it["y"] for it in seen) - top) / depth)
+            assert worst <= 0.35, (
+                f"{ch}: at some camera position the highest thing on screen is "
+                f"{worst:.0%} of the way down the band — the top of the sky empties "
+                "out as it scrolls")
+    finally:
+        page.context.close()
+
+
+def test_the_sky_was_added_above_the_old_picture_not_over_it(make_page):
+    """"Additive": the world's own 0..540 is drawn exactly as it was (#326).
+
+    The high sky is a second pass rather than a taller gradient, precisely so
+    this can be asserted byte for byte: turn the new pass off, photograph the
+    band from y=0 down, turn it back on, photograph it again. One pixel of
+    difference there is the old picture being redrawn, and the whole promise of
+    this change is that it is not.
+
+    The half above y=0 has to differ, or the same comparison passes on a change
+    that did nothing at all.
+    """
+    page = make_page(IPHONE, touch=True)
+    try:
+        seen = page.evaluate("""
+        () => {
+          const g = window.game;
+          const c = g.canvas, ctx = c.getContext("2d");
+          const shot = () => ctx.getImageData(0, 0, c.width, c.height).data;
+          const frame = () => { g.t = 3; g.player.x = 900; g.camSlack = 0; g.render(); };
+          const out = [];
+          for (let i = 0; i < 5; i++) {
+            g.start(i);
+            g.running = false;
+            g.mode = "playing";
+            frame();
+            const before = shot().slice();
+            const real = g.renderHighSky;
+            g.renderHighSky = () => {};
+            frame();
+            const flat = shot().slice();
+            g.renderHighSky = real;
+            // the device row world y=0 sits on
+            const y0 = Math.round(g.offY * g.dpr);
+            let below = 0, above = 0;
+            for (let p = 0; p < before.length; p += 4) {
+              if (before[p] === flat[p] && before[p + 1] === flat[p + 1]
+                  && before[p + 2] === flat[p + 2]) continue;
+              if (Math.floor(p / 4 / c.width) < y0) above++; else below++;
+            }
+            out.push({ ch: g.ch.id, y0, above, below });
+          }
+          g.stop();
+          return out;
+        }
+        """)
+        for r in seen:
+            assert r["below"] == 0, (
+                f"{r['ch']}: {r['below']} pixels of the world's own band changed when "
+                "the new sky pass was switched off — it is not additive")
+            assert r["above"] > 2000, (
+                f"{r['ch']}: only {r['above']} pixels above the world line changed when "
+                "the new sky pass was switched off — it is barely drawing anything, so "
+                "the line above proves nothing")
+    finally:
+        page.context.close()
+
+
+def test_a_phone_and_a_laptop_are_looking_at_the_same_sky(make_page):
+    """One picture at two sizes, not two pictures (#326).
+
+    The high sky is a function of world position and the camera alone — no
+    `viewTop` anywhere in it — so a taller screen sees further up the same sky
+    rather than a differently-arranged one, and the part both screens can see is
+    the same part. This samples the world both are showing on a grid and compares
+    what is at each point.
+
+    Sampled rather than compared pixel for pixel: the two screens rasterise the
+    same shapes at 0.61 and 1.48 world-to-pixel, so a cloud's edge lands on
+    different pixels on each. The grid steps are coarser than that ambiguity, and
+    the tolerance is for the points that still land on an edge.
+    """
+    phone = make_page(IPHONE, touch=True)
+    laptop = make_page(DESKTOP, touch=False)
+    try:
+        probe = """
+        ({ ch, x, t, cam }) => {
+          const g = window.game;
+          g.start(ch);
+          g.running = false;
+          g.mode = "playing";
+          g.t = t;
+          g.player.x = x;
+          g.camSlack = 0;
+          // The camera, pinned. It normally follows the player by `camLead`, which
+          // is 120 upright and 300 wide — so the two screens would otherwise be
+          // looking at different stretches of level, and this would be comparing
+          // two different positions of the same sky.
+          g.camAt = () => cam;
+          g.render();
+          const c = g.canvas, d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+          const out = {};
+          for (let wy = 10; wy < 440; wy += 20) {
+            for (let wx = 20; wx < 940; wx += 40) {
+              const px = Math.round((g.offX + wx * g.scale) * g.dpr);
+              const py = Math.round((g.offY + wy * g.scale) * g.dpr);
+              // Upright the screen is 640 world px wide, so a third of the world is
+              // off the side of it — sampling there reads the next row along.
+              if (px < 0 || px >= c.width || py < 0 || py >= c.height) continue;
+              const i = (py * c.width + px) * 4;
+              out[wx + "," + wy] = [d[i], d[i + 1], d[i + 2]];
+            }
+          }
+          return { pts: out, camX: g.camAt() };
+        }
+        """
+        for i in range(5):
+            a = phone.evaluate(probe, {"ch": i, "x": 900, "t": 3.0, "cam": 600})
+            b = laptop.evaluate(probe, {"ch": i, "x": 900, "t": 3.0, "cam": 600})
+            assert a["camX"] == b["camX"], (a["camX"], b["camX"])
+            both = sorted(set(a["pts"]) & set(b["pts"]))
+            assert len(both) > 300, f"only {len(both)} points are on both screens"
+            off = [(k, a["pts"][k], b["pts"][k]) for k in both
+                   if max(abs(u - v) for u, v in zip(a["pts"][k], b["pts"][k])) > SAMPLE_TOL]
+            assert len(off) <= SAMPLE_OFF * len(both), (
+                f"chapter {i + 1}: {len(off)} of {len(both)} sampled points of the "
+                f"world's own band differ between a phone and a laptop, e.g. {off[:3]} "
+                "— the two screens are being shown different pictures")
+    finally:
+        phone.context.close()
+        laptop.context.close()
+
+
 # --- the tap that arrives before the game does (#284) -------------------------
 
 # Every other test in this file starts from `make_page`, which waits for

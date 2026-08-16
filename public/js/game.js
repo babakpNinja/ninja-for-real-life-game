@@ -8,7 +8,7 @@
  */
 
 import {
-  drawTree, drawPalm, drawGumTree, drawHouse, drawCloud, drawBalloon,
+  drawTree, drawPalm, drawGumTree, drawHouse, drawCloud, drawBird, drawBalloon,
   drawPallets, drawTrolleys, drawStepLadder,
   drawDreamPlanet, drawCloudTower,
   drawToken, drawObstacle, roundRect, star,
@@ -16,8 +16,8 @@ import {
 import { drawCharacter, footfall, stridePhase, BLEND } from "./sprites.js";
 import { abilityFor, heroFor, PLAYABLE } from "./abilities.js";
 import { sound } from "./audio.js";
-import { CHAPTERS, buildLevel, sceneryFor, starsFor, GROUND_Y, SEA_TOP, CLOUD_TOP,
-  WORLD_W, WORLD_H } from "./chapters.js";
+import { CHAPTERS, buildLevel, sceneryFor, starsFor, highSky, GROUND_Y, SEA_TOP, CLOUD_TOP,
+  SKY_TOP, SKY_TILE, SKY_BAND, WORLD_W, WORLD_H } from "./chapters.js";
 
 const GRAVITY = 2300;
 const JUMP_V = -790;
@@ -886,6 +886,48 @@ export class Game {
     ctx.fillRect(0, GROUND_Y, WORLD_W, this.viewBot - GROUND_Y);
   }
 
+  /**
+   * The sky above the world, drawn only on screens tall enough to see it (#326).
+   *
+   * Two separate passes rather than one taller gradient: the band from 0 down is
+   * left exactly as it was drawn before, so a laptop's picture is unchanged and
+   * the phone's is the same picture with more of the sky on top of it. Everything
+   * here is a function of world y and camera x alone — no `viewTop` — so the two
+   * screens agree about what is at a given height.
+   */
+  renderHighSky(ctx, camX) {
+    if (this.viewTop >= SKY_BAND[1]) return;
+    const ch = this.ch;
+    const hi = ctx.createLinearGradient(0, SKY_TOP, 0, 0);
+    hi.addColorStop(0, ch.skyHigh);
+    hi.addColorStop(1, ch.sky[0]);
+    ctx.fillStyle = hi;
+    ctx.fillRect(0, this.viewTop, WORLD_W, -this.viewTop);
+
+    if (!this._highSky || this._highSkyFor !== ch.id) {
+      this._highSky = highSky(ch);
+      this._highSkyFor = ch.id;
+    }
+    for (const it of this._highSky) {
+      if (it.y < this.viewTop - 60) continue;
+      // Further away than the clouds at y=70, so it slides more slowly, and it
+      // tiles because the sky is longer than the level is.
+      const x = (((it.x - camX * 0.09) % SKY_TILE) + SKY_TILE) % SKY_TILE - 320;
+      if (it.kind === "star") {
+        const tw = 0.5 + 0.5 * Math.sin(this.t * 2 + it.x);
+        ctx.globalAlpha = it.alpha * (0.55 + tw * 0.45);
+        ctx.fillStyle = "#FFF7D6";
+        ctx.fillRect(x, it.y, 2.5 * it.scale, 2.5 * it.scale);
+        ctx.globalAlpha = 1;
+      } else if (it.kind === "bird") {
+        drawBird(ctx, x, it.y, it.scale, it.alpha);
+      } else {
+        drawCloud(ctx, x, it.y, it.scale, it.alpha);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
   renderBackground(ctx, camX) {
     const ch = this.ch;
     const g = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
@@ -893,6 +935,7 @@ export class Game {
     g.addColorStop(1, ch.sky[1]);
     ctx.fillStyle = g;
     ctx.fillRect(0, this.viewTop, WORLD_W, this.viewBot - this.viewTop);
+    this.renderHighSky(ctx, camX);
 
     if (ch.id === "sleepytime") {
       // stars + a big friendly moon. The field stops short of the cloud sea

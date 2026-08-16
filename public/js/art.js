@@ -464,6 +464,23 @@ export function drawCloud(ctx, x, y, scale, alpha = 0.9) {
   ctx.restore();
 }
 
+/** A bird, at the distance where a bird is two strokes (#326). */
+export function drawBird(ctx, x, y, scale, alpha = 0.5) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  ctx.strokeStyle = "#5B6B7A";
+  ctx.lineWidth = 2.2;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-14, 4);
+  ctx.quadraticCurveTo(-7, -5, 0, 1);
+  ctx.quadraticCurveTo(7, -5, 14, 4);
+  ctx.stroke();
+  ctx.restore();
+}
+
 export function drawBalloon(ctx, x, y, r, color) {
   ctx.save();
   ctx.translate(x, y);
