@@ -27,6 +27,10 @@ export class Sound {
     // *previous* read end — as 'canceled'/'interrupted' — and its handlers would
     // otherwise report that as the outcome of the read that replaced it (#290)
     this.speechRun = 0;
+    // the build-time recordings, once main.js has fetched the manifest (#357),
+    // and whichever one of them is playing right now
+    this.voices = null;
+    this.clip = null;
   }
 
   unlock() {
@@ -127,7 +131,22 @@ export class Sound {
   /* ------------------------------------------------- reading out loud -- */
 
   /**
-   * Say a few lines out loud, in the browser's own voice.
+   * The manifest of lines that were recorded at build time (#357).
+   *
+   * `scripts/render_voices.py` reads every fixed line the game says into an mp3
+   * and writes `data/voices.json` keyed by the line's own text — the same
+   * `replace(/\s+/g," ").trim()` `read()` does — so the lookup here is a string
+   * the caller already has and no hashing happens in the page.
+   *
+   * A deploy without the manifest (or a fetch that fails) is not an error: every
+   * line falls back to `speechSynthesis`, which is how this worked before.
+   */
+  useVoices(manifest) {
+    this.voices = (manifest && manifest.lines) || null;
+  }
+
+  /**
+   * Say a few lines out loud: the recording if there is one, else the browser.
    *
    * The player this is built for is three, and the story card is three
    * paragraphs of grey text she cannot read (#255). Nothing is synthesised
@@ -135,6 +154,13 @@ export class Sound {
    * is why mute is checked in this method rather than at a gain node, and why
    * `hush()` exists at all: a queued utterance outlives the screen that asked
    * for it and would go on talking over the next one.
+   *
+   * The fallback is **per line, not per screen** (#357). The results screen says
+   * "you found forty-one of forty-five" — a sentence assembled from a number the
+   * player just earned, which cannot have been recorded — next to "three stars.",
+   * which is one of four fixed lines and is. Falling back a whole screen at a
+   * time would put the browser voice back on every results read there has ever
+   * been, for the sake of one line in it.
    *
    * Speech needs the same user gesture WebAudio does, and every screen that
    * calls this was reached by a tap. A browser with no `speechSynthesis` (or a
@@ -169,40 +195,126 @@ export class Sound {
    */
   read(lines, { onend, onerror } = {}) {
     const synth = window.speechSynthesis;
-    if (!synth || this.muted) return false;
+    if (this.muted) return false;
     const texts = [];
     for (const line of lines) {
       const text = String(line).replace(/\s+/g, " ").trim();
       if (text) texts.push(text);
     }
     if (!texts.length) return false;
+    const clips = this.voices || {};
+    const plan = texts.map((text) => ({ text, clip: clips[text] || null }));
+    // Nothing here can make a sound: no recordings for any of these lines and no
+    // browser voice to fall back on. Said now, synchronously, because the button
+    // that has to explain itself is looking at the return value (#294).
+    if (!synth && !plan.some((step) => step.clip)) return false;
+
+    this.stopClip();
     const run = ++this.speechRun;
-    synth.cancel();
-    // one answer per read, from whichever comes first: `onend` is asked of the
-    // last utterance only, because the caller wants the end of the *story*, not
-    // the end of its first paragraph
+    if (synth) synth.cancel();
+
+    // one answer per read: the caller wants the end of the *story*, not the end
+    // of its first paragraph. `heard` is what decides which answer — a read
+    // where every line was silent is the "no voice here" the button reports,
+    // and a read where the recordings played and one fallback line failed is
+    // not (#289, #290).
     let answered = false;
-    const once = (fn) => (e) => {
+    let heard = 0;
+    let at = 0;
+    const answer = (fn, e) => {
       if (answered || run !== this.speechRun || !fn) return;
       answered = true;
       fn(e);
     };
-    texts.forEach((text, i) => {
-      const say = new SpeechSynthesisUtterance(text);
-      say.rate = 0.92;              // slower than default: it is being read to a child
-      say.pitch = 1.1;
-      if (i === texts.length - 1) say.onend = once(onend);
-      // a device with the API and no usable voice answers 'synthesis-failed'
-      // here and nothing else ever happens — the one way to tell "it is talking"
-      // from "it will never talk" (#289)
-      say.onerror = once(onerror);
-      synth.speak(say);
-    });
+    const next = () => {
+      if (run !== this.speechRun) return;   // a newer read owns the queue now
+      if (at >= plan.length) {
+        if (heard) answer(onend, {});
+        else answer(onerror, { error: "nothing-spoken" });
+        return;
+      }
+      const step = plan[at++];
+      if (step.clip) this.playClip(step, run, () => { heard++; next(); },
+                                   () => this.speakLine(step, run, next, () => { heard++; }));
+      else this.speakLine(step, run, next, () => { heard++; });
+    };
+    next();
     return true;
+  }
+
+  /**
+   * Play one recorded line, then hand back.
+   *
+   * The element goes in the document rather than staying a bare `new Audio()`:
+   * it is the only evidence a page (or a test) has that a recording and not the
+   * browser voice is what is talking, and `hush()` needs something to stop.
+   *
+   * A clip that will not load is not an error — it is `onmiss`, which reads that
+   * one line in the browser voice. A deploy that dropped `public/audio/` should
+   * sound like the game did before the recordings existed, not like a broken one.
+   */
+  playClip(step, run, onplayed, onmiss) {
+    const el = document.createElement("audio");
+    el.className = "voice";
+    el.dataset.line = step.text;
+    el.src = `audio/${step.clip.file}`;
+    document.body.appendChild(el);
+    this.clip = el;
+    let done = false;
+    const finish = (played) => {
+      if (done) return;
+      done = true;
+      el.onended = null;
+      el.onerror = null;
+      el.remove();
+      if (this.clip === el) this.clip = null;
+      if (run !== this.speechRun) return;
+      (played ? onplayed : onmiss)();
+    };
+    el.onended = () => finish(true);
+    el.onerror = () => finish(false);
+    const started = el.play();
+    // A play() that rejects is the autoplay policy or a codec, both of which are
+    // "this recording will not be heard" — the same answer as a 404.
+    if (started && started.catch) started.catch(() => finish(false));
+  }
+
+  /** One line in the browser's own voice, then `after()` whatever happened. */
+  speakLine(step, run, after, onspoken) {
+    const synth = window.speechSynthesis;
+    if (!synth) { after(); return; }
+    const say = new SpeechSynthesisUtterance(step.text);
+    say.rate = 0.92;              // slower than default: it is being read to a child
+    say.pitch = 1.1;
+    let done = false;
+    const finish = (spoke) => {
+      if (done || run !== this.speechRun) return;
+      done = true;
+      if (spoke) onspoken();
+      after();
+    };
+    say.onend = () => finish(true);
+    // a device with the API and no usable voice answers 'synthesis-failed' here
+    // and nothing else ever happens — the one way to tell "it is talking" from
+    // "it will never talk" (#289)
+    say.onerror = () => finish(false);
+    synth.speak(say);
+  }
+
+  /** Stop a recording mid-word, and forget it. */
+  stopClip() {
+    const el = this.clip;
+    if (!el) return;
+    this.clip = null;
+    el.onended = null;
+    el.onerror = null;
+    el.pause();
+    el.remove();
   }
 
   hush() {
     this.speechRun++;              // whatever is in the queue is no longer anyone's
+    this.stopClip();
     if (window.speechSynthesis) window.speechSynthesis.cancel();
   }
 

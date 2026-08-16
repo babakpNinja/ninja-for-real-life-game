@@ -603,7 +603,12 @@ function chapterSelect() {
  * (#290). Four states, all of them out loud:
  *
  *   reading  — the queue is being spoken
- *   novoice  — the browser has no voice, or answered 'synthesis-failed'
+ *   novoice  — nothing on this screen was heard: no recording for these lines
+ *              (#357) *and* no browser voice, or one that answered
+ *              'synthesis-failed'. It is not "speechSynthesis is missing" any
+ *              more — a phone with no voice of its own plays the recordings
+ *              perfectly well, and telling that player there is no voice here
+ *              would be a lie about a card that just read itself to her
  *   muted    — the sound is off; the button says so instead of doing nothing
  *   idle     — tap it to hear the story again
  *
@@ -690,9 +695,9 @@ function readAloud(lines, { speak = true } = {}) {
       onend: () => setReadLabel(),
       onerror: () => setReadLabel("novoice"),
     });
-    // nothing queued and the sound is on means this browser has no
-    // `speechSynthesis` at all — "Read it again" would be a button that has
-    // never worked and never says so (#294)
+    // nothing queued and the sound is on means nothing here can say these lines
+    // — no recording and no browser voice — and "Read it again" would be a
+    // button that has never worked and never says so (#294)
     setReadLabel(queued ? "reading" : sound.muted ? null : "novoice");
   };
   if (speak) readOut();
@@ -1191,6 +1196,17 @@ async function boot() {
   const res = await fetch("data/characters.json");
   const data = await res.json();
   characters = data.characters;
+
+  // The recorded readings (#357): the manifest only — a few KB of line -> file,
+  // no clip is fetched until a screen actually says one, because there are 171
+  // of them and 8 MB is not what a phone should spend its first second on. A
+  // deploy without it falls back to the browser voice, line by line, which is
+  // what the game did before, so this failing is not worth stopping boot for.
+  try {
+    sound.useVoices(await (await fetch("data/voices.json")).json());
+  } catch (e) {
+    console.warn("no recorded voices:", e);
+  }
 
   // Character artwork: the manifest first, then eagerly fetch only the cast the
   // menu and the first chapters need. The other twenty load when the gallery

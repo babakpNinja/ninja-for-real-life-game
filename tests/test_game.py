@@ -742,21 +742,59 @@ def test_chapter_select_lists_five_chapters_with_four_locked(desktop):
 # says what the game is doing is driven by them and nothing else here can produce
 # one: `__finish()` for the queue running out, `__fail()` for the
 # 'synthesis-failed' a device with no voice answers with (#289, #290).
+#
+# Since #357 a line is spoken by whichever of two mechanisms has it — a recorded
+# mp3 if `voices.json` holds one, the browser voice if not — so the spy covers
+# both and `__said` is "what the game read out loud", however it said it. A test
+# that only watched `speechSynthesis` would now report the story card as silent
+# while it played four recordings. `__clips` and `__spoke` split `__said` back
+# into the two mechanisms, for the tests that care which one said a line.
+#
+# One thing the spy changes on purpose: the recordings play one after another
+# (they are files, and two at once is two voices), so `__pending` holds the line
+# being said *now* rather than the whole queue, and finishing it starts the next
+# — which is why `__finish()` loops instead of splicing once.
 SPY_ON_SPEECH = """
 () => {
   window.__said = [];
   window.__hushes = 0;
-  window.__queued = [];
+  window.__clips = [];
+  window.__spoke = [];
+  window.__pending = [];
   const synth = window.speechSynthesis;
-  synth.speak = (u) => { window.__said.push(u.text); window.__queued.push(u); };
-  synth.cancel = () => { window.__hushes += 1; };
-  const drain = (ev, arg, n) => {
-    const q = window.__queued.splice(0, n === undefined ? window.__queued.length : n);
-    q.forEach((u) => { if (u[ev]) u[ev](arg); });
-    return q.length;
+  if (synth) {
+    synth.speak = (u) => {
+      window.__said.push(u.text);
+      window.__spoke.push(u.text);
+      window.__pending.push({
+        end: () => u.onend && u.onend({}),
+        fail: () => u.onerror && u.onerror({ error: "synthesis-failed" }),
+      });
+    };
+    synth.cancel = () => { window.__hushes += 1; };
+  }
+  HTMLMediaElement.prototype.play = function () {
+    window.__said.push(this.dataset.line || this.src);
+    window.__clips.push(this.getAttribute("src"));
+    window.__pending.push({
+      end: () => this.dispatchEvent(new Event("ended")),
+      fail: () => this.dispatchEvent(new Event("error")),
+    });
+    return Promise.resolve();
   };
-  window.__finish = (n) => drain("onend", {}, n);
-  window.__fail = (n) => drain("onerror", { error: "synthesis-failed" }, n);
+  const drain = (ev, n) => {
+    let fired = 0;
+    // undefined n means "to the end of the read": each ending starts the next
+    // line, so this keeps going until nothing is being said. The cap is for a
+    // mechanism that answers its own event, which would otherwise hang the test.
+    while (window.__pending.length && (n === undefined ? fired < 50 : fired < n)) {
+      window.__pending.shift()[ev]();
+      fired += 1;
+    }
+    return fired;
+  };
+  window.__finish = (n) => drain("end", n);
+  window.__fail = (n) => drain("fail", n);
 }
 """
 
@@ -797,6 +835,10 @@ def test_the_story_card_reads_itself_out_loud(own_page):
     page.evaluate(SPY_ON_SPEECH)
     page.click("#btn-story")
     page.wait_for_selector("#btn-go")
+    # the card is read a line at a time (#357), so the whole card is only "said"
+    # once each line has been let finish — without this the assertion below sees
+    # the title and calls the three paragraphs unread
+    page.evaluate("() => window.__finish()")
     said = page.evaluate("() => window.__said")
     assert said, "the story card said nothing out loud"
     shown = [t.strip() for t in page.locator("p.story, p.joke").all_inner_texts()]
@@ -871,11 +913,13 @@ def test_the_story_can_be_read_again_from_the_card(own_page):
     page.evaluate(SPY_ON_SPEECH)
     page.click("#btn-story")
     page.wait_for_selector("#btn-read")
+    page.evaluate("() => window.__finish()")     # a line at a time, to the end (#357)
     first = page.evaluate("() => window.__said")
     assert first, "the story card said nothing out loud"
     page.evaluate("() => { window.__said = []; }")
     page.click("#btn-read")
     page.wait_for_timeout(200)
+    page.evaluate("() => window.__finish()")
     again = page.evaluate("() => window.__said")
     assert again == first, (
         f"tapping the speaker did not read the same story again:\n"
@@ -895,10 +939,15 @@ def test_the_speaker_says_it_is_reading_and_stops_saying_so_at_the_end(own_page)
     page.wait_for_selector("#btn-read")
     assert story_button(page) == "🔊 Reading…", (
         f"the card opened reading the story and the button said {story_button(page)!r}")
-    assert page.evaluate("() => window.__queued.length") > 1, (
-        "the story went out as one utterance — this test cannot tell the queue's "
-        "end from its first line any more")
+    # The lines go one at a time now (#357), so "more than one is queued" is not
+    # the question any more: it is whether finishing the first line *starts a
+    # second one*. A card that said everything it was going to say in one go
+    # would leave this at 1 and could not tell the two endings apart.
+    said = page.evaluate("() => window.__said.length")
     assert page.evaluate("() => window.__finish(1)") == 1
+    assert page.evaluate("() => window.__said.length") > said, (
+        "finishing the first line did not start a second — this test cannot tell "
+        "the story's end from its first paragraph any more")
     assert story_button(page) == "🔊 Reading…", (
         f"the button stopped saying it was reading after the first line, with the "
         f"rest of the story still to come: {story_button(page)!r}")
@@ -1004,16 +1053,22 @@ def test_the_speaker_button_says_what_the_mixer_does_not_what_the_save_says(own_
 
 
 def test_a_browser_with_no_speech_at_all_says_so_rather_than_offering_a_replay(own_page):
-    """The third way a read never starts: no `speechSynthesis` on the window.
+    """The third way a read never starts: nothing here can say these lines.
 
     `read()` returns false and nothing is ever queued, so no `onerror` arrives to
     say why — the button used to fall back to "🔊 Read it again", which is a
     replay offer for a story this browser has never once read. The other two
     silent cases (#290) say so; this one has to as well.
+
+    Two things have to be taken away to get there now (#357): the browser's own
+    voice *and* the recordings, which is a real deploy — `public/audio/` dropped
+    from the build, on a device with no voice. Taking away only `speechSynthesis`
+    leaves a card that reads itself perfectly well out of four mp3s.
     """
     page = own_page
     page.evaluate("() => Object.defineProperty(window, 'speechSynthesis',"
                   " { get: () => undefined, configurable: true })")
+    page.evaluate("() => window.__sound.useVoices(null)")
     page.click("#btn-story")
     page.wait_for_selector("#btn-read")
     assert story_button(page) == "🔇 No voice here", (
@@ -1075,6 +1130,7 @@ def test_the_results_screen_reads_out_every_number_it_shows(own_page):
     page.evaluate(SPY_ON_SPEECH)
     play_chapter(page, 0)
     page.wait_for_selector(".stars-big")
+    page.evaluate("() => window.__finish()")     # a line at a time, to the end (#357)
     said = " ".join(page.evaluate("() => window.__said"))
     assert said, "the results screen said nothing"
 
@@ -1109,6 +1165,7 @@ def test_a_character_bio_reads_itself_when_the_dog_is_tapped(own_page):
     page.locator(".char-card").first.click()
     page.wait_for_selector(".bio h3")
 
+    page.evaluate("() => window.__finish()")     # a line at a time, to the end (#357)
     said = page.evaluate("() => window.__said")
     assert said, "the bio said nothing"
     assert page.locator(".bio h3").inner_text().strip() in said, said
@@ -1144,6 +1201,128 @@ def test_a_muted_game_says_so_on_both_new_screens_instead_of_doing_nothing(own_p
     assert page.evaluate("() => window.__said") == [], "a muted game read the results out loud"
     assert story_button(page) == "🔇 Sound is off", story_button(page)
     page.evaluate("() => document.getElementById('btn-mute').click()")
+
+
+# --- read by a voice, not by a robot (#357) ----------------------------------
+# Everything above asks *what* the game read out. These ask *how*. 171 lines of
+# the game's prose were read at build time (`scripts/render_voices.py`) and
+# committed as mp3, and a line with a recording is played rather than handed to
+# `speechSynthesis` — which is a robot on a phone and, on this browser, silence.
+# The fallback survives per line, not per screen: the results screen says "You
+# found 41 of 45 things", and no build-time render can know the number.
+
+MANIFEST = json.loads((APP / "public/data/voices.json").read_text())["lines"]
+
+
+def clips_played(page):
+    """The clips this screen played, each checked against what was shipped.
+
+    A src the repo does not hold is a 404 on the deploy, which the stub cannot
+    see: `play()` is replaced, so nothing ever fetches the file.
+    """
+    played = page.evaluate("() => window.__clips")
+    for src in played:
+        assert src.startswith("audio/"), f"a clip from outside the audio folder: {src}"
+        assert (APP / "public" / src).is_file(), f"played a clip that was never shipped: {src}"
+    return played
+
+
+@pytest.mark.parametrize("screen", ["story", "bio", "picker"])
+def test_the_written_screens_play_the_recordings_rather_than_the_browser_voice(
+        own_page, screen):
+    """The three screens whose words are all written down before the build.
+
+    Parametrised because the read is one call from three places, and a screen
+    that quietly went back to the browser voice would be invisible in the other
+    two — this browser has no voice, so "back to the browser voice" reads as a
+    screen that says nothing at all, on a device where it used to talk.
+    """
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    if screen == "story":
+        page.click("#btn-story")
+        page.wait_for_selector("#btn-go")
+    elif screen == "bio":
+        page.click("#btn-gallery")
+        page.wait_for_selector(".char-card")
+        page.locator(".char-card").first.click()
+        page.wait_for_selector(".bio h3")
+    else:
+        page.click("#btn-play")          # a fresh save opens the picker (#303)
+        page.wait_for_selector(".hero-card")
+
+    page.evaluate("() => window.__finish()")
+    said = page.evaluate("() => window.__said")
+    assert said, f"the {screen} screen said nothing at all"
+    assert page.evaluate("() => window.__spoke") == [], (
+        f"the {screen} screen fell back to the browser voice for lines that are "
+        f"recorded — every line on it is prose the build already read")
+    unrecorded = [t for t in said if t not in MANIFEST]
+    assert not unrecorded, (
+        f"the {screen} screen said lines the manifest has no recording for, and "
+        f"claimed to have played them: {unrecorded}")
+    assert clips_played(page) == [f"audio/{MANIFEST[t]['file']}" for t in said], (
+        f"the {screen} screen played clips that are not the ones the manifest "
+        f"holds for the lines it read, in the order it read them")
+
+
+def test_a_results_line_with_a_score_in_it_still_speaks_in_the_browser_voice(own_page):
+    """The half of the read no recording can cover.
+
+    The outro is written down and comes out of an mp3; "You found 41 of 45
+    things" is counted while you play. Both are in one call to `read()`, so the
+    fallback has to be per line — a per-screen fallback would either drop the
+    numbers or throw away the recordings for the whole screen.
+    """
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    play_chapter(page, 0)
+    page.wait_for_selector(".stars-big")
+    page.evaluate("() => window.__finish()")
+
+    spoke = page.evaluate("() => window.__spoke")
+    counted = [line for line in spoke if re.search(r"\d", line)]
+    assert counted, (
+        f"nothing with a number in it went to the browser voice: {spoke} — either "
+        f"the score stopped being read out or a recording is claiming to know it")
+    for line in counted:
+        assert line not in MANIFEST, f"a counted line was recorded at build time: {line!r}"
+
+    outro = page.locator("p.story").first.inner_text().strip()
+    assert f"audio/{MANIFEST[outro]['file']}" in clips_played(page), (
+        f"the outro is recorded and was not played: {outro!r}")
+
+
+def test_a_recording_really_plays_in_this_browser(own_page):
+    """Unstubbed, for once: a real mp3, fetched, decoded and played to its end.
+
+    Everything else here replaces `play()`, so all of it would pass against a
+    manifest of files that do not decode. This browser cannot speak (see
+    `test_this_browser_cannot_speak`), so an `ended` here is the recordings
+    working and nothing else. The shortest clip in the manifest, to pay for it
+    once and in about a second.
+    """
+    page = own_page
+    line = min(MANIFEST, key=lambda t: MANIFEST[t]["bytes"])
+    result = page.evaluate("""async (line) => {
+      const done = new Promise((resolve) => {
+        window.__sound.read([line], {
+          onend: () => resolve("ended"),
+          onerror: (e) => resolve("error:" + (e && e.error)),
+        });
+      });
+      const playing = !!document.querySelector("audio.voice");
+      const outcome = await Promise.race([
+        done, new Promise((r) => setTimeout(() => r("timeout"), 20000)),
+      ]);
+      return { outcome, playing, left: document.querySelectorAll("audio.voice").length };
+    }""", line)
+    assert result["playing"], (
+        f"no <audio> was on the page while {line!r} was being read — it went to "
+        f"the browser voice, which on this browser is silence")
+    assert result["outcome"] == "ended", (
+        f"{line!r} ({MANIFEST[line]['file']}) did not play to its end: {result}")
+    assert result["left"] == 0, "the finished clip was left in the document"
 
 
 # --- and stopping when you walk away from it (#301) --------------------------
@@ -8753,6 +8932,7 @@ def test_the_hud_and_the_results_both_say_who_is_running_with_you(own_page):
     }""")
     page.wait_for_timeout(1200)
     table = page.locator("table.stats").inner_text()
+    page.evaluate("() => window.__finish()")   # a line at a time, to the end (#357)
     said = " ".join(page.evaluate("window.__said"))
     page.evaluate("() => window.game.stop()")
     assert got["name"] in table, (

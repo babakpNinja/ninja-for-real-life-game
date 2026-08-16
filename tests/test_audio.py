@@ -23,6 +23,7 @@ a human wanting to compare.
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -258,3 +259,23 @@ def test_every_cue_is_in_a_room(renders):
         if ms < 250:
             dead[cue] = ms
     assert not dead, f"cues that stop dead instead of decaying into a room (ms): {dead}"
+
+
+# --- the recorded readings (#357) --------------------------------------------
+# The other half of "what the game sounds like": the story, the bios and the
+# picker are read by a voice recorded at build time rather than by the device's
+# robot. The clips are committed, so the thing that rots is the *prose* — a
+# chapter retitled or a fun fact reworded leaves the manifest pointing at a
+# recording of the old words, and nothing at runtime can tell. `--check` asks
+# the question against the same files the game reads; running it here is what
+# turns "somebody remembered" into a red suite.
+
+
+def test_the_recordings_still_cover_the_prose_the_game_speaks():
+    out = subprocess.run(
+        [sys.executable, str(APP / "scripts" / "render_voices.py"), "--check"],
+        capture_output=True, text=True)
+    assert out.returncode == 0, (
+        "the recordings and the game's words have drifted apart — run "
+        "`python scripts/render_voices.py` to record what is missing:\n"
+        + out.stdout + out.stderr)
