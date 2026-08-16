@@ -6086,6 +6086,183 @@ def test_the_scene_fills_the_screen_top_to_bottom(make_page, viewport, touch):
         page.context.close()
 
 
+# --- and side to side, on the phone the game asks you to turn (#337) ----------
+
+# The same question as PAINTED_COLUMN turned 90°, and the reason it needs asking
+# separately: that one deliberately reads *the middle column*, which "misses the
+# left and right bars entirely". It was written for #251, where the bars were top
+# and bottom. Held sideways a phone is 844x390 — 2.16:1 against a 16:9 world — so
+# it fits by height and leaves a bar of frame down each side instead, and the one
+# scan that could have seen them looks past them by design.
+#
+# Three numbers per screen, off one frame:
+#   * how much of the whole frame is still the bare clear colour, and whether any
+#     column of it is nothing else,
+#   * how different the picture is either side of the world's own edge — a bar
+#     that is a continuation of the scene reads as ~0 here, and a navy one as
+#     ~150, so this is what says the fill belongs to the picture and is not just
+#     *some* colour,
+#   * what colour the bar is, which is what says it belongs to *this* chapter.
+SIDEWAYS_FRAME = """
+async ({ hex, frames }) => {
+  const { CHAPTERS } = await import('/js/chapters.js');
+  const g = window.game;
+  const c = g.canvas, ctx = c.getContext('2d');
+  const rgb = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  document.getElementById('overlay').classList.add('hidden');
+  g.toast = () => {};
+
+  const column = (x) => ctx.getImageData(x, 0, 1, c.height).data;
+  const look = () => {
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    const cols = new Array(c.width).fill(0);
+    let bare = 0;
+    for (let y = 0; y < c.height; y++) {
+      for (let x = 0; x < c.width; x++) {
+        const i = (y * c.width + x) * 4;
+        if (d[i] === rgb[0] && d[i + 1] === rgb[1] && d[i + 2] === rgb[2]) { bare++; cols[x]++; }
+      }
+    }
+    const dead = [];
+    cols.forEach((n, x) => { if (n === c.height) dead.push(x); });
+
+    // 6 device px either side of where the world stops — scored on the worst
+    // quarter of the height, not the mean of it. A bar that is right down to the
+    // ground line and sky-blue below it disagrees over a sixth of the column, and
+    // averaged over the whole of it that is a difference of 25 against real seams
+    // of up to 12: no room to put a limit in. By quarters it is 150 against 40.
+    const edge = Math.round(g.offX * g.dpr);
+    const seam = {};
+    for (const [side, xin, xout] of [["left", edge + 6, edge - 6],
+                                     ["right", c.width - edge - 7, c.width - edge + 5]]) {
+      const a = column(xin), b = column(xout);
+      const quarters = [0, 0, 0, 0];
+      for (let i = 0; i < a.length; i += 4) {
+        const y = i / 4;
+        quarters[Math.min(3, Math.floor(y / (c.height / 4)))] +=
+          Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]),
+                   Math.abs(a[i + 2] - b[i + 2]));
+      }
+      const each = quarters.map((s) => +(s / (c.height / 4)).toFixed(2));
+      seam[side] = { worst: Math.max(...each), each };
+    }
+
+    // and the bar itself, as one colour: the mean of the outermost column.
+    const bar = column(4);
+    let r = 0, gg = 0, b = 0;
+    for (let i = 0; i < bar.length; i += 4) { r += bar[i]; gg += bar[i + 1]; b += bar[i + 2]; }
+    const n = bar.length / 4;
+    return { bare, w: c.width, h: c.height, pixels: c.width * c.height, dead: dead.length,
+             deadAt: [dead[0], dead[dead.length - 1]], seam,
+             bar: [r / n, gg / n, b / n].map((v) => Math.round(v)) };
+  };
+
+  const out = { idle: look() };
+  for (let i = 0; i < CHAPTERS.length; i++) {
+    g.start(i);
+    for (let n = 0; n < frames; n++) g.step(1 / 60);   // a way into the chapter
+    g.render();
+    out[CHAPTERS[i].id] = look();
+    g.stop();     // shared browser: a loop left painting costs every later test
+  }
+  return out;
+}
+"""
+
+# What the seam is allowed to be: the worst quarter's mean channel difference
+# between the two columns. Measured on 2026-08-16 at 844x390 over all six screens,
+# both sides: 0.03 (the menu's right edge, where nothing crosses the line at all)
+# to 27.6 — hammerbarn, whose racking has a shelf edge falling between the two
+# columns, which is a real discontinuity in a picture that does continue. The
+# thing this rejects scores 96.6 on the same scan (the menu drawing its ground to
+# the world's edge and leaving sky below the floor in the bars — the mutation
+# beside this one), so the limit sits between a picture that carries on and one
+# that stops, with half the distance to spare on each side.
+SEAM_MAX = 40.0
+# And how far apart the furthest two bars have to be. Measured: 161 between
+# hammerbarn's cream and sleepytime's night, 12 between the beach and the menu —
+# two chapters whose skies really are nearly the same blue. This asks that the
+# bars follow the chapter *somewhere*, which one flat fill for all six cannot do;
+# what says each one is right is the seam above, chapter by chapter.
+BAR_SPREAD_MIN = 100
+
+
+def test_sideways_no_column_of_the_screen_is_the_bare_frame(make_page):
+    """#337: turn the phone the way the game asks and you got navy down the sides.
+
+    The world is 16:9 and a sideways phone is not, the same argument as #251 with
+    the axes swapped: `min(w/W, h/H)` fits by height and leaves ~75 CSS px of
+    bare frame either side. Measured before the fix, at 844x390 on every screen
+    the game has: *300 of 1688 device columns were the clear colour and nothing
+    else, 17.8% of the frame*. During a chapter that had always been true; on the
+    menu it was hidden until #335 took the opaque overlay off the canvas.
+
+    The fix is the one #251 made downward — `viewLeft`/`viewRight` say what the
+    screen can hold, the clip and every background fill read those instead of
+    0/WORLD_W, and the level's cull window widens to match, so the ground slab
+    every level already starts 200px to the left of reaches the frame.
+    """
+    assert LETTERBOX, ("game.js no longer clears the frame to a flat colour, so this "
+                       "test cannot tell a drawn screen from an empty one — find what "
+                       "render() now starts with and re-point the pattern at it.")
+    page = make_page({"width": 844, "height": 390}, touch=True)
+    try:
+        seen = page.evaluate(SIDEWAYS_FRAME, {"hex": LETTERBOX.group(1), "frames": 120})
+        assert len(seen) == 6, f"only {len(seen)} screens measured: {sorted(seen)}"
+        for where, m in sorted(seen.items()):
+            assert m["dead"] == 0, (
+                f"{where} sideways: {m['dead']} device columns are the empty frame "
+                f"top to bottom (x={m['deadAt'][0]}..{m['deadAt'][1]} of {m['w']}). "
+                f"That is the pillarbox of #337.")
+            assert m["bare"] / m["pixels"] < 0.001, (
+                f"{where} sideways: {m['bare'] / m['pixels']:.1%} of the frame is the "
+                f"colour render() clears to, so the picture does not reach the edges.")
+        for where, m in sorted(seen.items()):
+            for side, got in sorted(m["seam"].items()):
+                assert got["worst"] <= SEAM_MAX, (
+                    f"{where} sideways: over the worst quarter of the screen the {side} bar "
+                    f"differs from the picture next to it by {got['worst']} levels a pixel "
+                    f"(limit {SEAM_MAX}, quarters {got['each']}). Something fills it, but "
+                    f"not this chapter's own scene continuing past the world's edge.")
+        bars = {k: v["bar"] for k, v in seen.items()}
+        spread = max(max(abs(x - y) for x, y in zip(a, b))
+                     for a in bars.values() for b in bars.values())
+        assert spread >= BAR_SPREAD_MIN, (
+            f"every screen's bars are within {spread} levels of every other's "
+            f"({bars}) — they are one fixed colour rather than the chapter you are in.")
+    finally:
+        page.context.close()
+
+
+def test_upright_the_view_stops_exactly_at_the_world(phone):
+    """The other half of #337: nothing about the upright picture may move.
+
+    `viewLeft`/`viewRight` are what every widened fill reads, so upright they
+    have to be exactly the world's own edges for those fills to be the rects they
+    were — the portrait zoom of #261 already makes the picture wider than the
+    phone, so there is no spare width to hand out. Proved directly rather than by
+    a screenshot because it is the *mechanism*: with these two numbers pinned,
+    every `fillRect(viewLeft, …, viewRight - viewLeft, …)` in render() is the
+    `fillRect(0, …, WORLD_W, …)` it replaced.
+
+    (Held to that literally when the fix landed: all six screens rendered upright
+    with the clock and Math.random frozen were byte for byte identical before and
+    after — 0 differing pixels of 780x1688, six times.)
+    """
+    view = phone.evaluate("""
+    async () => {
+      const c = await import('/js/chapters.js');
+      const g = window.game;
+      return { left: g.viewLeft, right: g.viewRight, world: c.WORLD_W,
+               w: g.canvas.clientWidth, h: g.canvas.clientHeight };
+    }
+    """)
+    assert view["left"] == 0 and view["right"] == view["world"], (
+        f"upright on {view['w']}x{view['h']} the view runs {view['left']}..{view['right']} "
+        f"in world units, past the world's own 0..{view['world']} — every fill #337 "
+        f"widened now draws a different rect on the screen #251 and #261 tuned.")
+
+
 # --- and how big she is drawn in what is left (#261) --------------------------
 
 # The engine's own numbers, quoted rather than retyped: a test that carries its

@@ -154,6 +154,13 @@ export class Game {
     // never *drawn* navy, they were the one colour under the canvas showing through.
     this.viewTop = Math.min(0, -this.offY / this.scale);
     this.viewBot = Math.max(WORLD_H, (h - this.offY) / this.scale);
+    // And the same pair across, for the screen #251 did not have: a phone held
+    // sideways is 2.16:1 against a 16:9 world, so it fits by height and leaves a
+    // bar of frame down each side (#337). Upright these are exactly 0 and WORLD_W
+    // — the portrait zoom makes the picture wider than the phone, so there is no
+    // spare — which is what keeps every fill below unchanged on that screen.
+    this.viewLeft = Math.min(0, -this.offX / this.scale);
+    this.viewRight = Math.max(WORLD_W, (w - this.offX) / this.scale);
     this.dpr = dpr;
     if (this.mode !== "playing") this.render();
   }
@@ -853,7 +860,12 @@ export class Game {
     ctx.scale(this.scale, this.scale);
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, this.viewTop, WORLD_W, this.viewBot - this.viewTop);
+    // The whole canvas, in world units: the clip is what the screen can hold, not
+    // what the world is (#251 down, #337 across). Anything drawn past the world's
+    // own edges — the sky's clamped gradient, the parallax layers, the ground slab
+    // every level starts 200px to the left of — is now allowed to reach the frame.
+    ctx.rect(this.viewLeft, this.viewTop, this.viewRight - this.viewLeft,
+             this.viewBot - this.viewTop);
     ctx.clip();
 
     if (this.mode === "idle" || !this.ch) {
@@ -878,19 +890,25 @@ export class Game {
     g.addColorStop(0, IDLE_SKY.sky[0]);
     g.addColorStop(1, IDLE_SKY.sky[1]);
     ctx.fillStyle = g;
-    // Past both ends of the world where the screen is taller than it (#251). A canvas
-    // gradient clamps to its end colours outside its own range, so the sky above y=0
-    // is the sky's own top colour and no seam appears at the join.
-    ctx.fillRect(0, this.viewTop, WORLD_W, this.viewBot - this.viewTop);
+    // Past both ends of the world where the screen is taller than it (#251), and
+    // past both sides where it is wider (#337). A canvas gradient clamps to its end
+    // colours outside its own range, so the sky above y=0 is the sky's own top
+    // colour and no seam appears at the join; across, the gradient is constant.
+    ctx.fillRect(this.viewLeft, this.viewTop, this.viewRight - this.viewLeft,
+                 this.viewBot - this.viewTop);
     // The same pass a chapter's sky gets, with the menu's palette (#329). Behind
     // the menu card this screen is the first thing anyone sees, and it had the
     // pre-#326 shape: everything drawn between y=80 and the ground, and a clamped
     // gradient above it. Not a second copy of that fix — the same function.
     this.renderHighSky(ctx, 0, IDLE_SKY);
     const t = performance.now() / 1000;
-    for (let i = 0; i < 5; i++) drawCloud(ctx, ((i * 260 + t * 12) % 1200) - 120, 80 + i * 40, 1 + (i % 3) * 0.3, 0.85);
+    // Drifting across whatever is on screen rather than across the world: the span
+    // is the view plus the 120px margin each side that the drift always had, so on
+    // a screen the width of the world it is the same 1200px loop it was (#337).
+    const span = (this.viewRight - this.viewLeft) + 240;
+    for (let i = 0; i < 5; i++) drawCloud(ctx, this.viewLeft - 120 + ((i * 260 + t * 12) % span), 80 + i * 40, 1 + (i % 3) * 0.3, 0.85);
     ctx.fillStyle = "#7FBF6A";
-    ctx.fillRect(0, GROUND_Y, WORLD_W, this.viewBot - GROUND_Y);
+    ctx.fillRect(this.viewLeft, GROUND_Y, this.viewRight - this.viewLeft, this.viewBot - GROUND_Y);
     // And the same pass under the floor, for the same reason as the sky above it:
     // upright, this screen's bottom third was one flat green (#328/#329).
     this.renderDeepGround(ctx, 0, IDLE_SKY);
@@ -916,7 +934,7 @@ export class Game {
     hi.addColorStop(0, ch.skyHigh);
     hi.addColorStop(1, ch.sky[0]);
     ctx.fillStyle = hi;
-    ctx.fillRect(0, this.viewTop, WORLD_W, -this.viewTop);
+    ctx.fillRect(this.viewLeft, this.viewTop, this.viewRight - this.viewLeft, -this.viewTop);
 
     if (!this._highSky || this._highSkyFor !== ch.id) {
       this._highSky = highSky(ch);
@@ -959,7 +977,9 @@ export class Game {
   renderDeepGround(ctx, camX, ch = this.ch) {
     if (this.viewBot <= DEEP_BAND[0]) return;
     const [top] = DEEP_BAND;
-    const left = camX - 120, right = camX + WORLD_W + 120;
+    // The band the screen shows, plus the margin it always had: on a screen wider
+    // than the world the soil has to reach the frame too, not stop at x=960 (#337).
+    const left = camX + this.viewLeft - 120, right = camX + this.viewRight + 120;
     const bot = Math.max(this.viewBot, DEEP_BOT) + 20;
     const [near, far] = ch.deep.fill;
 
@@ -1016,7 +1036,8 @@ export class Game {
     g.addColorStop(0, ch.sky[0]);
     g.addColorStop(1, ch.sky[1]);
     ctx.fillStyle = g;
-    ctx.fillRect(0, this.viewTop, WORLD_W, this.viewBot - this.viewTop);
+    ctx.fillRect(this.viewLeft, this.viewTop, this.viewRight - this.viewLeft,
+                 this.viewBot - this.viewTop);
     this.renderHighSky(ctx, camX);
 
     if (ch.id === "sleepytime") {
@@ -1024,7 +1045,10 @@ export class Game {
       // (#228) — a star below its top edge is a star underwater, and it is also
       // a speck of not-sky in the column of whatever is standing there.
       for (let i = 0; i < 60; i++) {
-        const sx = (i * 137.5) % WORLD_W;
+        // Spread over the view rather than over the world: sideways the world is
+        // narrower than the screen, and a star field that stops at x=960 leaves the
+        // two edges of the night sky bare (#337). Same 960 span on any 16:9 screen.
+        const sx = this.viewLeft + (i * 137.5) % (this.viewRight - this.viewLeft);
         const sy = (i * 61.7) % (CLOUD_TOP - 40);
         const tw = 0.5 + 0.5 * Math.sin(this.t * 2 + i);
         ctx.globalAlpha = 0.35 + tw * 0.5;
@@ -1148,7 +1172,10 @@ export class Game {
 
   renderLevel(ctx, camX) {
     const ch = this.ch;
-    const left = camX - 120, right = camX + WORLD_W + 120;
+    // What is on screen plus a margin — the view, not the world, because sideways
+    // the screen reaches past both ends of it (#337). Culling to the world's own
+    // width is what would leave the bars empty of ground, water and platforms.
+    const left = camX + this.viewLeft - 120, right = camX + this.viewRight + 120;
 
     // water under the gaps (creek + beach)
     if (ch.water) {
