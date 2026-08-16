@@ -24,6 +24,10 @@
         <div id="hud-mult" class="pill mult hidden">×2 🐾</div>
       </div>
       <div class="hud-right">
+        <!-- Full screen. Starts hidden and is revealed by main.js only where the
+             browser really has the API (iPhone Safari does not have it at all),
+             so the failure mode is a missing button rather than an inert one. -->
+        <button id="btn-full" class="icon-btn hidden" aria-label="Full screen"></button>
         <button id="btn-mute" class="icon-btn" aria-label="Sound on or off">🔊</button>
         <button id="btn-pause" class="icon-btn" aria-label="Pause">⏸</button>
       </div>

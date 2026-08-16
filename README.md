@@ -64,6 +64,9 @@ its own attribution.
 * **No fail state** — falling in the creek is a splash and a friendly lift back up,
   bumping something is a "Whoops!" and a slow-down. Nothing is ever lost.
 * Big tap targets, generous hitboxes, large readable HUD, no reading required to play.
+* **Full screen** from the menu or the HUD, remembered between visits — offered only
+  where the browser really has the Fullscreen API (an iPhone does not, so no button
+  appears there rather than one that does nothing).
 
 ### How the characters move
 
@@ -257,6 +260,7 @@ public/js/art.js        props, backdrops and the fallback dog, drawn procedurall
 public/js/sprites.js    pose frames + the cut-out rig: loads the artwork and animates it
 public/js/audio.js      WebAudio music + SFX
 public/js/main.js       screens, HUD, gallery, credits, save data
+public/js/fullscreen.js the Fullscreen API and the browsers that only half have it
 public/assets/characters/  25 characters, twice: PNG (~2.2 MB) + WebP (~0.6 MB)
 public/assets/poses/       9 side-on action renders, twice: PNG (~0.8 MB) + WebP (~0.2 MB)
 public/data/characters.json      25 character bios

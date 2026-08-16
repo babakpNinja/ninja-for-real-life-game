@@ -8588,3 +8588,296 @@ def test_the_hud_and_the_results_both_say_who_is_running_with_you(own_page):
         f"the table says {got['name']} joined and the voice does not: {said!r}")
     assert "double" in said.lower(), (
         f"nothing read out says the points were doubled: {said!r}")
+
+
+# --- full screen (#350) -------------------------------------------------------
+
+# What "the browser has full-screen" means, case by case. The subjects are
+# declared here and the answers come from the game's own `fullscreenSupported`,
+# because the interesting cases are the two that cannot be reproduced in this
+# browser: an iPhone (no element API at all) and an iframe that was not given
+# `allowfullscreen` (the API is there and says no). Both must end up with *no*
+# control on screen — a button that is there and does nothing is the defect
+# (#310's class: a silent affordance cannot be told from a broken one).
+#
+# Each case is (what it is, what `document` answers, what the element can be
+# asked, whether the control should be offered).
+FULLSCREEN_SUPPORT = [
+    ("desktop chrome", {"fullscreenEnabled": True}, ["requestFullscreen"], True),
+    ("an older webkit", {"webkitFullscreenEnabled": True}, ["webkitRequestFullscreen"], True),
+    ("iphone safari: no element api at all", {}, [], False),
+    ("an iframe that was never allowed it",
+     {"fullscreenEnabled": False, "webkitFullscreenEnabled": True},
+     ["requestFullscreen", "webkitRequestFullscreen"], False),
+    ("allowed, but this element cannot be asked", {"fullscreenEnabled": True}, [], False),
+]
+
+ASK_SUPPORTED = """
+async (cases) => {
+  const m = await import('/js/fullscreen.js');
+  return cases.map(([what, doc, methods]) => {
+    const node = {};
+    for (const name of methods) node[name] = () => {};
+    return m.fullscreenSupported(node, doc);
+  });
+}
+"""
+
+# Every control the HUD puts on the screen, and where it is. Ids rather than the
+# furniture walk: this is about the *transition* — the window is a different
+# shape than it was a moment ago — and the question is whether the parts are
+# still inside it, which needs the parts named to be worth reporting.
+HUD_RECTS = """
+() => {
+  const box = (id) => {
+    const node = document.getElementById(id);
+    const r = node.getBoundingClientRect();
+    return { id, left: r.left, top: r.top, right: r.right, bottom: r.bottom,
+             shown: getComputedStyle(node).display !== 'none' };
+  };
+  const canvas = document.getElementById('game');
+  const c = canvas.getBoundingClientRect();
+  const scene = window.game.sceneRect();
+  return {
+    parts: ['btn-full', 'btn-mute', 'btn-pause', 'hud-score', 'hud-progress'].map(box),
+    view: { w: window.innerWidth, h: window.innerHeight },
+    canvas: { left: c.left, top: c.top, right: c.right, bottom: c.bottom,
+              backing: [canvas.width, canvas.height],
+              css: [canvas.clientWidth, canvas.clientHeight],
+              dpr: window.game.dpr },
+    scene,
+  };
+}
+"""
+
+
+@pytest.mark.parametrize("what,doc,methods,offered", FULLSCREEN_SUPPORT,
+                         ids=[c[0] for c in FULLSCREEN_SUPPORT])
+def test_full_screen_is_offered_exactly_where_the_browser_really_has_it(
+        desktop, what, doc, methods, offered):
+    """The three states of the Fullscreen API, told apart (#350).
+
+    Run as one call per case rather than five page trips: the answers are
+    computed together and this test reads its own one out, so a failure names
+    the case and the parametrised ids stay on the command line.
+    """
+    answers = desktop.evaluate(ASK_SUPPORTED, [[c[0], c[1], c[2]] for c in FULLSCREEN_SUPPORT])
+    assert len(answers) == len(FULLSCREEN_SUPPORT), (
+        f"asked about {len(FULLSCREEN_SUPPORT)} browsers and got {len(answers)} "
+        f"answers back, so some case here was never measured")
+    mine = answers[[c[0] for c in FULLSCREEN_SUPPORT].index(what)]
+    assert mine is offered, (
+        f"{what}: document {doc}, element with {methods or 'nothing'} — the game "
+        f"{'hides' if not mine else 'offers'} the control and it should "
+        f"{'offer' if offered else 'hide'} it")
+
+
+def test_this_browser_really_is_offered_the_control(desktop):
+    """The other half of the case list: somewhere it must actually appear.
+
+    Without this, a support check that answered `false` to everything would pass
+    every case above that expects no control, and the feature would be missing
+    on the machine the suite runs on with nothing to say so.
+    """
+    assert desktop.locator("#btn-full-menu").count() == 1, (
+        "the menu offers no way into full screen on a browser that has it")
+    assert desktop.evaluate(
+        "() => !document.getElementById('btn-full').classList.contains('hidden')"), (
+        "the HUD's full-screen button is still hidden on a browser that has it")
+
+
+def test_entering_full_screen_hands_over_the_stage_and_keeps_the_hud_on_it(make_page):
+    """The acceptance for #350, on the phone the game asks to be held sideways.
+
+    Three things at once, because they are the three ways this goes wrong: the
+    wrong element goes full-screen (the body takes the browser's own furniture
+    with it), the canvas is not re-measured for the new window (a stretched,
+    blurry world), and a control ends up off the edge — the HUD is pinned to the
+    corners with `env(safe-area-inset-*)`, and those change in full-screen.
+    """
+    page = make_page(LANDSCAPE, touch=True)
+    try:
+        tap_play(page)
+        page.wait_for_function("() => window.game && window.game.mode === 'playing'")
+        assert page.locator("#btn-full").is_visible(), (
+            "no full-screen button on the HUD, so there is nothing to press")
+
+        page.click("#btn-full")
+        page.wait_for_function("() => !!document.fullscreenElement", timeout=5000)
+        assert page.evaluate("() => document.fullscreenElement.id") == "stage", (
+            "something other than the stage went full-screen")
+
+        seen = page.evaluate(HUD_RECTS)
+        view, canvas, scene = seen["view"], seen["canvas"], seen["scene"]
+        for part in seen["parts"]:
+            assert part["shown"], f"{part['id']} disappeared on the way into full screen"
+            assert (part["left"] >= -0.5 and part["top"] >= -0.5
+                    and part["right"] <= view["w"] + 0.5
+                    and part["bottom"] <= view["h"] + 0.5), (
+                f"{part['id']} is off a {view['w']}x{view['h']} full screen: "
+                f"x {part['left']:.0f}..{part['right']:.0f}, "
+                f"y {part['top']:.0f}..{part['bottom']:.0f}")
+
+        assert canvas["backing"] == [round(canvas["css"][0] * canvas["dpr"]),
+                                     round(canvas["css"][1] * canvas["dpr"])], (
+            f"the canvas was not re-measured for the new window: backing "
+            f"{canvas['backing']} against {canvas['css']} css px at dpr {canvas['dpr']}")
+        assert scene["width"] > 0 and scene["height"] > 0, (
+            f"the world is drawn into nothing at all: {scene}")
+        assert (scene["left"] >= canvas["left"] - 0.5
+                and scene["right"] <= canvas["right"] + 0.5
+                and scene["top"] >= canvas["top"] - 0.5
+                and scene["bottom"] <= canvas["bottom"] + 0.5), (
+            f"the picture is not letterboxed inside the canvas: scene {scene} "
+            f"against canvas {canvas}")
+    finally:
+        page.evaluate("() => window.game && window.game.stop()")
+        page.context.close()
+
+
+# The engine and the toast layer, deliberately wrong. `resize()` recomputes all
+# three from the window, and `placeToasts` from `sceneRect()`, so anything that
+# re-lays the world out puts these back — and nothing else in the game touches
+# them while a chapter is paused on the spot.
+BEND_THE_WORLD = """
+() => {
+  window.__resizes = 0;
+  window.addEventListener('resize', () => { window.__resizes += 1; });
+  const g = window.game;
+  g.scale = 0.001; g.offX = -999; g.offY = -999;
+  document.getElementById('toast-layer').style.top = '-4000px';
+  return { scale: g.scale, offX: g.offX, top: document.getElementById('toast-layer').style.top };
+}
+"""
+
+
+def test_the_world_is_laid_out_again_when_full_screen_changes(make_page):
+    """Do not wait for `resize` — it is not guaranteed to come (#350).
+
+    Entering full-screen changes the shape of the window, and everything the
+    engine measured is now wrong: `scale`, the letterbox offsets, and the band
+    the toasts sit in (#254 put those on `sceneRect()`). On a real screen a
+    `resize` usually follows the transition and the engine listens for it — but
+    "usually" is doing the work there: in this browser, in this run, **no resize
+    event fires at all** (the window it is drawing into never changed size), and
+    the assertion below records that. If the layout only ever recovered because
+    a resize happened to follow, this test is where that shows up.
+    """
+    page = make_page(LANDSCAPE, touch=True)
+    try:
+        tap_play(page)
+        page.wait_for_function("() => window.game && window.game.mode === 'playing'")
+        page.evaluate("() => window.game.stop()")     # nothing else moving the world
+        bent = page.evaluate(BEND_THE_WORLD)
+        assert bent["scale"] == 0.001, "the world was not bent, so nothing is being asked"
+
+        page.click("#btn-full")
+        page.wait_for_function("() => !!document.fullscreenElement", timeout=5000)
+        page.wait_for_timeout(400)
+        after = page.evaluate("""() => ({
+          scale: window.game.scale, offX: window.game.offX, offY: window.game.offY,
+          top: document.getElementById('toast-layer').style.top,
+          resizes: window.__resizes,
+          band: window.game.sceneRect(),
+        })""")
+
+        assert after["scale"] > 0.01, (
+            f"the world is still drawn at the bent scale after going full screen: {after}")
+        assert after["offX"] > -999 and after["offY"] > -999, (
+            f"the letterbox offsets were never recomputed: {after}")
+        assert after["top"] != "-4000px", (
+            f"the toast band is still where it was pushed: {after}")
+        assert after["resizes"] == 0, (
+            f"a resize event fired ({after['resizes']}), so this run cannot say "
+            f"whether the layout came back because of full screen or because of "
+            f"the resize — the assertion above is no longer about #350")
+    finally:
+        page.evaluate("() => window.game && window.game.stop()")
+        page.context.close()
+
+
+def test_leaving_full_screen_some_other_way_still_turns_the_button_around(make_page):
+    """Escape and the OS leave full-screen without telling the button (#350).
+
+    So the state is read from `fullscreenchange`, never from what the control was
+    last asked to do — the same pair as the speaker icon and the mixer (#296).
+    Here the exit is made from outside the game entirely; nothing tells the
+    button, and it still has to turn around, and the *saved* preference has to
+    follow, or the next visit fights a player who chose to leave.
+    """
+    page = make_page(DESKTOP)
+    try:
+        page.click("#btn-full-menu")
+        page.wait_for_function("() => !!document.fullscreenElement", timeout=5000)
+        assert page.get_attribute("#btn-full", "aria-label") == "Leave full screen"
+        assert page.evaluate(SAVED_FULLSCREEN) is True, (
+            "went full-screen and the save does not remember it")
+        assert page.locator("#btn-full-menu").inner_text().strip() == "Leave full screen", (
+            "the menu link still offers a screen the player is already on")
+
+        page.evaluate("() => document.exitFullscreen()")
+        page.wait_for_function("() => !document.fullscreenElement", timeout=5000)
+        page.wait_for_timeout(200)
+        assert page.get_attribute("#btn-full", "aria-label") == "Full screen", (
+            "left full screen and the button still says it is the way out of it")
+        assert page.evaluate(SAVED_FULLSCREEN) is False, (
+            "the player left full screen and the save still asks for it next visit")
+    finally:
+        page.context.close()
+
+
+SAVED_FULLSCREEN = """
+() => {
+  const raw = localStorage.getItem('forreallife.save.v1');
+  return raw ? !!JSON.parse(raw).fullscreen : null;
+}
+"""
+
+
+def test_the_full_screen_choice_is_taken_up_again_on_the_first_tap(make_page):
+    """A remembered choice cannot be honoured on load, only on the next touch.
+
+    Every browser refuses `requestFullscreen` outside a user gesture, so a game
+    that "remembers full screen" has to wait for the first tap — and the test
+    that matters is the one in between: on load it is *not* full-screen, and
+    nothing pretends otherwise.
+    """
+    page = make_page(DESKTOP)
+    try:
+        # the choice is written into the save rather than clicked into it: a
+        # click leaves the browser's transient activation alive for a few
+        # seconds afterwards, and a page that asks on load would then be granted
+        # it — which is the very thing this test says cannot happen. Where the
+        # save comes from is settled by the test above.
+        assert page.evaluate(REMEMBER_FULLSCREEN) is True
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_function("window.__ready === true", timeout=20000)
+        page.wait_for_timeout(500)        # long enough for an on-load request
+        assert page.evaluate(SAVED_FULLSCREEN) is True, (
+            "the choice did not survive the reload at all")
+        early = page.evaluate("() => !!document.fullscreenElement")
+
+        page.mouse.click(20, 20)          # a real pointerdown, anywhere
+        page.wait_for_timeout(600)
+        took = page.evaluate("() => !!document.fullscreenElement")
+        # both halves in one assertion, and the values on the second line: a game
+        # that asks on load is refused by some browsers and granted by others
+        # (this one grants it), so the same defect arrives as either half — and a
+        # drill whose wording changes between runs reads as a moved catch (#261)
+        assert (early, took) == (False, True), (
+            "a remembered full screen is taken up on the first tap, never before it\n"
+            f"full-screen on load: {early}, after a tap: {took}")
+        assert page.evaluate("() => document.fullscreenElement.id") == "stage"
+    finally:
+        page.context.close()
+
+
+REMEMBER_FULLSCREEN = """
+() => {
+  const key = 'forreallife.save.v1';
+  const save = JSON.parse(localStorage.getItem(key) || '{}');
+  save.fullscreen = true;
+  localStorage.setItem(key, JSON.stringify(save));
+  return !!JSON.parse(localStorage.getItem(key)).fullscreen;
+}
+"""

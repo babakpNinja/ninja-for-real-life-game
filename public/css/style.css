@@ -105,6 +105,22 @@ canvas#game {
 }
 .icon-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(0, 0, 0, 0.14); }
 
+/* The full-screen icon is drawn rather than typed: there is no emoji for it, and
+   the box-with-corners glyphs (U+26F6 and friends) are missing from the fonts on
+   half the phones this is played on — a missing glyph is a tofu box, which is
+   exactly what an enter-full-screen icon looks like, so it would fail invisibly. */
+.icon-btn svg {
+  display: block;
+  margin: auto;
+  width: 52%;
+  height: 52%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 #hud-progress {
   position: absolute;
   left: 50%;

@@ -13,6 +13,9 @@ import {
 } from "./sprites.js";
 import { sound } from "./audio.js";
 import { PLAYABLE, ABILITIES, abilityFor, heroFor } from "./abilities.js";
+import {
+  fullscreenSupported, fullscreenOn, enterFullscreen, leaveFullscreen, onFullscreenChange,
+} from "./fullscreen.js";
 
 const SAVE_KEY = "forreallife.save.v1";
 
@@ -44,7 +47,8 @@ let save = load();
 // through the character screen instead of past it, and what puts "who do you
 // want to be?" before the first chapter exactly once (#302).
 function blankSave() {
-  return { chapters: {}, unlocked: 0, totalScore: 0, plays: 0, muted: false, hero: null };
+  return { chapters: {}, unlocked: 0, totalScore: 0, plays: 0, muted: false, hero: null,
+           fullscreen: false };
 }
 
 function load() {
@@ -208,6 +212,100 @@ function portrait(node, ch, state = "idle", facing = 1) {
   draw();
 }
 
+/* ------------------------------------------------------------ full screen -- */
+
+/*
+ * Big-picture mode (#350). Two ways in — the menu's fine print and the HUD —
+ * one saved preference, and exactly one source of truth for the state: the
+ * browser's `fullscreenchange`. Escape leaves full-screen, so does the OS, and
+ * so does the browser when it feels like it; a button that drew itself from
+ * what it was last asked to do would then be describing a screen nobody is
+ * looking at (#296 is the same shape, one floor down, about the speaker icon).
+ */
+
+// Drawn, not typed: see the note beside `.icon-btn svg` in style.css. Corners
+// pointing out is "make it bigger", corners pointing in is "put it back".
+const CORNERS_OUT = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+  + '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>';
+const CORNERS_IN = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+  + '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /></svg>';
+
+// The stage and not the body: everything the game draws or writes is inside it
+// (the canvas, the HUD, every overlay screen), and asking for the body would
+// take the browser's own scrollbar area along with it.
+const fullscreenAvailable = () => fullscreenSupported(stage);
+
+/** The menu's way in — and nothing at all on a phone that has no way in. */
+function fullscreenLink() {
+  if (!fullscreenAvailable()) return "";
+  return ` · <button class="link-btn" id="btn-full-menu">${
+    fullscreenOn() ? "Leave full screen" : "Full screen"}</button>`;
+}
+
+/** Both controls, drawn from what the browser says is true right now. */
+function paintFullscreen() {
+  const on = fullscreenOn();
+  const btn = el("btn-full");
+  if (btn) {
+    btn.classList.toggle("hidden", !fullscreenAvailable());
+    btn.innerHTML = on ? CORNERS_IN : CORNERS_OUT;
+    btn.setAttribute("aria-label", on ? "Leave full screen" : "Full screen");
+  }
+  const link = el("btn-full-menu");
+  if (link) link.textContent = on ? "Leave full screen" : "Full screen";
+}
+
+function toggleFullscreen() {
+  return fullscreenOn() ? leaveFullscreen() : enterFullscreen(stage);
+}
+
+/*
+ * The window is a different shape now, and two things have to be told.
+ *
+ * Entering full-screen fires `resize` on a real screen and the engine listens
+ * for it — but not in every browser, not in a headless one, and not reliably
+ * *before* the frame after the transition. The engine's `resize()` is idempotent
+ * arithmetic, so calling it here as well costs nothing and removes the dependency
+ * on an event that may not come. `placeToasts` follows because it is positioned
+ * from `sceneRect()`, and a stale rect puts the words in the sky (#254).
+ *
+ * Twice, 250ms apart, for the same reason `orientationchange` is handled twice
+ * below: the transition animates, and the rect at the moment the event fires is
+ * not always the rect it lands on.
+ */
+function relayout() {
+  if (game) game.resize();
+  placeToasts();
+}
+
+function fullscreenChanged() {
+  // the *observed* state, not the intent: leaving with Escape is a decision too,
+  // and remembering "full screen" after it would fight the player on every visit
+  save.fullscreen = fullscreenOn();
+  store();
+  paintFullscreen();
+  relayout();
+  setTimeout(relayout, 250);
+}
+
+/**
+ * Honour a saved preference next visit — which cannot be done on load.
+ *
+ * `requestFullscreen` outside a user gesture is refused by every browser, so
+ * "remember full screen" can only mean "the first time they touch the screen".
+ * One shot, in the capture phase so it goes in ahead of whatever the tap was
+ * really for, and removed whether or not the browser granted it: a page that
+ * asks again on every tap is a page that spends the player's taps.
+ */
+function armSavedFullscreen() {
+  if (!save.fullscreen || !fullscreenAvailable() || fullscreenOn()) return;
+  const once = () => {
+    document.removeEventListener("pointerdown", once, true);
+    enterFullscreen(stage);
+  };
+  document.addEventListener("pointerdown", once, true);
+}
+
 /* ------------------------------------------------- the tap before the menu -- */
 
 // index.html paints a real menu so there is something to look at while this
@@ -292,7 +390,7 @@ function menu() {
       </div>
     </div>
     <p class="tap-hint">${controlsHint()}<br />
-    <button class="link-btn" id="btn-story">${resume ? "The story so far" : "The story"} →</button></p>
+    <button class="link-btn" id="btn-story">${resume ? "The story so far" : "The story"} →</button>${fullscreenLink()}</p>
     <p class="credits">${noticeShort() || NOTICE_SHORT}<br />
     A personal project, not for sale.<br />
     <button class="link-btn" id="btn-credits">About &amp; credits →</button></p>
@@ -320,6 +418,7 @@ function menu() {
   on("btn-gallery", gallery);
   on("btn-stats", stats);
   on("btn-credits", credits);
+  on("btn-full-menu", toggleFullscreen);
 }
 
 /* --------------------------------------------------------------- credits -- */
@@ -1032,6 +1131,15 @@ function wireInput() {
   });
 
   el("btn-pause").addEventListener("click", pause);
+  el("btn-full").addEventListener("click", () => {
+    sound.unlock();
+    sound.ui();
+    toggleFullscreen();
+  });
+  // whoever changed it — a button here, Escape, the OS, another tab
+  onFullscreenChange(fullscreenChanged);
+  paintFullscreen();
+  armSavedFullscreen();
   el("btn-mute").addEventListener("click", () => {
     save.muted = !save.muted;
     store();
