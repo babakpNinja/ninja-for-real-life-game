@@ -105,6 +105,7 @@ export const CHAPTERS = [
     sky: ["#8FD3F4", "#CFF0FF"],
     skyHigh: "#4FA8DC",
     ground: ["#7FBF6A", "#5E9E52"],
+    deep: { fill: ["#6B4A2A", "#3A2412"], grit: "#8A6236", kind: "root" },
     story: [
       "Bluey's favourite toy, Floppy the bunny, has gone missing!",
       "But first — Dad says nobody leaves the backyard until the balloon touches the ground. That's the rule of Keepy Uppy.",
@@ -147,6 +148,7 @@ export const CHAPTERS = [
     sky: ["#9FE0D0", "#E7FBF3"],
     skyHigh: "#59B8AC",
     ground: ["#87B96A", "#5E8F4C"],
+    deep: { fill: ["#3F6B63", "#1E3B39"], grit: "#7FA79A", kind: "stone" },
     water: "#5EC5D6",
     story: [
       "Down at the creek Bingo finds one of Floppy's ears stuck on a stick.",
@@ -196,6 +198,7 @@ export const CHAPTERS = [
     sky: ["#FFD9A0", "#FFF1DC"],
     skyHigh: "#EBB273",
     ground: ["#C9C3BA", "#A8A199"],
+    deep: { fill: ["#8E877C", "#4E4941"], grit: "#F0C24A", kind: "mark" },
     story: [
       "Everyone piles into Hammerbarn. Dad only came for one thing and has already forgotten what it was.",
       "Muffin has claimed the trolley. Grab the fairy lights and don't clip the pot plants!",
@@ -243,6 +246,7 @@ export const CHAPTERS = [
     sky: ["#7FD8F7", "#FFF3D6"],
     skyHigh: "#3EA9DE",
     ground: ["#F3DCA8", "#DFC085"],
+    deep: { fill: ["#C9A06A", "#7E5F38"], grit: "#FFF0D8", kind: "shell" },
     water: "#3FB8D8",
     story: [
       "The lost-property box is right at the far end of the beach, past the rock pools.",
@@ -308,6 +312,7 @@ export const CHAPTERS = [
     sky: ["#2B2E68", "#6E5FA8"],
     skyHigh: "#14163C",
     ground: ["#4C4A8C", "#343266"],
+    deep: { fill: ["#2E2C5C", "#141230"], grit: "#FFF7D6", kind: "spark" },
     story: [
       "In the car on the way home Bingo falls asleep with Floppy under one arm.",
       "She dreams she is floating past the planets, all the way to the warm real sun — which is Mum.",
@@ -419,12 +424,17 @@ export const SKY_BAND = [SKY_TOP + 40, -90];
  * gradient it already used, `skyHigh` is what that gradient becomes on the way
  * up, and `n` seeds `highSky` to a field of its own, so the menu is not a
  * photograph of chapter one.
+ *
+ * `deep` is the same deal at the other end (#328): the menu's flat green apron
+ * had the same hole the chapters' did, and it gets the same pass rather than a
+ * copy of it — which is the whole lesson of #329.
  */
 export const IDLE_SKY = {
   id: "idle",
   n: 0,
   sky: ["#8FD3F4", "#E8F7FF"],
   skyHigh: "#4FA8DC",
+  deep: { fill: ["#6B4A2A", "#3A2412"], grit: "#8A6236", kind: "root" },
 };
 
 /**
@@ -472,6 +482,104 @@ export function highSky(ch) {
     }
   }
   return out;
+}
+
+/** The x period the deep ground repeats over, as `SKY_TILE` is for the sky. */
+export const DEEP_TILE = 1200;
+
+/**
+ * How far below the world the ground is drawn out to, in world units (#328).
+ *
+ * The mirror of `SKY_TOP`. Upright, `viewBot` is about 813 on the reference
+ * phone and 869 on a narrower, taller one; the fill and the band are authored
+ * past both so a taller screen sees more of the same ground rather than the end
+ * of it.
+ */
+export const DEEP_BOT = 1000;
+
+/**
+ * The band the deep ground is authored in: below the world, clear of the old art.
+ *
+ * The top is the line no wide screen reaches — a 1280x800 laptop sees to y=570,
+ * a 16:9 window to 540 — so everything here is invisible on the screens whose
+ * picture must not change, exactly as `SKY_BAND` is above one. The bottom is
+ * past `viewBot` on every phone measured, so the fill never runs out under the
+ * player's feet.
+ */
+export const DEEP_BAND = [580, 940];
+
+/**
+ * How far below the band's top edge the first thing in it may be anchored.
+ *
+ * Every piece of this art is drawn *around* its anchor — a stone's ellipse is 10
+ * up and 10 down, a root reaches 26 back — so an item anchored on the line draws
+ * across it, and a laptop is shown 13 pixels of a fix meant for a phone. Measured
+ * against the widest of them at the largest scale it is drawn at.
+ */
+export const DEEP_LIP = 44;
+
+/**
+ * What is under the floor, for a phone held upright (#328).
+ *
+ * The other end of #326, and the same shape of bug: the ground is one fill from
+ * `GROUND_Y` to `viewBot` and every ground detail is authored at or just above
+ * y=452, because on a 16:9 screen that is all there ever was. Measured on the
+ * live site at 390x844: the lowest drawn thing was 628-630px down an 844px
+ * phone on three of the five chapters, i.e. a quarter of the screen was one flat
+ * colour with nothing in it.
+ *
+ * Deterministic per chapter and a function of world position only, so the two
+ * screens agree about what is at a given depth. Themed per chapter rather than
+ * one shared texture, because this is *foreground*: something generic down there
+ * reads as a second floor the player should be able to land on, so the backyard
+ * gets soil and roots, hammerbarn a painted concrete floor, the beach wet sand
+ * and shells.
+ */
+export function deepGround(ch) {
+  const rng = makeRng(ch.n * 6151 + 29);
+  const [top, bot] = DEEP_BAND;
+  const kind = ch.deep.kind;
+  const items = [];
+  const n = 26;
+  for (let i = 0; i < n; i++) {
+    // Placed, not rolled: one item per slot, the slots walked in a step coprime
+    // with n. Two plain rng() draws left whole depths of some tiles empty, which
+    // is the bug this is fixing one screen along (#326's own note).
+    const slot = (i * 7) % n;
+    const x = ((i + 0.1 + rng() * 0.8) / n) * DEEP_TILE;
+    const y = top + DEEP_LIP + ((slot + rng() * 0.9) / n) * (bot - top - DEEP_LIP);
+    const depth = (y - top) / (bot - top);   // 0 at the floor, 1 at the deepest
+    // Deeper is further into the dark, so it is fainter — the band has to read
+    // as depth rather than as a second layer of the ground detail up at y=452.
+    items.push({ kind, x, y, scale: 0.55 + rng() * 0.8 - depth * 0.2,
+                 alpha: 0.85 - depth * 0.45 });
+  }
+
+  // And things that run *down* the band, which is what stops it reading as the
+  // flat colour it replaces. Measured: scattered items alone came to 1-3 colour
+  // changes per row of the band, against 3.1-3.5 in the sky #326 added at the
+  // other end and 8-14 in the world's own picture. A strand crosses every row it
+  // spans, so a handful of them is what carries the whole band.
+  const strands = [];
+  const m = 7;
+  for (let i = 0; i < m; i++) {
+    strands.push({
+      kind,
+      x: ((i + 0.15 + rng() * 0.7) / m) * DEEP_TILE,
+      // Started clear of the band's top edge, not on it: a strand is stroked
+      // with a round cap up to 5 wide, so one starting at `top` puts a couple of
+      // pixels *above* the line this whole band is supposed to stay below.
+      top: top + 12 + rng() * 18,
+      len: (bot - top) * (0.55 + rng() * 0.45) + 50,
+      // Hammerbarn's floor is poured concrete: its joints are sawn straight, and
+      // a wobbling one would read as a crack in a floor that is meant to be flat.
+      sway: kind === "mark" ? 0 : 14 + rng() * 24,
+      phase: rng() * 6.283,
+      w: 2 + rng() * 3,
+      alpha: 0.55 + rng() * 0.35,
+    });
+  }
+  return { items, strands };
 }
 
 /** Build a chapter's level data (deterministic per chapter index). */

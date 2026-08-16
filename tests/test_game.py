@@ -6459,7 +6459,8 @@ FRAME = """
   g.player.x = x;
   g.camSlack = 0;
   g.render();
-  return { camX: g.camAt(), viewTop: g.viewTop, scale: g.scale, offX: g.offX, offY: g.offY };
+  return { camX: g.camAt(), viewTop: g.viewTop, viewBot: g.viewBot,
+           scale: g.scale, offX: g.offX, offY: g.offY };
 }
 """
 
@@ -6852,6 +6853,260 @@ def test_the_menus_sky_is_its_own_field_not_chapter_ones(make_page):
             f"{same} of {len(s['idle'])} things in the menu's sky are where chapter "
             "one's are — the menu is showing chapter one's sky")
         assert s["palette"]["sky"][0] and s["palette"]["skyHigh"], s["palette"]
+    finally:
+        page.context.close()
+
+
+# --- and what is under the floor, at the other end of it (#328) ---------------
+
+DEEP_CONSTS = """
+async () => {
+  const m = await import("./js/chapters.js");
+  return { band: m.DEEP_BAND, bot: m.DEEP_BOT, tile: m.DEEP_TILE };
+}
+"""
+
+# How much is going on in the band below the world, as colour changes along a
+# row averaged over the rows of it that are on screen.
+#
+# Not `TOPMOST_DRAWN` read from the other end, which is the scan this section
+# started with: it asks "is any row down here not one flat colour", and on the
+# creek, the beach and sleepytime the answer was already yes before this issue —
+# the gaps between the ground slabs show water or sky, so the bottom row has two
+# flat colours in it and passes. A check three of the five chapters could not
+# fail is not a check. This asks the complaint's own question instead: "the
+# bottom quarter is one flat green" is a statement about how little is happening
+# per row, and it is answered by a number that goes up when something is.
+#
+# Reported quarter by quarter and judged on the worst of them, not averaged over
+# the whole band: an average is passed by a band that is busy at the top and
+# empty at the bottom, which is the exact shape of the bug — the old picture was
+# fine down to the ground line and blank under it. Proved rather than assumed:
+# the `DEEP_BAND -> [580, 640]` mutation, which leaves the bottom half of the
+# phone flat, survives the average and is caught by the worst quarter.
+DEEP_DETAIL = """
+({ top, thr }) => {
+  const g = window.game, c = g.canvas;
+  const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+  const y0 = Math.max(0, Math.round((g.offY + top * g.scale) * g.dpr));
+  const per = [];
+  for (let q = 0; q < 4; q++) {
+    const a = y0 + Math.floor(((c.height - y0) * q) / 4);
+    const b = y0 + Math.floor(((c.height - y0) * (q + 1)) / 4);
+    let edges = 0;
+    for (let y = a; y < b; y++) {
+      for (let x = 1; x < c.width; x++) {
+        const i = (y * c.width + x) * 4, j = i - 4;
+        if (Math.max(Math.abs(d[i] - d[j]), Math.abs(d[i + 1] - d[j + 1]),
+                     Math.abs(d[i + 2] - d[j + 2])) > thr) edges++;
+      }
+    }
+    per.push(b > a ? edges / (b - a) : 0);
+  }
+  return { rows: c.height - y0, quarters: per, worst: Math.min(...per), y0 };
+}
+"""
+
+# What the worst quarter has to reach. Measured at 390x844 on 2026-08-16, over
+# the 283 device rows below y=580, with the new pass switched off: 0.0 on the
+# backyard, hammerbarn, the beach and the menu, 2.0 on the creek and 1.8 on
+# sleepytime — and the same in all four quarters, because a flat fill is flat all
+# the way down. With it on the worst quarter of any of them is 5.6 and most are
+# 10-20. For scale, the sky #326 put at the other end comes to 3.1-3.5 per row
+# and the world's own picture to 8-14. The bar is twice the worst reading the bug
+# ever produced and well under the worst it produces now: enough headroom that
+# redrawing the art does not fail it, and no gradient or flat fill can reach it —
+# a gradient is one colour along any row.
+DEEP_DETAIL_MIN = 4.0
+
+
+@pytest.mark.parametrize("chapter", range(5))
+def test_upright_the_bottom_of_the_screen_is_part_of_the_picture(make_page, chapter):
+    """The other end of #326, chapter by chapter (#328).
+
+    The zoom that leaves 573 world px of spare sky above the world leaves 273
+    below it, and the ground was one `fillRect` of the chapter's darker colour
+    from y=452 down to whatever `viewBot` happened to be. So the bottom third of
+    an upright phone was a swatch, exactly as the top 46% was before the sky was
+    written.
+    """
+    page = make_page(IPHONE, touch=True)
+    try:
+        band = page.evaluate(DEEP_CONSTS)["band"]
+        m = page.evaluate(FRAME, {"ch": chapter, "x": 900, "t": 3.0})
+        assert m["viewBot"] > band[0], (
+            f"this screen only sees down to y={m['viewBot']:.0f}, which is above the "
+            f"{band[0]:.0f} the deep ground starts at — nothing here is upright")
+        d = page.evaluate(DEEP_DETAIL, {"top": band[0], "thr": 8})
+        assert d["rows"] > 150, (
+            f"only {d['rows']} rows of this screen are below the band's top — the "
+            "measurement has nothing to average over")
+        assert d["worst"] >= DEEP_DETAIL_MIN, (
+            f"chapter {chapter + 1} has {d['worst']:.1f} colour changes per row in the "
+            f"emptiest quarter of the {d['rows']} rows below y={band[0]:.0f} "
+            f"({[round(q, 1) for q in d['quarters']]}), against {DEEP_DETAIL_MIN} — "
+            "part of the bottom of the screen is a flat fill again")
+    finally:
+        page.context.close()
+
+
+def test_the_deep_ground_is_authored_where_only_a_tall_screen_can_see_it(make_page):
+    """The rule that keeps every other screen's picture exactly as it was (#328).
+
+    A laptop at 1280x800 sees down to y=570 and a landscape phone to 540, so the
+    way to give an upright screen a floor without redrawing theirs is to put all
+    of it below a line no other screen reaches. `DEEP_BAND`'s top is that line,
+    the mirror of `SKY_BAND`'s bottom, and this is the test that it is honoured.
+
+    Also the scroll: the field tiles over `DEEP_TILE` and only 960 of it is on
+    screen at once, so "there is something near the top of the band" has to hold
+    at every camera position rather than at the one that got photographed.
+    """
+    laptop = make_page(DESKTOP, touch=False)
+    page = make_page(IPHONE, touch=True)
+    try:
+        wide = laptop.evaluate(FRAME, {"ch": 0, "x": 900, "t": 3.0})
+        deep = page.evaluate("""
+        async () => {
+          const m = await import("./js/chapters.js");
+          const out = {};
+          for (const ch of m.CHAPTERS) out[ch.id] = m.deepGround(ch);
+          return { deep: out, band: m.DEEP_BAND, tile: m.DEEP_TILE, bot: m.DEEP_BOT };
+        }
+        """)
+        band = deep["band"]
+        assert band[0] > wide["viewBot"], (
+            f"the deep ground starts at y={band[0]:.0f} and a {DESKTOP['width']}x"
+            f"{DESKTOP['height']} laptop already sees to {wide['viewBot']:.0f} — this "
+            "is a change to a picture the issue was not about")
+        assert band[1] > band[0] and deep["bot"] >= band[1], (band, deep["bot"])
+        for ch, field in deep["deep"].items():
+            items, strands = field["items"], field["strands"]
+            assert len(items) >= 12, f"{ch}: {len(items)} things down there is not a floor"
+            assert len(strands) >= 4, (
+                f"{ch}: {len(strands)} strands — the band is carried by the things that "
+                "run down it, and without them it is a gradient")
+            high = min([it["y"] for it in items] + [s["top"] for s in strands])
+            assert high >= band[0], (
+                f"{ch} draws something at y={high:.0f}, above the band's {band[0]:.0f} "
+                "— a laptop's ground has been repainted by a fix for a phone's")
+            low = max(it["y"] for it in items)
+            assert low >= band[1] - 90, (
+                f"{ch}'s lowest thing is at y={low:.0f} and the band runs to "
+                f"{band[1]:.0f} — the bottom of it is empty")
+            depth = band[1] - band[0]
+            worst = 0
+            for cam in range(0, int(deep["tile"]), 40):
+                on = [it for it in items
+                      if -60 <= (it["x"] + deep["tile"]
+                                 - cam % deep["tile"]) % deep["tile"] <= 960]
+                assert on, f"{ch}: the ground is empty at camera {cam}"
+                assert [s for s in strands
+                        if -80 <= (s["x"] + deep["tile"]
+                                   - cam % deep["tile"]) % deep["tile"] <= 960], (
+                    f"{ch}: no strand is on screen at camera {cam}, so the band is a "
+                    "gradient there")
+                worst = max(worst, (band[1] - max(it["y"] for it in on)) / depth)
+            assert worst <= 0.4, (
+                f"{ch}: at some camera position the lowest thing on screen is "
+                f"{worst:.0%} of the way up the band — the floor empties out as it "
+                "scrolls")
+    finally:
+        page.context.close()
+        laptop.context.close()
+
+
+def test_the_ground_was_added_below_the_old_picture_not_over_it(make_page):
+    """"Additive", from the other end: the world's own band is untouched (#328).
+
+    The deep ground is a second pass rather than a taller ground rect, precisely
+    so this can be asserted byte for byte: turn the new pass off, photograph
+    everything above the band's top, turn it back on, photograph it again. One
+    pixel of difference there is a laptop's picture being redrawn. The half below
+    has to differ, or the comparison passes on a change that did nothing.
+    """
+    page = make_page(IPHONE, touch=True)
+    try:
+        seen = page.evaluate("""
+        async () => {
+          const m = await import("./js/chapters.js");
+          const g = window.game;
+          const c = g.canvas, ctx = c.getContext("2d");
+          const shot = () => ctx.getImageData(0, 0, c.width, c.height).data.slice();
+          const frame = () => { g.t = 3; g.player.x = 900; g.camSlack = 0; g.render(); };
+          const out = [];
+          for (let i = 0; i < 5; i++) {
+            g.start(i);
+            g.running = false;
+            g.mode = "playing";
+            frame();
+            const before = shot();
+            const real = g.renderDeepGround;
+            g.renderDeepGround = () => {};
+            frame();
+            const flat = shot();
+            g.renderDeepGround = real;
+            // the device row the band's top edge sits on
+            const y1 = Math.round((g.offY + m.DEEP_BAND[0] * g.scale) * g.dpr);
+            let below = 0, above = 0;
+            for (let p = 0; p < before.length; p += 4) {
+              if (before[p] === flat[p] && before[p + 1] === flat[p + 1]
+                  && before[p + 2] === flat[p + 2]) continue;
+              if (Math.floor(p / 4 / c.width) < y1) above++; else below++;
+            }
+            out.push({ ch: g.ch.id, y1, above, below });
+          }
+          g.stop();
+          return out;
+        }
+        """)
+        for r in seen:
+            assert r["above"] == 0, (
+                f"{r['ch']}: {r['above']} pixels above the band changed when the new "
+                "ground pass was switched off — it is not additive")
+            assert r["below"] > 2000, (
+                f"{r['ch']}: only {r['below']} pixels below the band's top changed when "
+                "the new ground pass was switched off — it is barely drawing anything, "
+                "so the line above proves nothing")
+    finally:
+        page.context.close()
+
+
+def test_upright_the_menu_screen_has_ground_under_it_too(make_page):
+    """The lesson #329 cost a cycle, applied in the same change (#328).
+
+    The menu draws its own flat `#7FBF6A` from the ground line down, so it had
+    the same flat bottom third as the chapters — and the way that bug survives is
+    a second copy of the pass. This asserts both ends of it: the menu's floor is
+    part of the picture, and switching the *shared* function off is what takes it
+    away, so a future copy-paste fails here.
+    """
+    page = make_page(IPHONE, touch=True)
+    try:
+        m = page.evaluate(IDLE_FRAME)
+        assert m["mode"] == "idle", f"this is not the menu's screen, it is {m['mode']}"
+        band = page.evaluate(DEEP_CONSTS)["band"]
+        d = page.evaluate(DEEP_DETAIL, {"top": band[0], "thr": 8})
+        assert d["worst"] >= DEEP_DETAIL_MIN, (
+            f"the menu has {d['worst']:.1f} colour changes per row in the emptiest "
+            f"quarter of the {d['rows']} rows below y={band[0]:.0f} "
+            f"({[round(q, 1) for q in d['quarters']]}), against {DEEP_DETAIL_MIN} — the "
+            "first screen anyone sees still ends in a flat green")
+        page.evaluate("""
+        () => {
+          const g = window.game;
+          const real = g.renderDeepGround;
+          g.renderDeepGround = () => {};
+          g.render();
+          g.renderDeepGround = real;
+        }
+        """)
+        gone = page.evaluate(DEEP_DETAIL, {"top": band[0], "thr": 8})
+        assert gone["worst"] < DEEP_DETAIL_MIN, (
+            f"with the shared ground pass switched off the menu still has "
+            f"{gone['worst']:.1f} colour changes per row in its emptiest quarter — it "
+            "is drawing a floor of its own again, and this test cannot tell the two "
+            "apart")
     finally:
         page.context.close()
 

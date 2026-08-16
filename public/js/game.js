@@ -12,12 +12,14 @@ import {
   drawPallets, drawTrolleys, drawStepLadder,
   drawDreamPlanet, drawCloudTower,
   drawToken, drawObstacle, roundRect, star,
+  drawDeepItem, drawDeepStrand, rgba,
 } from "./art.js";
 import { drawCharacter, footfall, stridePhase, BLEND } from "./sprites.js";
 import { abilityFor, heroFor, PLAYABLE } from "./abilities.js";
 import { sound } from "./audio.js";
-import { CHAPTERS, buildLevel, sceneryFor, starsFor, highSky, IDLE_SKY, GROUND_Y, SEA_TOP,
-  CLOUD_TOP, SKY_TOP, SKY_TILE, SKY_BAND, WORLD_W, WORLD_H } from "./chapters.js";
+import { CHAPTERS, buildLevel, sceneryFor, starsFor, highSky, deepGround, IDLE_SKY, GROUND_Y,
+  SEA_TOP, CLOUD_TOP, SKY_TOP, SKY_TILE, SKY_BAND, DEEP_TILE, DEEP_BAND, DEEP_BOT,
+  WORLD_W, WORLD_H } from "./chapters.js";
 
 const GRAVITY = 2300;
 const JUMP_V = -790;
@@ -889,6 +891,9 @@ export class Game {
     for (let i = 0; i < 5; i++) drawCloud(ctx, ((i * 260 + t * 12) % 1200) - 120, 80 + i * 40, 1 + (i % 3) * 0.3, 0.85);
     ctx.fillStyle = "#7FBF6A";
     ctx.fillRect(0, GROUND_Y, WORLD_W, this.viewBot - GROUND_Y);
+    // And the same pass under the floor, for the same reason as the sky above it:
+    // upright, this screen's bottom third was one flat green (#328/#329).
+    this.renderDeepGround(ctx, 0, IDLE_SKY);
   }
 
   /**
@@ -935,6 +940,74 @@ export class Game {
       }
     }
     ctx.globalAlpha = 1;
+  }
+
+  /**
+   * What is under the floor, drawn only on screens tall enough to see it (#328).
+   *
+   * The mirror of `renderHighSky`, and the same rule: a second pass over the
+   * band below y=580, which no wide screen reaches, so a laptop's picture is
+   * byte for byte what it was and the phone's is the same picture with more
+   * ground under it. Everything is a function of world position alone — no
+   * `viewBot` in the placement — so the two screens agree about what is at a
+   * given depth.
+   *
+   * `ch` is a parameter rather than `this.ch` for the reason #329 cost a whole
+   * cycle: the menu's idle screen has no chapter loaded and needs this same
+   * ground, so it passes `IDLE_SKY`, which carries a `deep` of its own.
+   */
+  renderDeepGround(ctx, camX, ch = this.ch) {
+    if (this.viewBot <= DEEP_BAND[0]) return;
+    const [top] = DEEP_BAND;
+    const left = camX - 120, right = camX + WORLD_W + 120;
+    const bot = Math.max(this.viewBot, DEEP_BOT) + 20;
+    const [near, far] = ch.deep.fill;
+
+    // Faded in over the first 34px rather than butted against the floor: what is
+    // directly above this line is grass on one chapter and water on the next, and
+    // a hard edge under the water would read as the creek having a lid. Not
+    // longer than that, though — while the fill is still translucent the things
+    // drawn in it are over the old ground colour they were picked to contrast
+    // with, and the top of the band measured half as busy as the rest of it.
+    const g = ctx.createLinearGradient(0, top, 0, DEEP_BOT);
+    g.addColorStop(0, rgba(near, 0));
+    g.addColorStop(Math.min(1, 34 / (DEEP_BOT - top)), rgba(near, 1));
+    g.addColorStop(1, rgba(far, 1));
+    ctx.fillStyle = g;
+    ctx.fillRect(left, top, right - left, bot - top);
+
+    // Two seams across the whole width, because a gradient is constant along a
+    // row: without something that varies in x this band is the flat colour it is
+    // replacing, in a different shade.
+    ctx.strokeStyle = rgba(far, 0.55);
+    ctx.lineWidth = 3;
+    for (let s = 0; s < 2; s++) {
+      const y = top + 74 + s * 96;
+      ctx.beginPath();
+      for (let x = left; x <= right; x += 24) {
+        const yy = y + Math.sin(x / 190 + s * 1.7) * 11;
+        if (x === left) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+      }
+      ctx.stroke();
+    }
+
+    if (!this._deep || this._deepFor !== ch.id) {
+      this._deep = deepGround(ch);
+      this._deepFor = ch.id;
+    }
+    const grit = ch.deep.grit;
+    for (let tx = Math.floor(left / DEEP_TILE) * DEEP_TILE; tx < right; tx += DEEP_TILE) {
+      for (const s of this._deep.strands) {
+        const x = tx + s.x;
+        if (x < left - 80 || x > right + 80) continue;
+        drawDeepStrand(ctx, s, x, grit);
+      }
+      for (const it of this._deep.items) {
+        const x = tx + it.x;
+        if (x < left - 60 || x > right + 60 || it.y > bot) continue;
+        drawDeepItem(ctx, it.kind, x, it.y, it.scale, it.alpha, grit, this.t);
+      }
+    }
   }
 
   renderBackground(ctx, camX) {
@@ -1112,6 +1185,10 @@ export class Game {
         }
       }
     }
+
+    // Over the ground slabs and the water, under everything the player touches:
+    // what is below y=580 is out of reach and only a tall screen sees it (#328).
+    this.renderDeepGround(ctx, camX);
 
     for (const o of this.level.obstacles) {
       if (o.x + o.w < left || o.x > right) continue;

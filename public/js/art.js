@@ -481,6 +481,109 @@ export function drawBird(ctx, x, y, scale, alpha = 0.5) {
   ctx.restore();
 }
 
+/**
+ * `#rrggbb` at an alpha, for the one thing a hex colour cannot do (#328).
+ *
+ * The deep ground fades in from whatever is above it — grass on one chapter,
+ * water on the next — so its gradient needs its own colour transparent at the
+ * top, and a canvas gradient stop takes a CSS colour, not a colour plus an
+ * alpha channel.
+ */
+export function rgba(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+/**
+ * One thing under the floor (#328).
+ *
+ * Five kinds because this band is foreground, not backdrop: one shared texture
+ * under every chapter reads as a second floor the player ought to be able to
+ * land on, so each chapter gets what its own theme puts underfoot — soil roots
+ * for the backyard, creek stones, hammerbarn's painted concrete, the beach's
+ * shells, and the dream chapter's sparks going down into the dark.
+ */
+export function drawDeepItem(ctx, kind, x, y, scale, alpha, colour, t) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  ctx.fillStyle = colour;
+  ctx.strokeStyle = colour;
+  ctx.lineCap = "round";
+  if (kind === "root") {
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(-26, -8);
+    ctx.quadraticCurveTo(-4, 6, 22, -4);
+    ctx.moveTo(-2, 1);
+    ctx.lineTo(6, 16);
+    ctx.stroke();
+  } else if (kind === "stone") {
+    ellipse(ctx, 0, 0, 16, 10, colour);
+    ellipse(ctx, 19, 7, 8, 6, colour);
+  } else if (kind === "mark") {
+    // painted floor markings, the kind that runs down a warehouse aisle
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(-30, 0);
+    ctx.lineTo(-6, 0);
+    ctx.moveTo(6, 0);
+    ctx.lineTo(30, 0);
+    ctx.stroke();
+  } else if (kind === "shell") {
+    ctx.beginPath();
+    ctx.moveTo(0, 8);
+    for (let i = -3; i <= 3; i++) ctx.lineTo(i * 5, 8 - (12 - Math.abs(i) * 2.4));
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    // a spark, breathing — the dream chapter has no floor, so its depth twinkles
+    const tw = 0.6 + 0.4 * Math.sin(t * 2 + x * 0.05);
+    ctx.globalAlpha = alpha * tw;
+    ctx.fillRect(-3, -3, 6, 6);
+    ctx.fillRect(-8, -1, 16, 2);
+    ctx.fillRect(-1, -8, 2, 16);
+  }
+  ctx.restore();
+}
+
+/**
+ * One thing running down the deep band: a root, a weed, a sawn joint (#328).
+ *
+ * The scattered items are what makes the band interesting to look at; these are
+ * what make it a band at all. A strand crosses every row it spans, so a few of
+ * them turn a smooth vertical gradient — which is one colour along any row, and
+ * so still a swatch — into something with a picture in it.
+ */
+export function drawDeepStrand(ctx, s, x, colour) {
+  ctx.save();
+  ctx.globalAlpha = s.alpha;
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = s.w;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  for (let y = s.top; y <= s.top + s.len; y += 14) {
+    const xx = x + Math.sin(y / 90 + s.phase) * s.sway;
+    if (y === s.top) ctx.moveTo(xx, y); else ctx.lineTo(xx, y);
+  }
+  ctx.stroke();
+  if (s.kind === "root" || s.kind === "shell") {
+    // a couple of side shoots, so a root looks like it is holding something
+    ctx.lineWidth = Math.max(1.5, s.w * 0.6);
+    for (let k = 1; k <= 2; k++) {
+      const y = s.top + (s.len * k) / 3;
+      const xx = x + Math.sin(y / 90 + s.phase) * s.sway;
+      const dir = k % 2 ? 1 : -1;
+      ctx.beginPath();
+      ctx.moveTo(xx, y);
+      ctx.quadraticCurveTo(xx + dir * 22, y + 10, xx + dir * 34, y + 30);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
 export function drawBalloon(ctx, x, y, r, color) {
   ctx.save();
   ctx.translate(x, y);
