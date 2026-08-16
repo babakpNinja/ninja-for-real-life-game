@@ -147,6 +147,16 @@ def main() -> int:
         )
         walk(mob, url, prefix + "mobile-", wide=False)
         mob.close()
+        # And the same phone held upright, which is a different picture rather
+        # than a narrower one: the zoom leaves 573 world px of sky above the
+        # world and 273 of ground below it, and #326 and #328 are both about what
+        # is in those bands. Every shot of them was taken by hand until now.
+        up = browser.new_page(
+            viewport={"width": 390, "height": 844},
+            device_scale_factor=2, is_mobile=True, has_touch=True,
+        )
+        walk(up, url, prefix + "upright-")
+        up.close()
         browser.close()
     print(f"shots -> {SHOTS}")
     return 0
