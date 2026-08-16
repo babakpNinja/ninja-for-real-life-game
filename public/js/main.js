@@ -900,7 +900,10 @@ function bio(id) {
         <button class="med-btn" id="btn-menu">Menu</button>
       </div>
     </div>
-  `, { transparent: true });
+  `);  // over the idle scene, not over a chapter: no scrim (#335). It was the
+      // only menu screen that dimmed the world behind it, which read as a card
+      // floating over the gallery — and it replaces the gallery, it is not on
+      // top of it.
   portrait(el("bio-dog"), c, "cheer");
   // the tap that got here was "tell me about this dog", and the answer was a
   // paragraph she cannot read (#293). The artwork credit is not read out: it is

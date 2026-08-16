@@ -34,6 +34,14 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
+  /*
+   * The sky that used to be painted on `.screen`, moved down here under the
+   * canvas (#335). It is what the first paint shows, before boot has sized the
+   * canvas and drawn a frame into it; the moment the canvas has one it covers
+   * this completely. On `.screen` the same gradient sat *over* the canvas and
+   * hid it for good — see the comment there.
+   */
+  background: radial-gradient(circle at 50% 20%, #7FC4F0 0%, #3C86C8 55%, #2A5E97 100%);
 }
 
 canvas#game {
@@ -238,6 +246,16 @@ canvas#game {
 
 /* -------------------------------------------------------------- screens -- */
 
+/*
+ * A screen has no background of its own: the canvas behind it is the picture.
+ *
+ * It used to paint an opaque full-viewport gradient here, which meant the menu's
+ * canvas was never seen by anybody. The idle sky (#329) and the ground under it
+ * (#328) were both drawn every frame and both invisible, and the tests for both
+ * read canvas pixels — the one layer that cannot tell there is a div over it.
+ * Nothing outside `.panel` is text, so there is nothing here to keep readable;
+ * the panel brings its own cream background (#335).
+ */
 .screen {
   position: absolute;
   inset: 0;
@@ -245,10 +263,16 @@ canvas#game {
   align-items: center;
   justify-content: center;
   padding: 14px;
-  background: radial-gradient(circle at 50% 20%, #7FC4F0 0%, #3C86C8 55%, #2A5E97 100%);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+/*
+ * Except over a chapter in progress. Pause and results sit on a frozen frame of
+ * a busy world — a running dog, tokens, platforms — and a panel over that needs
+ * the world pushed back to stay legible. The screens reached from the menu are
+ * over the idle scene instead, which is sky, ground and slow clouds, so they
+ * take the plain `.screen` and show it.
+ */
 .screen.transparent { background: rgba(18, 38, 58, 0.72); backdrop-filter: blur(3px); }
 
 /*

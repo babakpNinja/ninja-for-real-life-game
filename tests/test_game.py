@@ -7111,6 +7111,201 @@ def test_upright_the_menu_screen_has_ground_under_it_too(make_page):
         page.context.close()
 
 
+# --- and whether any of that reaches a player's eyes (#335) -------------------
+
+# Every test above this line asks the canvas what it drew, and the canvas is the
+# wrong witness: it cannot see what is stacked over it. `.screen` painted an
+# opaque full-viewport gradient, so the sky #329 gave the menu and the ground
+# #328 put under it were drawn every frame for two whole issues and seen by
+# nobody. Both features' tests were green throughout, because both read
+# `getImageData`.
+#
+# These ask the composited page instead — a screenshot is the only artefact that
+# knows what is in front of what — and compare it against the canvas under it.
+
+
+def _frozen(page):
+    """Stop the world, so a screenshot and a canvas readback are one frame.
+
+    The idle clouds drift with the wall clock. Without this the two pictures
+    differ everywhere the sky moved between them and the comparison measures the
+    clock rather than the stacking — the mistake #329 made in the other
+    direction.
+    """
+    page.evaluate("""
+    () => {
+      const g = window.game;
+      g.stop();
+      g.running = false;
+      const now = performance.now();
+      performance.now = () => now;
+      g.render();
+    }
+    """)
+
+
+def _canvas_and_screen(page):
+    """(what was drawn, what is on the screen), as two identical-size images."""
+    import base64
+    import io
+
+    from PIL import Image
+
+    url = page.evaluate("() => document.getElementById('game').toDataURL()")
+    drawn = Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1]))).convert("RGB")
+    shown = Image.open(io.BytesIO(page.screenshot())).convert("RGB")
+    assert drawn.size == shown.size, f"canvas {drawn.size} vs screen {shown.size}"
+    return drawn, shown
+
+
+def _bands(page):
+    """The rows of the screen that are canvas and nothing else, in device px.
+
+    Above and below `.panel`, clear of its rounded corners and its shadow. This
+    is where the two features live: on a phone held upright the panel leaves a
+    third of the screen over it and a fifth under it.
+    """
+    box = page.locator(".panel").bounding_box()
+    dpr = page.evaluate("window.devicePixelRatio")
+    # Clear of the panel's drop shadow, which is not in its bounding box: it
+    # fades out 48 CSS px past the panel's edge, and a shadow is a real thing
+    # painted over the canvas — inside it the two pictures are *supposed* to
+    # differ, by up to 16 levels, and this comparison would read that as the
+    # overlay coming back.
+    pad = round(56 * dpr)
+    h = round(page.viewport_size["height"] * dpr)
+    return {"sky": (0, max(0, round(box["y"] * dpr) - pad)),
+            "ground": (min(h, round((box["y"] + box["height"]) * dpr) + pad), h)}
+
+
+def _unlike(a, b, band, tol=2):
+    """Share of pixels in the band where the two pictures disagree."""
+    from PIL import ImageChops
+
+    y0, y1 = band
+    box = (0, y0, a.width, y1)
+    d = ImageChops.difference(a.crop(box), b.crop(box))
+    r, g, bl = d.split()
+    worst = ImageChops.lighter(ImageChops.lighter(r, g), bl)
+    return sum(worst.histogram()[tol + 1:]) / max(1, a.width * (y1 - y0))
+
+
+def _detail(img, band, thr=8):
+    """Colour changes along a row, per row, worst quarter of the band first.
+
+    The same question `DEEP_DETAIL` asks of the canvas, asked of a picture. It
+    is a second implementation of it, so it is never trusted on its own: every
+    number it returns is compared against the same number off the other image,
+    and a disagreement between the two scans cancels out of that comparison.
+    """
+    from PIL import ImageChops
+
+    y0, y1 = band
+    px = img.crop((0, y0, img.width, y1))
+    d = ImageChops.difference(px.crop((1, 0, px.width, px.height)),
+                              px.crop((0, 0, px.width - 1, px.height)))
+    r, g, b = d.split()
+    step = ImageChops.lighter(ImageChops.lighter(r, g), b)
+    per = []
+    for q in range(4):
+        a = (step.height * q) // 4
+        z = (step.height * (q + 1)) // 4
+        rows = step.crop((0, a, step.width, z))
+        per.append(sum(rows.histogram()[thr + 1:]) / max(1, z - a))
+    return {"quarters": per, "worst": min(per), "rows": step.height,
+            "mean": sum(step.histogram()[thr + 1:]) / max(1, step.height)}
+
+
+# What each band is held to, and on which number, measured off the live picture:
+#
+#   sky     3.0 colour changes per row over the band. Not the emptiest quarter,
+#           which is 0.0 and rightly so — the sky is a vertical gradient with
+#           sparse clouds on it, so a whole quarter of it can have nothing to
+#           count in any row. Held on the average instead, with the floor at
+#           two thirds of what is there.
+#   ground  #328's own number in #328's own shape: the emptiest quarter, which
+#           the picture holds at 14.4 against that issue's floor of 4.0. The
+#           floor is imported rather than retyped so there is one of it.
+#
+# The claim is not "the art is rich" — the tests above already make that of the
+# canvas. It is "the art is the thing you are looking at".
+SCREEN_SKY_MEAN_MIN = 2.0
+SCREEN_BAND_FLOOR = {"sky": ("mean", SCREEN_SKY_MEAN_MIN),
+                     "ground": ("worst", DEEP_DETAIL_MIN)}
+# Two pictures of the same frame, one read out of the canvas and one composited
+# by the browser: PNG round-trips are lossless and neither band has anything but
+# canvas in it, so they are equal pixel for pixel. The allowance is for a
+# rounding seam at the band edges, not for a difference in what is drawn.
+SCREEN_UNLIKE_MAX = 0.002
+
+
+def test_upright_the_menus_canvas_is_what_you_see(make_page):
+    """#335: the canvas was drawing all of this behind an opaque div.
+
+    Asserted as sameness rather than as "there is art on the screen": an overlay
+    that dims, tints or blurs the world is a legitimate thing for a screen to do
+    (pause and results both do it, and the test below holds them to it) and it
+    would pass a scan for detail. What the menu must not do is *replace* the
+    picture, and the only witness for that is the composited page.
+    """
+    page = make_page(IPHONE, touch=True)
+    try:
+        assert page.evaluate("() => window.game.mode") == "idle", "not the menu"
+        _frozen(page)
+        drawn, shown = _canvas_and_screen(page)
+        bands = _bands(page)
+        for where, band in bands.items():
+            assert band[1] - band[0] > 100, f"the {where} band is only {band} tall"
+            off = _unlike(drawn, shown, band)
+            assert off <= SCREEN_UNLIKE_MAX, (
+                f"{off:.1%} of the menu's {where} band is not the canvas under it "
+                f"(rows {band[0]}-{band[1]} of {shown.height}) — something is painted "
+                "over the picture, which is #335 again")
+            on_screen = _detail(shown, band)
+            in_canvas = _detail(drawn, band)
+            key, floor = SCREEN_BAND_FLOOR[where]
+            assert on_screen[key] >= floor, (
+                f"the menu's {where} band shows {on_screen[key]:.1f} colour changes per "
+                f"row ({key} of {[round(q, 1) for q in on_screen['quarters']]}) against "
+                f"{floor} — it is a flat wash, whatever the canvas holds")
+            assert on_screen[key] >= in_canvas[key] * 0.9, (
+                f"the menu's {where} band is drawn with {in_canvas[key]:.1f} colour "
+                f"changes per row and shows {on_screen[key]:.1f} — most of what was "
+                "drawn is not reaching the screen")
+    finally:
+        page.context.close()
+
+
+def test_a_screen_over_a_chapter_still_pushes_the_world_back(make_page):
+    """The other half of the decision (#335).
+
+    `.screen` losing its background is not "overlays are see-through now". Pause
+    and results sit on a frozen frame of a running chapter — a dog mid-stride,
+    tokens, platforms — and a panel over that needs the world dimmed to stay
+    legible. So the menu's band must be the canvas exactly, and this one must
+    not be: same measurement, opposite expectation, which is what stops a later
+    tidy-up from giving every screen the same backdrop.
+    """
+    page = make_page(IPHONE, touch=True)
+    try:
+        tap_play(page)   # straight into the chapter: ▶ Play has not gone through
+        page.wait_for_selector("#btn-pause", state="visible")   # the story card since #255
+        page.wait_for_timeout(800)
+        page.click("#btn-pause")
+        page.wait_for_selector("#btn-resume")
+        _frozen(page)
+        drawn, shown = _canvas_and_screen(page)
+        band = _bands(page)["sky"]
+        off = _unlike(drawn, shown, band)
+        assert off > 0.5, (
+            f"only {off:.1%} of the paused chapter's screen is any different from the "
+            "canvas under it — the scrim that keeps a pause panel legible over a "
+            "running world is gone")
+    finally:
+        page.evaluate("() => window.game.stop()")
+        page.context.close()
+
+
 # --- the tap that arrives before the game does (#284) -------------------------
 
 # Every other test in this file starts from `make_page`, which waits for
