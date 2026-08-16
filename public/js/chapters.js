@@ -411,6 +411,23 @@ export const SKY_TILE = 1600;
 export const SKY_BAND = [SKY_TOP + 40, -90];
 
 /**
+ * The menu's sky, in the shape a chapter's is (#329).
+ *
+ * The idle screen behind the menu card is not a chapter — there is no level
+ * loaded yet — but it is drawn by the same renderer and needs the same sky, so
+ * it gets the same fields rather than a second implementation: `sky` is the
+ * gradient it already used, `skyHigh` is what that gradient becomes on the way
+ * up, and `n` seeds `highSky` to a field of its own, so the menu is not a
+ * photograph of chapter one.
+ */
+export const IDLE_SKY = {
+  id: "idle",
+  n: 0,
+  sky: ["#8FD3F4", "#E8F7FF"],
+  skyHigh: "#4FA8DC",
+};
+
+/**
  * What is up in the sky above the world, for a phone held upright (#326).
  *
  * The old sky was authored entirely inside 0..540 — clouds at y 70..162, a sun at

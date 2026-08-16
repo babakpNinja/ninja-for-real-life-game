@@ -16,8 +16,8 @@ import {
 import { drawCharacter, footfall, stridePhase, BLEND } from "./sprites.js";
 import { abilityFor, heroFor, PLAYABLE } from "./abilities.js";
 import { sound } from "./audio.js";
-import { CHAPTERS, buildLevel, sceneryFor, starsFor, highSky, GROUND_Y, SEA_TOP, CLOUD_TOP,
-  SKY_TOP, SKY_TILE, SKY_BAND, WORLD_W, WORLD_H } from "./chapters.js";
+import { CHAPTERS, buildLevel, sceneryFor, starsFor, highSky, IDLE_SKY, GROUND_Y, SEA_TOP,
+  CLOUD_TOP, SKY_TOP, SKY_TILE, SKY_BAND, WORLD_W, WORLD_H } from "./chapters.js";
 
 const GRAVITY = 2300;
 const JUMP_V = -790;
@@ -873,13 +873,18 @@ export class Game {
 
   renderIdleSky(ctx) {
     const g = ctx.createLinearGradient(0, 0, 0, WORLD_H);
-    g.addColorStop(0, "#8FD3F4");
-    g.addColorStop(1, "#E8F7FF");
+    g.addColorStop(0, IDLE_SKY.sky[0]);
+    g.addColorStop(1, IDLE_SKY.sky[1]);
     ctx.fillStyle = g;
     // Past both ends of the world where the screen is taller than it (#251). A canvas
     // gradient clamps to its end colours outside its own range, so the sky above y=0
     // is the sky's own top colour and no seam appears at the join.
     ctx.fillRect(0, this.viewTop, WORLD_W, this.viewBot - this.viewTop);
+    // The same pass a chapter's sky gets, with the menu's palette (#329). Behind
+    // the menu card this screen is the first thing anyone sees, and it had the
+    // pre-#326 shape: everything drawn between y=80 and the ground, and a clamped
+    // gradient above it. Not a second copy of that fix — the same function.
+    this.renderHighSky(ctx, 0, IDLE_SKY);
     const t = performance.now() / 1000;
     for (let i = 0; i < 5; i++) drawCloud(ctx, ((i * 260 + t * 12) % 1200) - 120, 80 + i * 40, 1 + (i % 3) * 0.3, 0.85);
     ctx.fillStyle = "#7FBF6A";
@@ -894,10 +899,14 @@ export class Game {
    * the phone's is the same picture with more of the sky on top of it. Everything
    * here is a function of world y and camera x alone — no `viewTop` — so the two
    * screens agree about what is at a given height.
+   *
+   * `ch` is a parameter and not `this.ch` because the menu's idle screen has no
+   * chapter loaded and needs this same sky (#329) — it passes `IDLE_SKY`, which
+   * carries the two fields this reads. A second copy of this function is how the
+   * idle screen missed #326 in the first place.
    */
-  renderHighSky(ctx, camX) {
+  renderHighSky(ctx, camX, ch = this.ch) {
     if (this.viewTop >= SKY_BAND[1]) return;
-    const ch = this.ch;
     const hi = ctx.createLinearGradient(0, SKY_TOP, 0, 0);
     hi.addColorStop(0, ch.skyHigh);
     hi.addColorStop(1, ch.sky[0]);

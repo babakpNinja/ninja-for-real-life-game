@@ -6674,6 +6674,188 @@ def test_a_phone_and_a_laptop_are_looking_at_the_same_sky(make_page):
         laptop.context.close()
 
 
+# --- the same sky, on the screen you actually open the game on (#329) ---------
+
+# The idle screen, rendered where the caller says and with the loop stopped. It
+# is what `render()` draws whenever `mode === "idle"`, i.e. behind the menu card
+# — the first picture anyone sees, and the one #326 did not reach.
+IDLE_FRAME = """
+() => {
+  const g = window.game;
+  g.stop();
+  g.running = false;
+  g.render();
+  return { mode: g.mode, ch: g.ch ? g.ch.id : null, viewTop: g.viewTop, offY: g.offY };
+}
+"""
+
+
+def test_upright_the_menu_screen_has_a_sky_too(make_page):
+    """#326's fix, on the screen the game opens on (#329).
+
+    `renderIdleSky` was a second copy of the pre-#326 shape: a gradient over
+    0..WORLD_H and five clouds at y 80..240, so on an upright phone everything
+    above y=0 was the gradient's clamped end colour. Measured at 390x844 before
+    this: the topmost drawn thing was 404px down an 844px screen, and the menu
+    card only starts at about 320 — so a third of the phone was flat blue with a
+    card floating on it.
+
+    Same scan and same ceiling as the playing screen's test, because it is now
+    the same code drawing it.
+    """
+    page = make_page(IPHONE, touch=True)
+    try:
+        m = page.evaluate(IDLE_FRAME)
+        assert m["mode"] == "idle", f"this is not the menu's screen, it is {m['mode']}"
+        band = page.evaluate(SKY_CONSTS)["band"]
+        assert m["viewTop"] < band[1], (
+            f"this screen only sees up to y={m['viewTop']:.0f}, which is below the "
+            f"{band[1]:.0f} the high sky starts at — nothing here is upright")
+        top = page.evaluate(TOPMOST_DRAWN, 6)
+        assert top["row"] is not None, "nothing at all is drawn on the menu's screen"
+        assert top["css"] <= SKY_CEILING * top["h"], (
+            f"the topmost drawn thing on the menu is {top['css']:.0f}px down an "
+            f"{top['h']}px screen ({top['css'] / top['h']:.0%}), against a ceiling of "
+            f"{SKY_CEILING:.0%} — the sky above it is one flat colour")
+    finally:
+        page.context.close()
+
+
+def test_the_menu_sky_is_the_chapters_sky_with_a_different_palette(make_page):
+    """One implementation, not two that can drift apart (#329).
+
+    The way this bug happened is that the idle screen had its own copy of "draw
+    the sky", so a fix to the other one did not reach it. The fix is that
+    `renderIdleSky` calls `renderHighSky` — this is the assertion that it still
+    does, made by breaking the shared function and watching *both* screens go
+    flat. A future copy-paste passes the test above and fails this one.
+    """
+    page = make_page(IPHONE, touch=True)
+    try:
+        seen = page.evaluate("""
+        () => {
+          const g = window.game;
+          const c = g.canvas, ctx = c.getContext("2d");
+          const scan = () => {
+            const d = ctx.getImageData(0, 0, c.width, c.height).data;
+            for (let y = 0; y < c.height; y++) {
+              let mn = 255, mx = 0;
+              for (let x = 0; x < c.width; x += 2) {
+                const v = d[(y * c.width + x) * 4 + 2];
+                if (v < mn) mn = v;
+                if (v > mx) mx = v;
+              }
+              if (mx - mn > 6) return y / (c.height / c.clientHeight);
+            }
+            return null;
+          };
+          g.stop();
+          g.running = false;
+          g.render();
+          const withIt = scan();
+          const real = g.renderHighSky;
+          g.renderHighSky = () => {};
+          g.render();
+          const without = scan();
+          g.renderHighSky = real;
+          return { withIt, without, h: c.clientHeight };
+        }
+        """)
+        assert seen["without"] is not None, "nothing is drawn on the menu at all"
+        assert seen["without"] > SKY_CEILING * seen["h"], (
+            f"with the shared sky pass switched off the menu's topmost drawn thing is "
+            f"still {seen['without']:.0f}px down — the menu is drawing its own sky "
+            "again, and this test cannot tell the two apart")
+        assert seen["withIt"] < seen["without"] - 100, (
+            f"the shared pass moves the menu's topmost drawn thing from "
+            f"{seen['without']:.0f}px to {seen['withIt']:.0f}px — it is barely "
+            "contributing, so the screen is not really sharing it")
+    finally:
+        page.context.close()
+
+
+def test_the_menu_sky_was_added_above_the_old_picture_not_over_it(make_page):
+    """Additive on the idle screen too, byte for byte (#329).
+
+    Same promise as the playing screen's: a laptop's menu is the picture it
+    always was, and a phone's is that picture with more sky on top. The world's
+    own band from y=0 down must be identical with the new pass on and off.
+    """
+    page = make_page(IPHONE, touch=True)
+    try:
+        r = page.evaluate("""
+        () => {
+          const g = window.game;
+          const c = g.canvas, ctx = c.getContext("2d");
+          const shot = () => ctx.getImageData(0, 0, c.width, c.height).data.slice();
+          g.stop();
+          g.running = false;
+          // The idle clouds drift with the wall clock, so both frames are taken
+          // against one frozen reading of it — otherwise every pixel differs.
+          const now = performance.now();
+          const real = performance.now.bind(performance);
+          performance.now = () => now;
+          g.render();
+          const before = shot();
+          const sky = g.renderHighSky;
+          g.renderHighSky = () => {};
+          g.render();
+          const flat = shot();
+          g.renderHighSky = sky;
+          performance.now = real;
+          const y0 = Math.round(g.offY * g.dpr);
+          let below = 0, above = 0;
+          for (let p = 0; p < before.length; p += 4) {
+            if (before[p] === flat[p] && before[p + 1] === flat[p + 1]
+                && before[p + 2] === flat[p + 2]) continue;
+            if (Math.floor(p / 4 / c.width) < y0) above++; else below++;
+          }
+          return { y0, above, below };
+        }
+        """)
+        assert r["below"] == 0, (
+            f"{r['below']} pixels of the menu's own band changed when the new sky pass "
+            "was switched off — it is not additive, and a laptop's menu has been "
+            "repainted by a fix for a phone's")
+        assert r["above"] > 2000, (
+            f"only {r['above']} pixels above the world line changed — the new pass is "
+            "barely drawing anything, so the line above proves nothing")
+    finally:
+        page.context.close()
+
+
+def test_the_menus_sky_is_its_own_field_not_chapter_ones(make_page):
+    """`IDLE_SKY` is a palette in a chapter's shape, and it obeys the band (#329).
+
+    Two things worth pinning: the menu is not a photograph of chapter one (it is
+    the screen you look at longest, so a different seed is worth the one line),
+    and — the rule the whole of #326 rests on — nothing it draws dips below the
+    band, where a laptop would see it.
+    """
+    page = make_page(IPHONE, touch=True)
+    try:
+        s = page.evaluate("""
+        async () => {
+          const m = await import("./js/chapters.js");
+          return { idle: m.highSky(m.IDLE_SKY), one: m.highSky(m.CHAPTERS[0]),
+                   band: m.SKY_BAND, top: m.SKY_TOP, palette: m.IDLE_SKY };
+        }
+        """)
+        assert len(s["idle"]) >= 14, f"{len(s['idle'])} things in the sky is not a sky"
+        assert max(it["y"] for it in s["idle"]) <= s["band"][1], (
+            "the menu's sky draws below the band, where every other screen would see it")
+        assert min(it["y"] for it in s["idle"]) <= s["top"] + 90, (
+            "the top of the menu's band is empty")
+        same = sum(1 for a, b in zip(s["idle"], s["one"])
+                   if abs(a["x"] - b["x"]) < 1 and abs(a["y"] - b["y"]) < 1)
+        assert same < len(s["idle"]) / 2, (
+            f"{same} of {len(s['idle'])} things in the menu's sky are where chapter "
+            "one's are — the menu is showing chapter one's sky")
+        assert s["palette"]["sky"][0] and s["palette"]["skyHigh"], s["palette"]
+    finally:
+        page.context.close()
+
+
 # --- the tap that arrives before the game does (#284) -------------------------
 
 # Every other test in this file starts from `make_page`, which waits for
