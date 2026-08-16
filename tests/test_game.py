@@ -6057,10 +6057,12 @@ def test_the_scene_fills_the_screen_top_to_bottom(make_page, viewport, touch):
 
     The cause is letterboxing: the world is 16:9 and the phone held upright is
     not, so fitting the world by `min(w/W, h/H)` leaves two thick bars. The fix
-    does not crop or zoom — the camera still shows exactly the same world, so
-    what a player can see coming is unchanged — it draws the sky and the ground
-    out to the edges of whatever screen it was given, and drops the ground line
-    to `GROUND_ON_SCREEN` so the extra room lands in the sky where the story is.
+    draws the sky and the ground out to the edges of whatever screen it was
+    given, and drops the ground line to `GROUND_ON_SCREEN` so the extra room
+    lands in the sky where the story is. It did not crop or zoom: the camera
+    showed exactly the same world it always had. #261 later spent some of that
+    width on a portrait zoom — the tests below that one are what says how much —
+    but every screen is still painted corner to corner, which is this one.
 
     Its own page, both because the numbers depend on the viewport and because it
     starts every chapter; the desktop arm is here so the fix cannot pay for
@@ -6080,6 +6082,302 @@ def test_the_scene_fills_the_screen_top_to_bottom(make_page, viewport, touch):
                 f"{painted:.0%} of the middle of the screen is drawn on "
                 f"({m['bare']} of {m['height']} device rows are the empty frame, "
                 f"y={m['first']}..{m['last']}). That is the letterbox of #251.")
+    finally:
+        page.context.close()
+
+
+# --- and how big she is drawn in what is left (#261) --------------------------
+
+# The engine's own numbers, quoted rather than retyped: a test that carries its
+# own copy of 1.5 passes for as long as it is edited alongside the thing it is
+# checking, which is exactly as long as nobody needs it.
+GAME_SRC = (APP / "public" / "js" / "game.js").read_text()
+PORTRAIT_ZOOM = float(re.search(r"^export const PORTRAIT_ZOOM = ([\d.]+);", GAME_SRC,
+                                re.M).group(1))
+PORTRAIT_LEAD = float(re.search(r"^export const PORTRAIT_LEAD = ([\d.]+);", GAME_SRC,
+                                re.M).group(1))
+CAM_X_SRC = float(re.search(r"^const CAM_X = ([\d.]+);", GAME_SRC, re.M).group(1))
+
+# What the camera and the canvas add up to, in world px and CSS px.
+GEOMETRY = """
+() => {
+  const g = window.game;
+  const w = g.canvas.clientWidth, h = g.canvas.clientHeight;
+  const r = g.sceneRect(), c = g.canvas.getBoundingClientRect();
+  return {
+    w, h, scale: g.scale, offX: g.offX, lead: g.camLead,
+    fitWidth: w / 960, fitBoth: Math.min(w / 960, h / 540),
+    // how much level the screen shows either side of the player, in world px
+    behind: g.camLead + g.offX / g.scale,
+    ahead: (w - g.offX) / g.scale - g.camLead,
+    spriteW: 46 * g.scale,
+    scene: { left: r.left, right: r.right, width: r.width, height: r.height },
+    canvas: { left: c.left, right: c.right, width: c.width, height: c.height },
+  };
+}
+"""
+
+# The whole safety question, run on the real physics. The naive form of it —
+# "jump `budget` seconds after the pit appears, do you get across?" — models the
+# game wrongly: the launch points that clear a gap are an *interval*, and a jump
+# started too early lands in the water exactly as surely as one started too late.
+# A 96px gap under a jump that carries 220 means that interval ends at the pit's
+# own edge, so what the view ahead actually buys is the time before it *opens*.
+# That is what this measures: `lead`, the seconds a pit spends on screen before
+# the earliest ground it can be cleared from arrives under the player's feet.
+#
+# Found by binary search from a launch far enough back to be certainly short
+# (`span` world px), and the run stops the moment he is past *this* pit, so the
+# next one cannot be charged to this launch. `tooEarly` says the assumption
+# broke — that the far end cleared too — rather than quietly halving the answer.
+#
+# `wet` is the arm whose answer is known: the same gap with the jump never
+# pressed. Without it a probe that silently cleared everything (a chapter that
+# never started, a splash counter that never moves) would read as the game being
+# generous. It has to be a missing press rather than a late one, because a launch
+# from *inside* the water still lands on the far side.
+REACTION = """
+async ({ span, steps }) => {
+  const c = await import('/js/chapters.js');
+  const g = window.game;
+  const visRight = (g.canvas.clientWidth - g.offX) / g.scale;
+
+  const dry = (i, x, pit, press = true) => {
+    g.start(i);
+    const p = g.player;
+    p.x = x; p.y = c.GROUND_Y; p.vy = 0; p.onGround = true; p.coyote = 0;
+    const splashes = g.splashes;
+    if (press) g.press();
+    for (let n = 0; n < 1200 && g.mode === 'playing'; n++) {
+      g.step(1 / 120);
+      if (g.splashes > splashes) return false;
+      // past the far edge and back on his feet: this pit is behind him, and the
+      // run stops here so the *next* pit cannot be blamed on this launch
+      if (p.onGround && p.x > pit.right + 20) return true;
+    }
+    return false;
+  };
+
+  const out = [];
+  for (let i = 0; i < c.CHAPTERS.length; i++) {
+    g.start(i);
+    const ch = c.CHAPTERS[i];
+    const ground = g.level.plats.filter((s) => s.y === c.GROUND_Y)
+                     .sort((a, b) => a.x - b.x);
+    for (let j = 0; j + 1 < ground.length; j++) {
+      const pit = { left: ground[j].x + ground[j].w, right: ground[j + 1].x };
+      pit.width = pit.right - pit.left;
+      if (pit.width <= 8) continue;
+      // Only the gaps a single jump can cross at all. The rest are crossed by
+      // landing on something in the middle, which is two decisions and not this
+      // measurement — they are counted and named, never quietly dropped.
+      if (!dry(i, pit.left, pit)) { out.push({ ch: ch.id, pit: pit.left, oneJump: false }); continue; }
+      let lo = pit.left - span, hi = pit.left;
+      const tooEarly = dry(i, lo, pit);
+      if (!tooEarly) {
+        for (let n = 0; n < steps; n++) {
+          const mid = (lo + hi) / 2;
+          if (dry(i, mid, pit)) hi = mid; else lo = mid;
+        }
+      }
+      const seenAt = pit.left - visRight + g.camLead;
+      out.push({
+        ch: ch.id, pit: pit.left, width: pit.width, oneJump: true, tooEarly,
+        earliest: hi, lead: (hi - seenAt) / ch.speed,
+        // a lower bound on how wide the window to press is: the far end of it is
+        // at least the pit's own edge, which is where this search started
+        window: (pit.left - hi) / ch.speed,
+        wet: dry(i, pit.left - 200, pit, false),
+      });
+    }
+  }
+  g.stop();
+  return out;
+}
+"""
+
+# The floor under that lead, in seconds — not a measured human number, but the
+# line the zoom was *chosen* against. Measured across all five chapters, 1.5x
+# with 120px of level behind him leaves 1.15s at hammerbarn's 292px/s, the
+# tightest in the game, against 1.63s at no zoom at all. Raise the zoom or drop
+# the lead and this is what says the change has spent the last of it: 1.6x comes
+# out at 1.01s and 1.8x at 0.78s, which is under a simple reaction time.
+LEAD_FLOOR = 1.0
+LEAD_SPAN = 400        # world px back from the pit; further than any jump reaches
+LEAD_STEPS = 9         # halvings, so the launch point is found to within a pixel
+
+
+def test_upright_the_world_is_drawn_bigger_than_the_screen_is_wide(make_page):
+    """#261: "Bluey is tiny and the top half of the screen is empty sky".
+
+    Measured on the iPhone the report came from: the world is 960px across and
+    the phone is 390, so fitting it drew her 18.7 CSS px wide — a thumbnail, with
+    the story happening in a strip. Nothing about the art was wrong; the picture
+    was 0.4x.
+
+    The screen cannot show more, so the zoom shows *less level*: 640px of world
+    instead of 960. That is the trade this asserts on both sides — the sprite is
+    bigger by the factor the engine names, and the picture it is drawn in is now
+    wider than the phone, which is what `sceneRect` has to keep telling the truth
+    about for the toast in #254 to still land on the game.
+    """
+    page = make_page(IPHONE, touch=True)
+    try:
+        m = page.evaluate(GEOMETRY)
+        assert m["h"] > m["w"], f"{m['w']}x{m['h']} is not a phone held upright"
+        assert m["scale"] == pytest.approx(PORTRAIT_ZOOM * m["fitWidth"], rel=1e-6), (
+            f"the world is drawn at {m['scale']:.4f} on a {m['w']}px screen, not the "
+            f"{PORTRAIT_ZOOM}x of {m['fitWidth']:.4f} that PORTRAIT_ZOOM asks for")
+        assert m["spriteW"] == pytest.approx(46 * PORTRAIT_ZOOM * m["fitWidth"], rel=1e-6)
+        # 18.7 CSS px is what #261 was reported against, and 1.5x makes it 28.0.
+        # A quarter again on the complaint is the least that could count as an
+        # answer to it; the exact factor is asserted above, this is the floor.
+        assert m["spriteW"] > 23.4, (
+            f"Bluey is {m['spriteW']:.1f} CSS px across against the 18.7 of the #261 "
+            "thumbnail — the zoom is on but it is not buying anything")
+        # the picture is wider than the phone now, and `sceneRect` is the one
+        # thing that must not say so: it answers "where is the game on screen"
+        assert 960 * m["scale"] > m["w"], (
+            "the world still fits across the phone, so this screen never had the "
+            "problem and the assertions below are about nothing")
+        assert m["scene"]["width"] == pytest.approx(m["canvas"]["width"], abs=1), (
+            f"sceneRect is {m['scene']['width']:.0f}px wide on a "
+            f"{m['canvas']['width']:.0f}px canvas — a rect off the side of the "
+            "screen is where #254 put the toasts")
+        assert m["scene"]["left"] >= m["canvas"]["left"] - 1 and \
+               m["scene"]["right"] <= m["canvas"]["right"] + 1, (
+            f"the picture is reported at x {m['scene']['left']:.0f}.."
+            f"{m['scene']['right']:.0f} of a canvas at {m['canvas']['left']:.0f}.."
+            f"{m['canvas']['right']:.0f}")
+    finally:
+        page.context.close()
+
+
+@pytest.mark.parametrize("viewport,touch,screen",
+                         [({"width": 844, "height": 390}, True, "phone sideways"),
+                          (DESKTOP, False, "laptop")],
+                         ids=["phone sideways", "laptop"])
+def test_a_wide_screen_is_drawn_exactly_as_it_was_before_the_zoom(make_page, viewport,
+                                                                  touch, screen):
+    """The zoom is portrait's alone, and this is the half of #261 that says so.
+
+    A landscape phone is bound by its *height*, so `Math.min` would swallow any
+    width term thrown at it and the zoom could be applied to every screen without
+    this arm ever noticing. So it is not asked "did the zoom stay off"; it is
+    asked for the numbers a screen with no zoom in the engine at all would have:
+    the fit-both scale, the centred band, the full 300px of level behind him.
+    """
+    page = make_page(viewport, touch=touch)
+    try:
+        m = page.evaluate(GEOMETRY)
+        assert m["scale"] == pytest.approx(m["fitBoth"], rel=1e-9), (
+            f"{screen}: drawn at {m['scale']:.6f} where fitting the world both ways "
+            f"gives {m['fitBoth']:.6f} — the portrait zoom has reached a wide screen")
+        assert m["offX"] == pytest.approx((m["w"] - 960 * m["scale"]) / 2, abs=0.01), (
+            f"{screen}: the band sits at x={m['offX']:.2f} rather than centred")
+        assert m["lead"] == CAM_X_SRC, (
+            f"{screen}: the camera keeps {m['lead']}px of level behind the player, "
+            f"not CAM_X's {CAM_X_SRC} — the narrowed portrait lead has leaked")
+    finally:
+        page.context.close()
+
+
+def test_the_zoom_is_paid_for_behind_the_player_not_in_front_of_him(make_page):
+    """What the zoom costs, run on the physics rather than reasoned about.
+
+    Upright the screen holds 640px of world instead of 960, and where those 320
+    come from is the whole decision. Taken evenly they come half out of the view
+    ahead, which is the only warning an auto-runner ever gets; taken out of the
+    view *behind*, they come out of level he has already run past and nothing
+    ever comes back over. So the camera keeps 120px behind him upright instead of
+    300, and every pit in the game is then asked how long it is on screen before
+    the player has to have decided — `LEAD_FLOOR` seconds, at worst.
+
+    The gaps a single jump cannot cross at all — they are crossed by landing on
+    something in the middle — are counted rather than dropped: 'nothing failed'
+    has to be distinguishable from 'nothing ran'.
+    """
+    page = make_page(IPHONE, touch=True)
+    try:
+        m = page.evaluate(GEOMETRY)
+        assert m["lead"] == PORTRAIT_LEAD, (
+            f"the camera keeps {m['lead']}px behind the player upright, not "
+            f"PORTRAIT_LEAD's {PORTRAIT_LEAD}")
+        assert m["behind"] == pytest.approx(PORTRAIT_LEAD, abs=1), (
+            f"{m['behind']:.0f}px of level is on screen behind the player, not the "
+            f"{PORTRAIT_LEAD} the camera was told to keep — the band is not aligned "
+            "where the lead assumes it is")
+        # No round-number bound on the view ahead: how much of it is *enough* is
+        # not a length, it is how long that length lasts at the chapter's speed,
+        # and that is what the rest of this measures. A px bound here would be the
+        # same statement in worse units, and it would fail first — hiding whether
+        # the thing below can still tell a safe zoom from a greedy one.
+        rows = page.evaluate(REACTION, {"span": LEAD_SPAN, "steps": LEAD_STEPS})
+        one_jump = [r for r in rows if r["oneJump"]]
+        rest = [r for r in rows if not r["oneJump"]]
+        assert len(one_jump) >= 15, (
+            f"only {len(one_jump)} of {len(rows)} gaps can be crossed by a single "
+            f"jump ({len(rest)} need a landing in the middle) — too few for this to "
+            "be a statement about the game")
+        free = [r for r in one_jump if r["wet"]]
+        assert not free, (
+            f"{len(free)} gaps were crossed with the jump never pressed at all "
+            f"({[r['pit'] for r in free[:3]]}) — this probe cannot tell a splash from "
+            "a landing, so its other arm proves nothing")
+        loose = [r for r in one_jump if r["tooEarly"]]
+        assert not loose, (
+            f"{len(loose)} gaps cleared from {LEAD_SPAN}px back "
+            f"({[r['pit'] for r in loose[:3]]}), so the search never bracketed the "
+            "earliest launch and every lead below is a floor, not a measurement")
+        tight = sorted(one_jump, key=lambda r: r["lead"])[:4]
+        assert tight[0]["lead"] >= LEAD_FLOOR, (
+            f"the tightest pit is on screen {tight[0]['lead']:.2f}s before the player "
+            f"has to jump it, against a {LEAD_FLOOR}s floor, with {m['ahead']:.0f}px "
+            "of level visible ahead of him: "
+            f"{[(r['ch'], r['pit'], round(r['lead'], 2)) for r in tight]} "
+            "(chapter, pit, seconds of warning). The zoom has been paid for out of "
+            "the view ahead.")
+    finally:
+        page.context.close()
+
+
+def test_a_respawn_never_pushes_the_player_off_a_narrow_screen(make_page):
+    """The camera slack, against the narrower upright view (#261).
+
+    A splash lifts the player back onto the ledge and the camera carries the
+    teleport as slack, drifting back over CAM_BLEND rather than cutting. Slack
+    holds the camera *ahead* of where it belongs, which spends the level behind
+    the player — and upright there are only PORTRAIT_LEAD px of that to spend,
+    against the 200 the constant allows. Uncapped, the friendly lift back up ends
+    with Bluey off the left of the screen for a third of a second.
+    """
+    page = make_page(IPHONE, touch=True)
+    try:
+        # He falls in the way a player falls in — running at a real gap and not
+        # jumping. Dropped into the water by hand instead, `recoverySpot` looks
+        # for a ledge that is not there and lifts him off the front of the level.
+        seen = page.evaluate("""
+        () => {
+          const g = window.game;
+          g.start(0);
+          const p = g.player;
+          let fell = -1;
+          for (let n = 0; n < 1200 && fell < 0; n++) {
+            g.step(1 / 60);
+            if (g.splashes > 0) fell = n;
+          }
+          const on = [];
+          for (let n = 0; n < 120; n++) { g.step(1 / 60); on.push(p.x - g.camAt()); }
+          const slack = g.camSlack;
+          g.stop();
+          return { on, fell, splashes: g.splashes, slack, lead: g.camLead };
+        }
+        """)
+        assert seen["fell"] > 0, "the player never went in, so no slack was taken"
+        worst = min(seen["on"])
+        assert worst >= 46, (
+            f"the player was drawn {worst:.0f}px from the left edge of a screen that "
+            f"starts at 0 — he is {46 - worst:.0f}px off it, and he is 46px wide")
     finally:
         page.context.close()
 

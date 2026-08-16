@@ -48,6 +48,25 @@ export const CAM_SLACK = 200;   // px, against CAM_X = 300
 // spare height (a 16:10 laptop) does not move at all.
 export const GROUND_ON_SCREEN = 0.74;
 
+// Upright, fitting all 960px of world across a 390px phone draws Bluey 19px tall
+// — a thumbnail under half a screen of empty sky (#261). So portrait draws the
+// world this much bigger than "fit the width", which necessarily shows less level
+// at once. Landscape and every desktop are untouched: there the world already
+// fits by height with room to spare, and `Math.min` below still guarantees it.
+export const PORTRAIT_ZOOM = 1.5;
+
+// How much level stays behind the player, in world px — `CAM_X` on a wide screen,
+// this upright. The zoom has to come out of somewhere, and the view behind is
+// where nothing ever comes from: an auto-runner's hazards are all ahead of him.
+// Measured on the real physics rather than reasoned about: every pit in the game,
+// swept for the whole stretch of ground a jump can clear it from. A gap is 96px
+// and a held jump carries about 220, so that stretch is short and it ends at the
+// pit's own edge — what the view ahead buys is the time before it *opens*, which
+// is all the warning there is. Upright that is 1.15s at hammerbarn's 292px/s,
+// against 1.63s with no zoom at all; the tightest of those windows is 0.09s wide,
+// so the seconds before it are the whole game.
+export const PORTRAIT_LEAD = 120;
+
 // How long a special move takes to come fully on, and to go fully off again.
 // Every ability changes a number the picture is drawn from — speed, gravity, the
 // pull on a chip — and switching one of those on a single frame is a jolt: the
@@ -77,6 +96,7 @@ export class Game {
     this.scale = 1;
     this.offX = 0;
     this.offY = 0;
+    this.camLead = CAM_X;     // narrowed upright by resize(), where the screen is known
     this.running = false;
     this.paused = false;
     this.mode = "idle";       // idle | playing | finished
@@ -104,8 +124,20 @@ export class Game {
     const h = this.canvas.clientHeight || window.innerHeight;
     this.canvas.width = Math.round(w * dpr);
     this.canvas.height = Math.round(h * dpr);
-    this.scale = Math.min(w / WORLD_W, h / WORLD_H);
-    this.offX = (w - WORLD_W * this.scale) / 2;
+    // The zoom only ever enters through the *width* term, so the world still fits
+    // the height on every screen and a landscape phone — bound by its height —
+    // scales exactly as it did (#261).
+    const zoom = h > w ? PORTRAIT_ZOOM : 1;
+    this.scale = Math.min(zoom * w / WORLD_W, h / WORLD_H);
+    // Centred while the picture fits across, and left-aligned once it does not:
+    // the half that would hang off the left is level the player has already run
+    // past, and hanging it off the right instead is warning he has not had yet.
+    const spare = w - WORLD_W * this.scale;
+    this.offX = Math.max(0, spare / 2);
+    // With less of the level on screen, holding 300px of it behind him would take
+    // the whole zoom out of the view ahead. Only when the picture really is wider
+    // than the screen: a zoom that the height swallowed has cost nothing to pay for.
+    this.camLead = spare < 0 ? PORTRAIT_LEAD : CAM_X;
     // Where the world band sits vertically. Centred while there is little spare
     // height, and pushed down once there is a lot, so the extra becomes sky rather
     // than being split evenly with the grass. `Math.max` against the centred
@@ -129,13 +161,16 @@ export class Game {
   // a fifth of a tall phone, sitting low. Anything the *page* puts over the game
   // and means to be about the game belongs against this rect rather than the
   // window, or it lands in the empty sky above Bluey (#254).
+  // Clamped to the canvas, because upright the band is now drawn wider than the
+  // phone (#261) and what a caller is asking for is where the picture is *on the
+  // screen* — not where it would reach if the screen were wide enough to hold it.
   sceneRect() {
     const r = this.canvas.getBoundingClientRect();
-    const width = WORLD_W * this.scale;
-    const height = WORLD_H * this.scale;
-    const left = r.left + this.offX;
-    const top = r.top + this.offY;
-    return { left, top, width, height, right: left + width, bottom: top + height };
+    const left = Math.max(r.left, r.left + this.offX);
+    const right = Math.min(r.right, r.left + this.offX + WORLD_W * this.scale);
+    const top = Math.max(r.top, r.top + this.offY);
+    const bottom = Math.min(r.bottom, r.top + this.offY + WORLD_H * this.scale);
+    return { left, top, width: right - left, height: bottom - top, right, bottom };
   }
 
   palette(id) {
@@ -425,7 +460,11 @@ export class Game {
       // hold the camera where it was and let it travel back over CAM_BLEND,
       // instead of the world jumping under a player who has not moved on screen
       const gap = before - this.camTarget();     // the pure target: the old slack
-      this.camSlack = Math.max(-CAM_SLACK, Math.min(CAM_SLACK, gap));  // is carried in `before`
+      // Capped against the lead as well as the constant: slack holds the camera
+      // ahead of where it belongs, and upright there are only PORTRAIT_LEAD px of
+      // screen to the player's left to spend on that before he is off it (#261).
+      const cap = Math.min(CAM_SLACK, this.camLead - PLAYER_W - 20);
+      this.camSlack = Math.max(-cap, Math.min(cap, gap));  // is carried in `before`
     }
 
     // soft obstacles: a stumble, never a loss
@@ -790,7 +829,7 @@ export class Game {
 
   /** Where the camera would sit with no teleport to recover from. */
   camTarget() {
-    return Math.max(0, this.player.x - CAM_X);
+    return Math.max(0, this.player.x - this.camLead);
   }
 
   /** Where it is drawn from: the target, plus whatever slack is left to spend.
