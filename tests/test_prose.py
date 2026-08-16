@@ -1313,3 +1313,41 @@ def test_a_site_that_reads_the_javascript_reads_its_code_and_not_its_prose(
         "fail — or the comment that told the two apart is gone. Put back a comment that "
         "names what the code is not (see #233), or delete the site's mutation with the "
         "drill.")
+
+
+# ------------------------- a screen shows itself before it reads itself (#301)
+#
+# `showOverlay` hushes on the way in, because a queued utterance outlives the
+# screen that asked for it. That makes the order the four reading screens happen
+# to be written in load-bearing: a screen that called `readAloud` first would
+# silence itself, and the only sign would be a card that never speaks. It is a
+# habit across four functions and nothing held it, so it is a rule here.
+
+MAIN = APP / "public" / "js" / "main.js"
+READING_SCREENS = ("storyCard", "results", "bio", "characterSelect")
+
+
+def test_a_screen_shows_itself_before_it_reads_itself():
+    """Every function that does both, in the order that leaves it talking.
+
+    The screens are named rather than discovered: a rename or a fifth reading
+    screen has to arrive here, where the reason is written, instead of quietly
+    reducing this to a check over three. `function_body` bounds each one at its
+    own closing brace, so the call found is the screen's own and not the next
+    function's.
+    """
+    src = MAIN.read_text()
+    checked = []
+    for name in READING_SCREENS:
+        body = function_body(src, name)
+        shows, reads = body.find("showOverlay("), body.find("readAloud(")
+        assert reads >= 0, (
+            f"{name}() no longer calls readAloud — either it stopped reading itself "
+            f"(#293) or it was renamed, and this check is now about three screens")
+        assert shows >= 0, f"{name}() no longer calls showOverlay"
+        assert shows < reads, (
+            f"{name}() calls readAloud before showOverlay, and showOverlay hushes "
+            f"(#301) — the screen cancels the read it just started, and the only "
+            f"symptom is a screen that says nothing")
+        checked.append(name)
+    assert checked == list(READING_SCREENS), checked

@@ -513,9 +513,29 @@ function readLabel(state) {
   return sound.muted ? "🔇 Sound is off" : "🔊 Read it again";
 }
 
-// looked up rather than held: the card is re-rendered whole for Auto-run, and
-// the read that answers may outlive the button that started it
+// Which of the four states the button is in, and which read it is about.
+//
+// The button itself is looked up rather than held: the card is re-rendered whole
+// for Auto-run, and the read that answers may outlive the button that started
+// it. But the *state* cannot live in that button's text either — the re-render
+// builds a fresh one, and it opened on the idle label while the story was still
+// being read, which is the one path back to the guessing #290 exists to end
+// (#314). So it is held here, next to the only function that sets it.
+//
+// Stamped with `sound.speechRun`, the same counter `read()` matches its own
+// `onend`/`onerror` against: arriving on a new screen hushes (#301) and bumps
+// it, so the state the last screen left behind is stale by construction and the
+// new button opens on the label its own read gives it.
+let readState = null;
+let readStateRun = -1;
+
+function heldReadState() {
+  return readStateRun === sound.speechRun ? readState : null;
+}
+
 function setReadLabel(state) {
+  readState = state;
+  readStateRun = sound.speechRun;
   const btn = document.getElementById("btn-read");
   if (btn) btn.textContent = readLabel(state);
 }
@@ -535,7 +555,8 @@ function placeReadButton() {
   if (!body || body.querySelector("#btn-read")) return;
   const row = document.createElement("div");
   row.className = "read-row";
-  row.innerHTML = `<button class="med-btn" id="btn-read">${readLabel()}</button>`;
+  row.innerHTML =
+    `<button class="med-btn" id="btn-read">${readLabel(heldReadState())}</button>`;
   body.insertBefore(row, body.firstChild);
 }
 

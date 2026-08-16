@@ -1226,6 +1226,85 @@ def test_a_re_render_of_the_same_screen_does_not_cut_the_story_off(own_page):
     page.click("#btn-auto")                       # leave the save as it was found
 
 
+# The other half of that re-render: the story goes on, and until #314 the button
+# stopped saying so. `placeReadButton()` builds a *new* button and wrote the idle
+# label onto it, so from the moment you touched Auto-run a card that was still
+# reading offered "🔊 Read it again" — the guessing the four states exist to end
+# (#290), on the one path back into it.
+
+
+def toggle_auto_run(page):
+    """Press Auto-run and wait for the card it re-renders, or say it did not.
+
+    The label on the button is the only evidence a re-render happened at all —
+    without checking it, a card that stopped re-rendering would pass every
+    assertion below by never disturbing the button they are about.
+    """
+    label = page.locator("#btn-auto").inner_text()
+    page.click("#btn-auto")
+    page.wait_for_selector("#btn-go")
+    assert page.locator("#btn-auto").inner_text() != label, (
+        f"Auto-run did not re-render the card ({label!r} both times) — these ask "
+        f"what a re-render does to the speaker button and nothing was re-rendered")
+
+
+def test_the_speaker_button_still_says_it_is_reading_after_an_auto_run_re_render(own_page):
+    """Toggle Auto-run mid-story: the read carries on, so the label must too."""
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-read")
+    assert story_button(page) == "🔊 Reading…", story_button(page)
+
+    toggle_auto_run(page)
+    assert story_button(page) == "🔊 Reading…", (
+        f"the story is still being read and the re-rendered button says "
+        f"{story_button(page)!r} (#314)")
+
+    # and it is the read in flight the label is about, not a string that was
+    # copied across: the run that is still queued is the one that ends it
+    assert page.evaluate("() => window.__finish()") > 0, "nothing was queued to finish"
+    assert story_button(page) == "🔊 Read it again", (
+        f"the story ended and the button carried on saying {story_button(page)!r}")
+
+
+def test_a_muted_card_that_re_renders_still_says_the_sound_is_off(own_page):
+    """The state that is not about a read at all. It survives the re-render for
+    a different reason — nothing is in flight, so the label falls back to asking
+    the mixer — and a fix that carried the state blindly would answer with
+    whatever was held before the mute."""
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.evaluate("() => document.getElementById('btn-mute').click()")
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-read")
+    assert story_button(page) == "🔇 Sound is off", story_button(page)
+    toggle_auto_run(page)
+    assert story_button(page) == "🔇 Sound is off", (
+        f"a muted card re-rendered into {story_button(page)!r} — a speaker button "
+        f"offering a read this game will not perform")
+
+
+def test_a_re_render_does_not_re_state_a_read_that_was_cancelled(own_page):
+    """The state is stamped with the read it is about, not just remembered.
+
+    `hush()` is how a read stops being anyone's (#301) — it is what arriving on a
+    new screen does, and what mute does. Held without that stamp, "🔊 Reading…"
+    outlives the read itself and the next re-render puts it back on the button,
+    which is the same lie as this issue with the sides swapped.
+    """
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-read")
+    assert story_button(page) == "🔊 Reading…", story_button(page)
+    page.evaluate("() => window.__sound.hush()")
+    toggle_auto_run(page)
+    assert story_button(page) == "🔊 Read it again", (
+        f"the read was cancelled and the re-rendered button still says "
+        f"{story_button(page)!r}")
+
+
 def test_this_browser_cannot_speak(own_page):
     """The gap the tests above cannot cover, pinned so it stays visible (#289).
 
