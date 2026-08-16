@@ -5455,6 +5455,110 @@ def test_the_peephole_rule_notices_a_screen_squeezed_to_a_slot(make_page):
         page.context.close()
 
 
+# --- and the thing the screen is for (#309) -----------------------------------
+
+# Where the lead is declared: in the markup of the screen itself, one per screen
+# (`data-lead` in main.js). A map of selectors kept here instead would be a
+# second author for the same fact — a screen added later would get no lead and
+# nothing would say so, which is the failure this is about, one level up.
+LEAD = "[data-lead]"
+
+# What a player can see of the lead, arriving at the screen and touching nothing.
+#
+# `getBoundingClientRect` is where the layout put it, which is not where it is:
+# the panel body scrolls its own insides, so a row pushed past the bottom of it
+# still has a rect at a plausible y and is on nobody's screen (#269). So the rect
+# is cut down by every scrolling ancestor and then by the window, and what is
+# left is compared with the whole — `hidden` is how much of the thing the screen
+# is for a player would have to scroll for.
+LEAD_BOX = """
+(sel) => {
+  const leads = [...document.querySelectorAll('#overlay .panel ' + sel)];
+  if (leads.length !== 1) return { count: leads.length };
+  const node = leads[0];
+  const b = node.getBoundingClientRect();
+  let clip = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+  for (let n = node.parentElement; n; n = n.parentElement) {
+    const cs = getComputedStyle(n);
+    if (!/hidden|auto|scroll|clip/.test(cs.overflowX + ' ' + cs.overflowY)) continue;
+    const r = n.getBoundingClientRect();
+    clip = { left: Math.max(clip.left, r.left), right: Math.min(clip.right, r.right),
+             top: Math.max(clip.top, r.top), bottom: Math.min(clip.bottom, r.bottom) };
+  }
+  const vis = { left: Math.max(clip.left, b.left), right: Math.min(clip.right, b.right),
+                top: Math.max(clip.top, b.top), bottom: Math.min(clip.bottom, b.bottom) };
+  const area = (r) => Math.max(0, r.right - r.left) * Math.max(0, r.bottom - r.top);
+  const scroller = document.querySelector('#overlay .panel > .panel-body');
+  return {
+    count: 1,
+    what: node.id || node.className || node.tagName.toLowerCase(),
+    text: node.textContent.trim().replace(/\\s+/g, ' ').slice(0, 40),
+    top: b.top, bottom: b.bottom, height: b.height,
+    hidden: area(b) - area(vis),
+    visHigh: Math.max(0, vis.bottom - vis.top),
+    scrollTop: scroller ? scroller.scrollTop : 0,
+    over: scroller ? scroller.scrollHeight - scroller.clientHeight : 0,
+    view: { w: window.innerWidth, h: window.innerHeight },
+  };
+}
+"""
+
+
+@pytest.mark.parametrize("viewport,touch,screen", SCREENS, ids=SCREEN_IDS)
+def test_the_thing_each_screen_is_for_is_on_the_screen(make_page, viewport, touch, screen):
+    """#309: one extra results row pushed the score below the fold.
+
+    'Bingo and Bandit ran with you' went in above `<tr>score</tr>`, and the
+    number the whole screen exists to show was off the bottom of a scrolling
+    panel at 1024x640. Every fold check stayed green — the buttons were still
+    there (#269), the body was not a slot (#274), the document never overflowed
+    because the panel scrolls its insides — because all of them ask whether you
+    can reach the *end* of a screen, and none asks whether what you came for is
+    in front of you when you arrive.
+
+    So each screen names its own lead in its markup and this asks one thing of
+    it: with nothing scrolled, is all of it on the screen? Six of the nine leads
+    sit in the scrolling body and can be pushed out of sight by a row, a card or
+    a paragraph added above them; the menu's ▶ Play and the pause screen's
+    ▶ Keep playing are in the pinned foot, where #269 already holds them — they
+    are declared anyway, because the rule is 'every screen says what it is for',
+    and a screen exempted from saying it is the one that would go without.
+    """
+    page = make_page(viewport, touch=touch)
+    measured, could_have_hidden = [], []
+    try:
+        for name in overlay_screens(page):
+            where = f"{screen}, {name}"
+            lead = page.evaluate(LEAD_BOX, LEAD)
+            assert lead["count"] == 1, (
+                f"{where}: {lead['count']} elements marked {LEAD} on this screen — "
+                f"every screen declares exactly one lead, the thing it exists to "
+                f"show, and a screen that declares none cannot be checked for it")
+            assert lead["scrollTop"] == 0, (
+                f"{where}: the panel was already scrolled {lead['scrollTop']:.0f}px, so "
+                f"this is not what a player arrives at")
+            assert lead["hidden"] < 1, (
+                f"{where}: {lead['what']} ({lead['text']!r}) is the thing this screen "
+                f"is for and {lead['hidden']:.0f}px2 of it is not on the screen — it "
+                f"is at y {lead['top']:.0f}..{lead['bottom']:.0f} of a "
+                f"{lead['view']['h']}px window, {lead['visHigh']:.0f}px of "
+                f"{lead['height']:.0f}px showing, with {lead['over']:.0f}px of this "
+                f"panel below the fold. Nothing on the screen asks you to scroll")
+            if lead["over"] > 1:
+                could_have_hidden.append(f"{name} (+{lead['over']:.0f}px)")
+            measured.append(name)
+    finally:
+        page.evaluate("() => window.game && window.game.stop()")
+        page.context.close()
+    assert len(measured) == 9, f"only measured {measured}"
+    # the rule can only bite on a screen that continues past the fold: if none
+    # of them did, every lead was on screen for the same reason an empty screen
+    # would be, and this said nothing about layout at all
+    assert could_have_hidden, (
+        f"no screen on {screen} was taller than its window ({len(measured)} measured), "
+        f"so no lead here could have been below a fold")
+
+
 # --- and the pill that talks over the way out (#277) --------------------------
 
 HINT = "#rotate-hint"

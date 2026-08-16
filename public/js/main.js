@@ -98,6 +98,15 @@ const starsText = (n) => "★★★".slice(0, n) + "☆☆☆".slice(0, 3 - n);
  * and would cut its own story off mid-sentence. A caller who forgets the flag
  * gets a read that ends early, which is visible; the other default fails by
  * going on talking somewhere nobody is listening for it, which is this issue.
+ *
+ * Every screen marks one element `data-lead`: the thing it exists to show —
+ * the score on the results, the total on the stats, the first card in a
+ * gallery, the way back into the game on the pause screen. The panel scrolls
+ * its own insides, so a screen can push its own headline below the fold while
+ * the document never overflows and every fold test stays green; that is how one
+ * extra results row hid the score (#309). The suite reads the attribute rather
+ * than a list of selectors kept beside it, so a screen added later declares its
+ * own lead or fails for not having one.
  */
 function showOverlay(html, { transparent = false, keepReading = false } = {}) {
   if (!keepReading) sound.hush();
@@ -275,7 +284,7 @@ function menu() {
       : "A backyard adventure with the heeler family"}</p>
     <div id="menu-dogs"><canvas></canvas></div>
     <div class="actions">
-      <button class="big-btn" id="btn-play">▶ ${resume ? "Keep playing" : "Play"}</button>
+      <button class="big-btn" id="btn-play" data-lead>▶ ${resume ? "Keep playing" : "Play"}</button>
       <div class="btn-row">
         <button class="med-btn" id="btn-chapters">Chapters</button>
         <button class="med-btn" id="btn-gallery">Characters</button>
@@ -328,7 +337,7 @@ function credits() {
     <h2>About &amp; credits</h2>
     <p class="subtitle">Made by a dad, for one three-year-old.</p>
     <div class="credits-body">
-      <p><b>This is a fan-made, unofficial, non-commercial game.</b> It is not affiliated with,
+      <p data-lead><b>This is a fan-made, unofficial, non-commercial game.</b> It is not affiliated with,
       endorsed by or connected to Ludo Studio, the ABC, BBC Studios or Disney. It is not for sale
       and carries no advertising.</p>
       <p class="notice">${notice() || NOTICE_SHORT}</p>
@@ -405,10 +414,10 @@ function characterSelect({ then = menu, back = menu, title = "Who do you want to
   const cast = PLAYABLE
     .map((id) => characters.find((c) => c.id === id))
     .filter(Boolean);
-  const cards = cast.map((c) => {
+  const cards = cast.map((c, i) => {
     const a = abilityFor(c.id);
     return `
-      <button class="hero-card ${save.hero === c.id ? "chosen" : ""}" data-id="${c.id}">
+      <button class="hero-card ${save.hero === c.id ? "chosen" : ""}" data-id="${c.id}"${i === 0 ? " data-lead" : ""}>
         <canvas data-hero="${c.id}"></canvas>
         <div class="hero-copy">
           <b>${c.name}</b>
@@ -456,7 +465,7 @@ function chapterSelect() {
     const locked = i > save.unlocked;
     const hero = characters.find((c) => c.id === ch.hero);
     return `
-      <button class="chapter-card ${locked ? "locked" : ""}" data-ch="${i}" ${locked ? "disabled" : ""}>
+      <button class="chapter-card ${locked ? "locked" : ""}" data-ch="${i}" ${locked ? "disabled" : ""}${i === 0 ? " data-lead" : ""}>
         <canvas data-hero="${ch.hero}"></canvas>
         <div>
           <b>${ch.n}. ${ch.title}</b>
@@ -601,8 +610,8 @@ function storyCard(index, { speak = true } = {}) {
   showOverlay(`
     <h2>Chapter ${ch.n} — ${ch.title}</h2>
     <p class="subtitle">${ch.where}</p>
-    <div id="story-dog" style="height:110px"><canvas style="width:110px;height:110px"></canvas></div>
-    ${ch.story.map((s) => `<p class="story">${s}</p>`).join("")}
+    <div id="story-dog"><canvas></canvas></div>
+    ${ch.story.map((s, i) => `<p class="story"${i === 0 ? " data-lead" : ""}>${s}</p>`).join("")}
     <p class="joke">${ch.joke}</p>
     <div class="actions">
       <button class="big-btn" id="btn-go">▶ Play as ${hero ? hero.name : "Bluey"}</button>
@@ -757,13 +766,13 @@ function results(r) {
   showOverlay(`
     <h2>${ch.title} — done!</h2>
     <div class="stars-big">${starsText(r.stars)}</div>
+    <p class="score-line" data-lead>Score ${r.score}</p>
     <p class="story">${ch.outro}</p>
     <table class="stats">
       <tr><td>${ch.tokenName} found</td><td>${r.collected} / ${r.total}</td></tr>
       ${ch.hasBalloon ? `<tr><td>keepy uppy bops</td><td>${r.bops}</td></tr>` : ""}
       <tr><td>hidden dollarbucks</td><td>${r.secret ? "found! 💰" : "still hidden"}</td></tr>
       <tr><td>chapter bonus</td><td>+${r.bonus}</td></tr>
-      <tr><th>score</th><th>${r.score}</th></tr>
       ${friendRow(r)}
       <tr><td>your best here</td><td>${best}</td></tr>
     </table>
@@ -847,8 +856,8 @@ function resultLines(r) {
 /* --------------------------------------------------------------- gallery -- */
 
 function gallery() {
-  const cards = characters.map((c) => `
-    <button class="char-card" data-id="${c.id}">
+  const cards = characters.map((c, i) => `
+    <button class="char-card" data-id="${c.id}"${i === 0 ? " data-lead" : ""}>
       <canvas data-pal="${c.id}"></canvas>
       <b>${c.name}</b>
       <span>${c.role}</span>
@@ -883,7 +892,7 @@ function bio(id) {
   if (!c) return gallery();
   showOverlay(`
     <div class="bio">
-      <div class="bio-head">
+      <div class="bio-head" data-lead>
         <canvas id="bio-dog"></canvas>
         <div>
           <h3>${c.name}</h3>
@@ -931,7 +940,7 @@ function stats() {
     <table class="stats">
       <tr><th>Chapter</th><th>Stars</th><th>Best</th></tr>
       ${rows}
-      <tr><th>Total</th><th>${Object.values(save.chapters).reduce((s, c) => s + c.stars, 0)}/15</th><th>${save.totalScore}</th></tr>
+      <tr data-lead><th>Total</th><th>${Object.values(save.chapters).reduce((s, c) => s + c.stars, 0)}/15</th><th>${save.totalScore}</th></tr>
     </table>
     <p class="story">Hidden dollarbucks found: <b>${found} / ${CHAPTERS.length}</b></p>
     <p class="joke">Chapters played: ${save.plays}</p>
@@ -956,7 +965,7 @@ function pause() {
     <h2>Paused</h2>
     <p class="subtitle">Chapter ${game.ch.n} — ${game.ch.title}</p>
     <div class="actions">
-      <button class="big-btn" id="btn-resume">▶ Keep playing</button>
+      <button class="big-btn" id="btn-resume" data-lead>▶ Keep playing</button>
       <div class="btn-row">
         <button class="med-btn" id="btn-retry">↻ Restart</button>
         <button class="med-btn" id="btn-chapters">Chapters</button>

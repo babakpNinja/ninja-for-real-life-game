@@ -379,6 +379,13 @@ p.joke { font-size: clamp(13px, 2.4vw, 18px); color: #7A8894; font-style: italic
 #menu-dogs { width: 100%; height: clamp(90px, 18vw, 150px); }
 #menu-dogs canvas { width: 100%; height: 100%; display: block; }
 
+/* The dog on the story card. Sized here rather than inline on the element,
+   because the short-window rhythm below has to be able to shrink it: at a flat
+   110px it pushed the first line of the story past the bottom of a 420px
+   window, and the story is what that screen is for (#309). */
+#story-dog { width: 100%; height: 110px; }
+#story-dog canvas { width: 110px; height: 110px; display: block; margin: 0 auto; }
+
 /* chapter select */
 .chapter-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin: 12px 0; }
 .chapter-card {
@@ -502,6 +509,21 @@ table.stats td:last-child, table.stats th:last-child { text-align: right; }
   .subtitle { margin: 2px 0 6px; font-size: clamp(12px, 2vw, 15px); }
   h2 { font-size: clamp(19px, 3.4vw, 26px); margin: 2px 0 6px; }
   #menu-dogs { height: clamp(54px, 12vh, 80px); }
+  #story-dog { height: clamp(56px, 13vh, 84px); }
+  #story-dog canvas { width: clamp(56px, 13vh, 84px); height: clamp(56px, 13vh, 84px); }
+  /* seven rows of a stats table on a 390px-high window put the Total — the
+     number that screen is for — 8px past the fold (#309) */
+  table.stats td, table.stats th { padding: 4px 6px; }
+  /* and 76px of stars plus a 30px score line put the score itself past the
+     bottom of the results panel: measured on a phone held sideways it ran
+     y 231..266 against a body ending at 245, so 14 of 35px of the number the
+     screen is for. Both are `vw`-sized at full rhythm, which is the wrong
+     dimension for a window that ran out of height — 10vw is 84px on a 390px
+     tall screen. Neither line is enough on its own (each leaves ~40px of
+     slack); together they buy 64px, and the mutation spec removes the pair
+     (#309). */
+  .stars-big { font-size: clamp(30px, 11vh, 56px); letter-spacing: 4px; margin: 2px 0; }
+  .score-line { font-size: clamp(18px, 5vh, 26px); }
   .big-btn { margin: 8px 0 6px; padding: 10px; font-size: clamp(18px, 3.4vw, 26px); }
   .med-btn { padding: 10px 8px; }
   .btn-row { gap: 8px; }
