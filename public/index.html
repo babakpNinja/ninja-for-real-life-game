@@ -56,8 +56,14 @@
               <button class="med-btn" id="btn-stats">Stats</button>
             </div>
           </div>
-          <p class="tap-hint">Tap anywhere to jump &middot; hold to float<br />
-          <button class="link-btn" id="btn-story">The story &rarr;</button></p>
+          <!-- No controls hint here on purpose (#307). It is written by
+               controlsHint() in main.js, which is the only thing that knows
+               whether there is a finger or a keyboard pointing at this screen
+               and whose special move the button in the corner does. Nothing can
+               be played until that module has loaded anyway, so the pre-boot
+               menu has nothing true to say about how to play — and a second
+               copy of the line here is how it drifted in the first place. -->
+          <p class="tap-hint"><button class="link-btn" id="btn-story">The story &rarr;</button></p>
           <p class="credits">Fan-made, unofficial and non-commercial. Bluey &copy; Ludo Studio Pty Ltd.</p>
         </div>
       </div>

@@ -222,6 +222,45 @@ function currentChapter() {
   return Math.min(save.unlocked, CHAPTERS.length - 1);
 }
 
+/**
+ * How to play, in the words of the device it is being read on (#256, #307).
+ *
+ * The line under the menu buttons is the only place the controls are written
+ * down, and it said `Tap anywhere to jump · hold to float` to everybody. Two
+ * things were wrong with that. On a laptop there is nothing to tap — the keys
+ * have been wired the whole time (space / ↑ / W, Esc to pause) and the game
+ * never mentioned one of them, so a parent hunting for pause had to guess.
+ * And every hero has had a special move since #303, on a button in the corner
+ * of the HUD, which is named exactly once: on the picker, which is shown at the
+ * first ▶ Play and never again. Choose on day one, come back on day two, and
+ * nothing on screen says the button is there or what it does.
+ *
+ * `(pointer: coarse)` and not the user agent: it is the question actually being
+ * asked — is the thing pointing at this screen a finger. A laptop with a
+ * touchscreen answers `fine` and gets the keyboard line, which is the right
+ * line for somebody sitting at a keyboard.
+ *
+ * Pause is named for the keyboard only. On a phone the ⏸ is on the HUD where a
+ * thumb can see it, and this line has to fit a 390px-wide window in landscape
+ * (#266) — a clause everyone can already see is the one to leave out.
+ */
+function controlsHint() {
+  const touch = window.matchMedia("(pointer: coarse)").matches;
+  const me = save.hero ? characters.find((c) => c.id === save.hero) : null;
+  const move = save.hero ? abilityFor(save.hero) : null;
+  const parts = touch
+    ? ["Tap anywhere to jump", "hold to float"]
+    : ["Space to jump", "hold it to float"];
+  if (move) {
+    const whose = me ? `${me.name}'s ` : "";
+    parts.push(touch
+      ? `tap ${move.emoji} for ${whose}${move.name}`
+      : `E for ${whose}${move.name} ${move.emoji}`);
+  }
+  if (!touch) parts.push("Esc to pause");
+  return parts.join(" · ");
+}
+
 function menu() {
   if (game) game.stop();
   hud.classList.add("hidden");
@@ -243,7 +282,7 @@ function menu() {
         <button class="med-btn" id="btn-stats">Stats</button>
       </div>
     </div>
-    <p class="tap-hint">Tap anywhere to jump · hold to float<br />
+    <p class="tap-hint">${controlsHint()}<br />
     <button class="link-btn" id="btn-story">${resume ? "The story so far" : "The story"} →</button></p>
     <p class="credits">${noticeShort() || NOTICE_SHORT}<br />
     A personal project, not for sale.<br />

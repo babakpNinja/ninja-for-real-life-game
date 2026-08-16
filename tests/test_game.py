@@ -528,6 +528,168 @@ def test_the_menu_and_credits_screen_render_the_notice_from_the_credits_file(
     assert notice in body, body[:300]
 
 
+# --- how to play, told to the person holding the device (#256, #307) ---------
+# One line under the menu buttons, and for a long time it said "Tap anywhere to
+# jump · hold to float" to everybody: no tapping on a laptop (where space, ↑, W
+# and Esc had been wired the whole time), and no mention at all of the special
+# move each hero has had since #303 — named once, on a picker shown at the first
+# ▶ Play and never again.
+#
+# These open their own pages: the hint is a function of the device *and* of
+# `save.hero`, and both are per-context. The shared pages are a single game in
+# progress, and rewriting the save under them would be rewriting a game the
+# tests below are still playing.
+
+SET_HERO = """
+(hero) => {
+  const k = "forreallife.save.v1";
+  const s = JSON.parse(localStorage.getItem(k) || "{}");
+  s.hero = hero;
+  localStorage.setItem(k, JSON.stringify(s));
+}
+"""
+
+
+def menu_hint(page):
+    return " ".join(page.locator("#overlay p.tap-hint").inner_text().split())
+
+
+def reload_menu(page, hero=None):
+    """Put the hero in the save and come back to a freshly rendered menu."""
+    page.evaluate(SET_HERO, hero)
+    page.reload(wait_until="domcontentloaded")
+    page.wait_for_function("window.__ready === true", timeout=20000)
+    page.wait_for_selector("#overlay p.tap-hint")
+    return menu_hint(page)
+
+
+@pytest.mark.parametrize("touch,viewport", [(False, DESKTOP), (True, IPHONE)],
+                         ids=["keyboard", "touch"])
+def test_the_menu_hint_reads_for_the_device_it_is_on(make_page, touch, viewport):
+    """A laptop is told about the keys; a phone is told about the screen.
+
+    `(pointer: coarse)` is the branch, and it is worth checking that these two
+    contexts really do disagree about it — a hint that reads correctly on both
+    because the media query answers the same thing twice would pass this by
+    saying one of the two lines everywhere.
+    """
+    page = make_page(viewport, touch=touch)
+    try:
+        assert page.evaluate("() => matchMedia('(pointer: coarse)').matches") is touch, (
+            "this context does not point the way the test thinks it does")
+        hint = menu_hint(page)
+        if touch:
+            assert "Tap anywhere to jump" in hint, hint
+            assert "Space" not in hint and "Esc" not in hint, (
+                f"a phone was told about keys it does not have: {hint}")
+        else:
+            # the keys are all real: main.js binds Space/ArrowUp/KeyW to the
+            # jump and Escape/KeyP to pause
+            assert "Space to jump" in hint, hint
+            assert "Esc to pause" in hint, (
+                f"the one control a grown-up needs is still unwritten: {hint}")
+            assert "Tap anywhere" not in hint, (
+                f"a laptop was told to tap the screen: {hint}")
+        assert "hold" in hint and "float" in hint, f"the float went missing: {hint}"
+    finally:
+        page.context.close()
+
+
+def test_the_menu_hint_names_the_move_of_whoever_you_are_playing_as(make_page):
+    """Whose move, and which one — for as long as they are the choice.
+
+    The picker says it once, at the first ▶ Play. Everything after that is a
+    player who chose yesterday, and a button in the corner of the HUD that
+    nothing on screen accounts for.
+    """
+    page = make_page(DESKTOP)
+    try:
+        assert "Zoomies" not in reload_menu(page, None), (
+            "a menu with nobody chosen named a move anyway")
+        # written out rather than read back out of abilities.js: these are the
+        # words on the button and in the picker, and a test that took them from
+        # the table would agree with any table at all
+        for hero, name, move, emoji, others in [
+            ("bluey", "Bluey", "Zoomies", "💨", ("Floaty", "Big Bounce", "Sniff Out")),
+            ("bingo", "Bingo", "Floaty", "🎈", ("Zoomies", "Big Bounce", "Sniff Out")),
+        ]:
+            hint = reload_menu(page, hero)
+            assert move in hint, f"playing as {name}, the hint never names {move}: {hint}"
+            assert name in hint, f"the hint does not say whose move {move} is: {hint}"
+            assert emoji in hint, (
+                f"the hint names the move but not the button that does it: {hint}")
+            left = [m for m in others if m in hint]
+            assert not left, f"playing as {name}, the hint still names {left}: {hint}"
+    finally:
+        page.context.close()
+
+
+def test_the_pre_boot_menu_does_not_write_a_controls_hint_of_its_own():
+    """index.html paints a menu so the page is not blank while the module
+    loads, and it used to carry its own copy of this line — the third hand-kept
+    copy of one screen (#286), and the one that cannot know either of the two
+    things the line is about. It says nothing now: the game cannot be played
+    until main.js has loaded, so before then there is nothing true to say about
+    how to play it.
+
+    Asserted here rather than left as a habit, because the failure of putting it
+    back is invisible — a second line that is right for a phone with nobody
+    chosen, and wrong for every other visitor, for the first second of the page.
+    """
+    html = re.sub(r"<!--.*?-->", "", (APP / "public" / "index.html").read_text(), flags=re.S)
+    para = re.search(r'<p class="tap-hint">(.*?)</p>', html, re.S)
+    assert para, "the menu's hint paragraph is gone from index.html altogether"
+    text = re.sub(r"<[^>]+>", " ", para.group(1))
+    said = [w for w in ("jump", "float", "tap", "space", "esc") if w in text.lower()]
+    assert not said, (
+        f"index.html is telling the player how to play again ({said}) — that line "
+        f"is controlsHint()'s to write: {' '.join(text.split())!r}")
+
+
+# The longest line this can produce is Bandit's: "E for Bandit's Big Bounce 🦘".
+# Which hero is chosen is not something a layout is allowed to depend on, so the
+# sweep is all four of them rather than the one that happens to be on screen.
+@pytest.mark.parametrize("viewport,touch", [({"width": 844, "height": 390}, True),
+                                            ({"width": 1024, "height": 420}, False)],
+                         ids=["phone sideways", "laptop, short window"])
+def test_a_longer_hint_does_not_push_the_menu_off_the_screen(make_page, viewport, touch):
+    """#266: the menu fits its shortest window exactly, so adding words to it is
+    a layout change and not just a copy change.
+
+    The two windows here are the two that have no room to give: a phone held the
+    way this game asks to be held, and a laptop with the browser chrome taking
+    half the screen. The hint may wrap — it is the ▶ Play button and the way to
+    the story below it that have to stay reachable.
+    """
+    page = make_page(viewport, touch=touch)
+    seen = []
+    try:
+        for hero in (None, "bluey", "bingo", "bandit", "chilli"):
+            hint = reload_menu(page, hero)
+            fit = page.evaluate(PANEL_FITS, SCROLLER)
+            box = page.evaluate(
+                "() => { const r = document.querySelector('#overlay p.tap-hint')"
+                ".getBoundingClientRect(); return {top: r.top, bottom: r.bottom, "
+                "left: r.left, right: r.right}; }")
+            who = hero or "nobody chosen"
+            assert fit["over"] <= 1, (
+                f"playing as {who}, the menu is {fit['over']:.0f}px taller than the "
+                f"{viewport['height']}px window — the bottom of it (▶ Play, the story "
+                f"link) is off the screen. The hint reads {hint!r}")
+            assert box["bottom"] <= viewport["height"] + 0.5, (
+                f"playing as {who}, the hint itself ends at y {box['bottom']:.0f} on a "
+                f"{viewport['height']}px screen: {hint!r}")
+            assert box["left"] >= -0.5 and box["right"] <= viewport["width"] + 0.5, (
+                f"playing as {who}, the hint runs off the side (x {box['left']:.0f}.."
+                f"{box['right']:.0f} of {viewport['width']}px): {hint!r}")
+            seen.append(hint)
+    finally:
+        page.context.close()
+    # a reload that quietly stopped re-rendering would measure the same menu five
+    # times, and the longest line would never have been on the screen at all
+    assert len(set(seen)) == 5, f"the menu did not change between heroes: {seen}"
+
+
 def test_chapter_select_lists_five_chapters_with_four_locked(desktop):
     desktop.click("#btn-chapters")
     desktop.wait_for_selector(".chapter-card")
