@@ -84,7 +84,23 @@ const starsText = (n) => "★★★".slice(0, n) + "☆☆☆".slice(0, 3 - n);
 
 /* --------------------------------------------------------------- screens -- */
 
-function showOverlay(html, { transparent = false } = {}) {
+/**
+ * Put a screen up — and silence the one it replaces (#301).
+ *
+ * Three screens read themselves out loud now (#255, #293) and nothing cancelled
+ * a read when you left one: `read()` clears the queue on its way in, so a read
+ * only stopped if the screen you landed on also talked, and `hideOverlay()`
+ * covers the single exit into the chapter. Everything else — a bio back to the
+ * gallery, the results to the menu — kept talking over where you went.
+ *
+ * `keepReading` is opt-*out* because the one screen that must not be silenced
+ * is silencing itself: the story card re-renders whole for the Auto-run label
+ * and would cut its own story off mid-sentence. A caller who forgets the flag
+ * gets a read that ends early, which is visible; the other default fails by
+ * going on talking somewhere nobody is listening for it, which is this issue.
+ */
+function showOverlay(html, { transparent = false, keepReading = false } = {}) {
+  if (!keepReading) sound.hush();
   overlay.className = "screen" + (transparent ? " transparent" : "");
   overlay.innerHTML = `<div class="panel"><div class="panel-body">${html}</div></div>`;
   // The block of buttons that ends a screen — the way forward and the way back —
@@ -535,7 +551,7 @@ function storyCard(index, { speak = true } = {}) {
         <button class="med-btn" id="btn-back">← Menu</button>
       </div>
     </div>
-  `);
+  `, { keepReading: !speak });
   const node = overlay.querySelector("#story-dog canvas");
   if (node && hero) portrait(node, hero, "cheer");
   // read to whoever is holding the phone, because the reason this card is no

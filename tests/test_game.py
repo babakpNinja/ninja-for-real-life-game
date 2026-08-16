@@ -957,6 +957,113 @@ def test_a_muted_game_says_so_on_both_new_screens_instead_of_doing_nothing(own_p
     page.evaluate("() => document.getElementById('btn-mute').click()")
 
 
+# --- and stopping when you walk away from it (#301) --------------------------
+# Nothing cancelled a read when you left a screen. `read()` clears the queue on
+# its way in, so a read only ever stopped if the screen you landed on also
+# talked — and `hideOverlay()` covers exactly one exit, into the chapter (#255).
+# Measured on the live code: open a bio, four lines queued, tap "← All
+# characters", and `__hushes` was unchanged. A fun fact read out over the
+# gallery. With one reading screen that was invisible; with three (#293) it is
+# every overlay-to-overlay move in the game.
+#
+# The rule is "a new screen silences the old one", not "any render silences":
+# the story card re-renders *itself* for the Auto-run label, and a blanket hush
+# would cut the story off mid-sentence for a one-word change.
+
+
+def start_reading_bio(page, nth=0):
+    """Open a character bio with a read in flight; return the hush count.
+
+    Counted from *here* rather than from zero: `read()` cancels the queue before
+    it starts talking, so a screen that has read once has already hushed and
+    `>= 1` would be true whatever leaving it does.
+    """
+    page.evaluate(SPY_ON_SPEECH)
+    page.click("#btn-gallery")
+    page.wait_for_selector(".char-card")
+    page.locator(".char-card").nth(nth).click()
+    page.wait_for_selector(".bio h3")
+    assert page.evaluate("() => window.__said"), (
+        "the bio read nothing out, so there is no read here to stop")
+    return page.evaluate("() => window.__hushes")
+
+
+@pytest.mark.parametrize("out,landed", [("btn-back", ".gallery"), ("btn-menu", "#btn-play")])
+def test_leaving_a_screen_that_is_reading_stops_it(own_page, out, landed):
+    """Both ways out of a bio, onto screens that have no voice of their own.
+
+    Those are the ones that were broken: a screen that reads itself cancels the
+    queue as it starts, so bio-to-bio always looked fine. The gallery and the
+    menu say nothing, and so said nothing about the fun fact still being read
+    over them.
+    """
+    page = own_page
+    before = start_reading_bio(page)
+    page.click(f"#{out}")
+    page.wait_for_selector(landed)
+    assert page.evaluate("() => window.__hushes") > before, (
+        f"#{out} left the bio talking over the screen it went to (#301)")
+
+
+def test_the_screen_you_land_on_is_not_labelled_by_the_read_you_left(own_page):
+    """The other half of leaving: whose answer the speaker button believes.
+
+    `setReadLabel` finds `#btn-read` in the document, so an `onend` or an
+    'synthesis-failed' from the screen before lands on the button of the screen
+    you are on now — "🔇 No voice here" over a bio that is reading perfectly.
+    `hush()` bumps the run the answers are matched against, which is what makes
+    the stale ones stale.
+
+    Honest about what this does and does not pin: `read()` bumps that run too,
+    so landing on a screen that *also* talks would pass without the hush. It is
+    here because the button state is half of what "you left" has to mean, and
+    because the run check is the only thing standing between the two screens.
+    """
+    page = own_page
+    start_reading_bio(page)
+    left_behind = len(page.evaluate("() => window.__said"))
+    page.click("#btn-back")                       # the gallery: no voice of its own
+    page.wait_for_selector(".gallery")
+    page.locator(".char-card").nth(1).click()
+    page.wait_for_selector(".bio h3")
+    assert story_button(page) == "🔊 Reading…", story_button(page)
+    # the first bio's utterances are still sitting in the stub's queue; answer
+    # those and only those, oldest first
+    assert page.evaluate("(n) => window.__fail(n)", left_behind) == left_behind, (
+        "the read that was left behind queued nothing to answer late")
+    assert story_button(page) == "🔊 Reading…", (
+        "the read from the screen before stamped its ending on the screen you are on")
+
+
+def test_a_re_render_of_the_same_screen_does_not_cut_the_story_off(own_page):
+    """Auto-run redraws the story card whole, mid-story, for one word.
+
+    So the hush belongs to *arriving somewhere new*, not to rendering: the card
+    passes `keepReading` through its own re-render. Under the speech stub
+    `cancel()` is the only thing that can stop a read, so an unchanged hush
+    count is the story still going.
+    """
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-go")
+    said = page.evaluate("() => window.__said")
+    assert said, "the story card said nothing to interrupt"
+    before = page.evaluate("() => window.__hushes")
+    label = page.locator("#btn-auto").inner_text()
+
+    page.click("#btn-auto")
+    page.wait_for_selector("#btn-go")
+    assert page.locator("#btn-auto").inner_text() != label, (
+        f"Auto-run did not re-render the card ({label!r} both times) — this test "
+        "asks what a re-render does and nothing was re-rendered")
+    assert page.evaluate("() => window.__hushes") == before, (
+        "toggling Auto-run cancelled the story the card was in the middle of reading")
+    assert page.evaluate("() => window.__said") == said, (
+        "the re-render started the story again from the top")
+    page.click("#btn-auto")                       # leave the save as it was found
+
+
 def test_this_browser_cannot_speak(own_page):
     """The gap the tests above cannot cover, pinned so it stays visible (#289).
 
