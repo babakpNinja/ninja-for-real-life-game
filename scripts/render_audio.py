@@ -22,6 +22,7 @@ import argparse
 import base64
 import contextlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -48,7 +49,13 @@ SFX = {
     "ability": ("s.ability()", 1.2),
     "recharged": ("s.recharged()", 0.8),
 }
-THEMES = ["menu", "backyard", "creek", "hammerbarn", "beach", "sleepytime"]
+# The music the game has to have: the menu's, plus whatever tune each chapter
+# asks for. Read from chapters.js — the side that *asks* — and not from the
+# `themes` table in audio.js, which is the side that answers: a list taken from
+# the answers could never say a chapter was left without a tune of its own, and
+# a new chapter would silently render the menu loop again (#351).
+THEMES = ["menu"] + re.findall(r'^\s*theme: "(\w+)",',
+                               (APP / "public/js/chapters.js").read_text(), re.M)
 THEME_SECONDS = 16.0  # long enough that the slow lullaby has bars to compare
 
 RENDER = """

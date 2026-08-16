@@ -10,6 +10,8 @@
 import {
   drawTree, drawPalm, drawGumTree, drawHouse, drawCloud, drawBird, drawBalloon,
   drawPallets, drawTrolleys, drawStepLadder,
+  drawMarquee, drawShopfront, drawLounger, drawBunting,
+  drawHillsHoist, drawCreekRocks, drawBeachBrolly, drawStreetLamp,
   drawDreamPlanet, drawCloudTower,
   drawToken, drawObstacle, roundRect, star,
   drawDeepItem, drawDeepStrand, rgba,
@@ -18,7 +20,7 @@ import { drawCharacter, footfall, stridePhase, BLEND } from "./sprites.js";
 import { abilityFor, heroFor, PLAYABLE } from "./abilities.js";
 import { sound } from "./audio.js";
 import { CHAPTERS, buildLevel, sceneryFor, starsFor, highSky, deepGround, IDLE_SKY, GROUND_Y,
-  SEA_TOP, CLOUD_TOP, SKY_TOP, SKY_TILE, SKY_BAND, DEEP_TILE, DEEP_BAND, DEEP_BOT,
+  SEA_TOP, CLOUD_TOP, POOL_DECK, SKY_TOP, SKY_TILE, SKY_BAND, DEEP_TILE, DEEP_BAND, DEEP_BOT,
   WORLD_W, WORLD_H } from "./chapters.js";
 
 const GRAVITY = 2300;
@@ -27,6 +29,16 @@ const FLOAT_GRAVITY = 0.34;   // gravity multiplier while the finger stays down
 const COYOTE = 0.14;          // grace period after walking off an edge
 const BUFFER = 0.18;          // tap slightly early and it still counts
 const RECOVERY_IN = 90;       // px in from the edge a splash lifts him onto
+// Chapter 9's water and chapter 8's wind (#351). SWIM_LIFT is a little over the
+// pool's own gravity (2300 × 0.3 = 690), so holding on climbs but does not
+// rocket; SWIM_V caps both ways, because water is thick. UPDRAFT is well over
+// full gravity — a gust has to beat a fall that is already in progress by the
+// time the player reaches it — and UPDRAFT_V is what stops it firing them into
+// the sky, which would be a way to *miss* the leaves rather than to catch them.
+const SWIM_LIFT = 1500;
+const SWIM_V = 330;
+const UPDRAFT = 4200;
+const UPDRAFT_V = 430;
 export const PLAYER_W = 46;     // exported for the ground-ahead sweep in the suite
 const PLAYER_H = 74;
 const CAM_X = 300;
@@ -242,6 +254,8 @@ export class Game {
       : null;
     this.cameoX = ch.length * 0.55;
     this.cameoShown = false;
+    this.crowd = ch.crowd ? this.crowdSpots(level, ch) : [];
+    this.bounced = 0;
     this.finished = false;
     sound.playTheme(ch.theme);
     this.loop();
@@ -412,6 +426,28 @@ export class Game {
     if (a.fall && p.vy > 0) fall = Math.min(fall, 1 + (a.fall - 1) * power);
     const g = GRAVITY * (ch.gravityScale || 1) * fall;
     p.vy += g * dt;
+
+    // Chapter 9 is a pool, and a pool is the one place a finger held down means
+    // *up* (#351). Everywhere else holding on slows the fall; here it swims, so
+    // this is the only chapter whose player can climb without a platform to
+    // jump off. Both ends are clamped gently — water is thick, and a swimmer
+    // who accelerates like a falling dog reads as a dog falling in water.
+    if (ch.swim) {
+      if (this.holding) p.vy -= SWIM_LIFT * dt;
+      p.vy = Math.max(-SWIM_V, Math.min(SWIM_V, p.vy));
+    }
+
+    // Chapter 8's gusts: inside one, the wind is stronger than gravity, so the
+    // puddle you would have splashed into is the thing that lifts you over it.
+    const gust = this.gustAt(p.x, p.y);
+    if (gust) {
+      p.vy -= UPDRAFT * dt;
+      if (p.vy < -UPDRAFT_V) p.vy = -UPDRAFT_V;
+      if (this.t - (p.gustAt || -1) > 0.12) {
+        p.gustAt = this.t;
+        this.gustMotes(gust);
+      }
+    }
     if (p.vy > 1400) p.vy = 1400;
     const prevY = p.y;
     p.y += p.vy * dt;
@@ -422,10 +458,36 @@ export class Game {
       if (p.x + PLAYER_W / 2 < s.x || p.x - PLAYER_W / 2 > s.x + s.w) continue;
       if (prevY <= s.y + 8 && p.y >= s.y && p.vy >= 0) {
         p.y = s.y;
+        if (s.bounce) {
+          // Chapter 6's jumping castle (#351): the surface itself throws you,
+          // with no button pressed. Set before `onGround`, and left in the air,
+          // so the very next frame is a jump rather than a stand.
+          p.vy = JUMP_V * s.bounce;
+          p.onGround = false;
+          p.coyote = 0;
+          sound.jump();
+          this.puff(p.x, p.y, 10);
+          if (!this.bounced) this.toast("Boing! 🏰");
+          this.bounced = (this.bounced || 0) + 1;
+          landed = true;
+          break;
+        }
         p.vy = 0;
         landed = true;
         if (!p.onGround) this.puff(p.x, p.y, 4);
         p.onGround = true;
+        // Chapter 7's travelators (#351): the floor moves, so standing on it is
+        // not standing still. Applied here rather than to `speed` above because
+        // it is a property of what you are *on*, and it therefore keeps working
+        // while a player who has stopped running is stationary on a moving belt.
+        if (s.belt) {
+          p.x += s.belt * dt;
+          if (p.x < 40) p.x = 40;
+          if (this.t - (p.beltAt || -1) > 0.14) {
+            p.beltAt = this.t;
+            this.beltMotes(s, p);
+          }
+        }
         break;
       }
     }
@@ -644,6 +706,31 @@ export class Game {
     });
   }
 
+  /**
+   * Where the whole cast stands in the last chapter (#351).
+   *
+   * The cameo system draws one character standing still, which is all the rig
+   * can be trusted with (#215) — this is that, twenty-five times, spread evenly
+   * along the chapter so somebody new is always coming into view. They stand on
+   * whatever ground is under their spot rather than on GROUND_Y, so nobody is
+   * left cheering in mid-air over a gap, and anyone whose spot has no ground at
+   * all is stepped forward to the next slab instead of being dropped: a guest
+   * list that quietly loses guests is the one thing this chapter cannot do.
+   */
+  crowdSpots(level, ch) {
+    const ground = level.plats.filter((s) => s.y >= GROUND_Y).sort((a, b) => a.x - b.x);
+    const out = [];
+    const n = this.characters.length;
+    for (let i = 0; i < n; i++) {
+      const want = 640 + ((ch.length - 900) * i) / n;
+      let on = ground.find((s) => want >= s.x + 40 && want <= s.x + s.w - 40);
+      if (!on) on = ground.find((s) => s.x + s.w - 40 > want) || ground[ground.length - 1];
+      const x = Math.max(on.x + 40, Math.min(on.x + on.w - 40, want));
+      out.push({ id: this.characters[i].id, x, y: on.y });
+    }
+    return out;
+  }
+
   /** The free ledge nearest a point along the level, preferring a high one. */
   standingSpot(level, want, used) {
     const wide = level.plats.filter((s) => s.w >= 90 && !used.has(s));
@@ -797,6 +884,48 @@ export class Game {
   }
 
   /**
+   * The gust the player is standing in, if any (#351).
+   *
+   * `updrafts` comes off the chapter's own `build`, so a chapter that has none
+   * asks this question and is told no rather than every chapter carrying an
+   * empty list around: the mechanic belongs to chapter 8, and the engine only
+   * has to know what to do when one is there.
+   */
+  gustAt(x, y) {
+    for (const u of this.level.updrafts || []) {
+      if (x > u.x && x < u.x + u.w && y > u.y && y < u.y + u.h + 60) return u;
+    }
+    return null;
+  }
+
+  /** Leaves going up: what makes a gust something you can see before you enter it. */
+  gustMotes(u) {
+    for (let i = 0; i < 2; i++) {
+      this.particles.push({
+        x: u.x + Math.random() * u.w, y: u.y + u.h - Math.random() * 40,
+        vx: (Math.random() - 0.5) * 60, vy: -260 - Math.random() * 160,
+        life: 0.9, r: 3 + Math.random() * 4, color: "rgba(200,120,64,0.85)",
+      });
+    }
+  }
+
+  /**
+   * Scuffs off a travelator, thrown the way the floor is going, not the dog.
+   *
+   * A deeper shade of the shop floor rather than white: the floor is a pale
+   * lilac, and white motes on it moved the strongest pixel in the picture by
+   * 20/255 — drawn, and invisible (#351).
+   */
+  beltMotes(s, p) {
+    const dir = Math.sign(s.belt);
+    this.particles.push({
+      x: p.x - dir * 10, y: p.y - 3,
+      vx: dir * (60 + Math.random() * 90), vy: -20 - Math.random() * 30,
+      life: 0.4, r: 3 + Math.random() * 3, color: "rgba(94,88,110,0.85)",
+    });
+  }
+
+  /**
    * The motes a special move leaves behind it while it is on.
    *
    * Emitted on an accumulator rather than "one per frame, sometimes": a 120Hz
@@ -880,6 +1009,7 @@ export class Game {
     ctx.save();
     ctx.translate(-camX, 0);
     this.renderLevel(ctx, camX);
+    if (this.ch.rain) this.renderRain(ctx, camX);
     ctx.restore();
 
     ctx.restore();
@@ -1140,10 +1270,47 @@ export class Game {
       for (let i = 0; i < 12; i++) {
         drawCloud(ctx, i * 520 + 100, 150 + (i % 3) * 52, 1.6, 0.5);
       }
+    } else if (ch.id === "shops") {
+      // The far side of the shopping centre: a polished floor with the lights
+      // reflected down it, and the shopfronts of `sceneryFor` standing on it.
+      // Hammerbarn's lesson (#213), applied before the hole rather than after.
+      ctx.fillStyle = "#CFC8DA";
+      ctx.fillRect(-600, GROUND_Y, 7200, this.viewBot - GROUND_Y);
+      ctx.fillStyle = "rgba(255,255,255,0.5)";
+      for (let i = 0; i < 20; i++) ctx.fillRect(i * 330 + 40, GROUND_Y + 14, 150, 6);
+      ctx.fillStyle = "#E6E0EE";                 // the ceiling lights, far off
+      for (let i = 0; i < 20; i++) roundRect(ctx, i * 330, 96, 210, 14, 7), ctx.fill();
+    } else if (ch.id === "pool") {
+      // Under water: the far wall of the pool, tiled, and the deck above it
+      // that the loungers stand on (POOL_DECK). Below the deck line is water
+      // all the way down — this chapter's middle distance *is* the pool.
+      ctx.fillStyle = "#7FCFE4";
+      ctx.fillRect(-600, POOL_DECK, 7200, this.viewBot - POOL_DECK);
+      ctx.fillStyle = "rgba(255,255,255,0.35)";  // the tile courses on the wall
+      for (let r = 0; r < 4; r++) {
+        ctx.fillRect(-600, POOL_DECK + 30 + r * 46, 7200, 4);
+      }
+      // The deck's own lip, drawn *below* the line and not above it: POOL_DECK
+      // is where the loungers' feet go, so anything painted over the 12px above
+      // it is the surface closing over a prop that is meant to be standing on
+      // it — the beach's palms under the sea, indoors (#210).
+      ctx.fillStyle = "#E8F7FC";
+      ctx.fillRect(-600, POOL_DECK, 7200, 12);
+      ctx.fillStyle = "rgba(255,255,255,0.22)";  // light moving over the wall
+      for (let i = 0; i < 24; i++) {
+        const x = i * 300 + Math.sin(this.t * 0.9 + i) * 26;
+        ctx.beginPath();
+        ctx.ellipse(x, POOL_DECK + 90, 90, 26, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
     } else {
       for (let i = 0; i < 16; i++) {
         const x = i * 360;
-        ctx.fillStyle = ch.id === "creek" ? "#8FBF7C" : "#9AD08A";
+        // The hills, in whatever colour the chapter's own light puts on them —
+        // the same range at dusk (`nanas`) is not the same green as at eleven
+        // in the morning, and a chapter that says so is read here rather than
+        // adding a fourth id to the ternary.
+        ctx.fillStyle = ch.hills || (ch.id === "creek" ? "#8FBF7C" : "#9AD08A");
         ctx.beginPath();
         ctx.ellipse(x, GROUND_Y - 10, 240, 110, 0, Math.PI, 0);
         ctx.fill();
@@ -1165,8 +1332,76 @@ export class Game {
       else if (it.kind === "planet") drawDreamPlanet(ctx, it.x, it.y, it.scale);
       else if (it.kind === "tower") drawCloudTower(ctx, it.x, it.y, it.scale);
       else if (it.kind === "palm") drawPalm(ctx, it.x, it.y, it.scale);
+      else if (it.kind === "marquee") drawMarquee(ctx, it.x, it.y, it.scale);
+      else if (it.kind === "shopfront") drawShopfront(ctx, it.x, it.y, it.scale);
+      else if (it.kind === "lounger") drawLounger(ctx, it.x, it.y, it.scale);
+      else if (it.kind === "bunting") drawBunting(ctx, it.x, it.y, it.scale);
+      else if (it.kind === "hoist") drawHillsHoist(ctx, it.x, it.y, it.scale);
+      else if (it.kind === "rocks") drawCreekRocks(ctx, it.x, it.y, it.scale);
+      else if (it.kind === "brolly") drawBeachBrolly(ctx, it.x, it.y, it.scale);
+      else if (it.kind === "lamp") drawStreetLamp(ctx, it.x, it.y, it.scale);
       else drawTree(ctx, it.x, it.y, it.scale, it.leaf, it.trunk);
     }
+    ctx.restore();
+  }
+
+  /**
+   * A bouncy castle, drawn as the platform it is (#351).
+   *
+   * It replaces the slab rather than decorating it, because a bounce pad that
+   * looks like the floor is a surprise, and the one thing a chapter for a
+   * three-year-old may not be is surprising. Wobbles on its own — inflatable
+   * things do — and the wobble is a function of world x and time, so it is the
+   * same wobble at any frame rate.
+   */
+  renderCastle(ctx, s) {
+    const wob = Math.sin(this.t * 3 + s.x * 0.01) * 3;
+    ctx.save();
+    ctx.fillStyle = "#F49AC1";
+    roundRect(ctx, s.x, s.y - 4 + wob, s.w, 40, 14);
+    ctx.fill();
+    ctx.fillStyle = "#8FA8E8";                    // the walls behind it
+    for (let i = 0; i < 3; i++) {
+      roundRect(ctx, s.x + 12 + i * (s.w - 76) / 2, s.y - 66 + wob, 52, 64, 12);
+      ctx.fill();
+    }
+    ctx.fillStyle = "#F7C948";                    // turret tops
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath();
+      ctx.arc(s.x + 38 + i * (s.w - 76) / 2, s.y - 66 + wob, 26, Math.PI, 0);
+      ctx.fill();
+    }
+    ctx.fillStyle = "#F49AC1";
+    roundRect(ctx, s.x, s.y - 8 + wob, s.w, 26, 12);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.4)";      // the lit top edge you land on
+    roundRect(ctx, s.x + 8, s.y - 4 + wob, s.w - 16, 7, 4);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /**
+   * Chapter 8's rain, over everything (#351).
+   *
+   * Drawn in world space over the level and under the HUD: rain in front of the
+   * player is what makes it weather rather than a grey sky. Streaks rather than
+   * drops, and thin — this is a chapter a small person plays, and the thing
+   * that has to stay readable is the dog.
+   */
+  renderRain(ctx, camX) {
+    const left = camX + this.viewLeft - 60, right = camX + this.viewRight + 60;
+    ctx.save();
+    ctx.strokeStyle = "rgba(226,240,246,0.55)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i < 90; i++) {
+      const span = right - left;
+      const x = left + ((i * 137.5 + this.t * 120) % span);
+      const y = this.viewTop + ((i * 83.7 + this.t * 900) % (this.viewBot - this.viewTop));
+      ctx.moveTo(x, y);
+      ctx.lineTo(x - 5, y + 22);
+    }
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -1176,6 +1411,22 @@ export class Game {
     // the screen reaches past both ends of it (#337). Culling to the world's own
     // width is what would leave the bars empty of ground, water and platforms.
     const left = camX + this.viewLeft - 120, right = camX + this.viewRight + 120;
+
+    // Chapter 9 is *in* the water, not beside it (#351): a wash of pool blue
+    // over the whole play area, under everything that moves through it, plus
+    // the odd bubble going up so the water is visibly a thing and not a filter.
+    if (ch.swim) {
+      ctx.fillStyle = "rgba(79,195,224,0.22)";
+      ctx.fillRect(left, this.viewTop, right - left, this.viewBot - this.viewTop);
+      ctx.fillStyle = "rgba(255,255,255,0.35)";
+      for (let i = 0; i < 26; i++) {
+        const x = Math.floor(left / 300) * 300 + i * 300 + Math.sin(this.t + i) * 12;
+        const y = GROUND_Y - ((this.t * 40 + i * 137) % 420);
+        ctx.beginPath();
+        ctx.arc(x, y, 3 + (i % 3), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
 
     // water under the gaps (creek + beach)
     if (ch.water) {
@@ -1190,6 +1441,7 @@ export class Game {
     // platforms
     for (const s of this.level.plats) {
       if (s.x + s.w < left || s.x > right) continue;
+      if (s.bounce) { this.renderCastle(ctx, s); continue; }
       const grad = ctx.createLinearGradient(0, s.y, 0, s.y + 90);
       grad.addColorStop(0, ch.ground[0]);
       grad.addColorStop(1, ch.ground[1]);
@@ -1210,6 +1462,51 @@ export class Game {
           ctx.lineTo(x + 5, s.y - 9);
           ctx.stroke();
         }
+      }
+      // A moving floor has to *look* like one before you step on it (#351): the
+      // chevrons run the way the belt does and travel at its speed, so which
+      // way a travelator is going is answered by the picture rather than by
+      // standing on it and finding out.
+      if (s.belt) {
+        const dir = Math.sign(s.belt);
+        const shift = ((this.t * s.belt) % 44 + 44) % 44;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(s.x, s.y - 2, s.w, 16);
+        ctx.clip();
+        ctx.strokeStyle = "rgba(255,255,255,0.65)";
+        ctx.lineWidth = 3;
+        for (let x = s.x - 44 + shift; x < s.x + s.w + 44; x += 44) {
+          ctx.beginPath();
+          ctx.moveTo(x, s.y + 2);
+          ctx.lineTo(x + dir * 11, s.y + 7);
+          ctx.lineTo(x, s.y + 12);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+
+    // the gusts (#351) — drawn before the player, so she runs through the wind
+    for (const u of this.level.updrafts || []) {
+      if (u.x + u.w < left || u.x > right) continue;
+      const col = ctx.createLinearGradient(0, u.y + u.h, 0, u.y);
+      col.addColorStop(0, "rgba(255,255,255,0.30)");
+      col.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = col;
+      ctx.fillRect(u.x, u.y, u.w, u.h);
+      ctx.strokeStyle = "rgba(255,255,255,0.45)";
+      ctx.lineWidth = 2;
+      for (let i = 0; i < 4; i++) {
+        // four strands of wind winding upward, each on its own phase
+        ctx.beginPath();
+        for (let k = 0; k <= 12; k++) {
+          const yy = u.y + u.h - (k / 12) * u.h;
+          const xx = u.x + u.w * (0.2 + i * 0.2)
+                   + Math.sin(k * 0.6 + this.t * 3 + i) * 14;
+          if (k === 0) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy);
+        }
+        ctx.stroke();
       }
     }
 
@@ -1238,6 +1535,18 @@ export class Game {
       ctx.textAlign = "center";
       ctx.fillText("$", 0, 6);
       ctx.restore();
+    }
+
+    // the party guests, in the last chapter only: everybody, cheering (#351)
+    for (const g of this.crowd || []) {
+      if (g.x < left - 120 || g.x > right + 120) continue;
+      const c = this.characters.find((x) => x.id === g.id);
+      if (!c) continue;
+      const bob = Math.sin(this.t * 3 + g.x * 0.02) * 4;
+      // facing back down the path, like the cameo: they are watching whoever
+      // is running toward them, and a guest facing away reads as a guest who
+      // has not noticed you
+      drawCharacter(ctx, c.id, g.x, g.y + bob, 70, c.palette, this.t, "cheer", -1);
     }
 
     // cameo friend standing near the middle of the level

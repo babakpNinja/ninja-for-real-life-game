@@ -57,6 +57,17 @@ import fetch_assets  # noqa: E402
 GAME_NAME = re.search(r'^GAME_NAME = "(.*)"$',
                       (APP / "scripts" / "fetch_assets.py").read_text(), re.M).group(1)
 
+# How many chapters the game ships, and how many stars each one is worth. Asked
+# of the module itself with the same node import the health count uses
+# (server.js), rather than typed here: the number decides how many tests there
+# are, so parametrised cases need it at import time and it cannot be a fixture.
+# A chapter added to chapters.js is then a chapter every sweep below walks.
+CHAPTER_COUNT, STARS_PER_CHAPTER = (int(n) for n in subprocess.run(
+    ["node", "--input-type=module", "-e",
+     'const m = await import("./public/js/chapters.js");'
+     ' console.log(m.CHAPTERS.length, m.STARS_PER_CHAPTER);'],
+    cwd=APP, capture_output=True, text=True, check=True).stdout.split())
+
 IPHONE = {"width": 390, "height": 844}
 PIXEL = {"width": 412, "height": 915}
 # The same phone turned, which is the way the game asks to be held — one name for
@@ -283,8 +294,8 @@ def test_all_25_characters_shipped(health):
     assert health.get("characters") == 25, f"got {health.get('characters')}"
 
 
-def test_all_5_chapters_shipped(health):
-    assert health.get("chapters") == 5, f"got {health.get('chapters')}"
+def test_every_chapter_in_the_source_is_shipped(health):
+    assert health.get("chapters") == CHAPTER_COUNT, f"got {health.get('chapters')}"
 
 
 # --- the character artwork --------------------------------------------------
@@ -712,8 +723,8 @@ def test_chapter_select_lists_five_chapters_with_four_locked(desktop):
     cards = desktop.locator(".chapter-card").count()
     locked = desktop.locator(".chapter-card.locked").count()
     desktop.click("#btn-back")
-    assert cards == 5, f"got {cards}"
-    assert locked == 4, f"got {locked}"
+    assert cards == CHAPTER_COUNT, f"got {cards}"
+    assert locked == CHAPTER_COUNT - 1, f"got {locked}"
 
 
 # --- the story, and getting past it (#255) -----------------------------------
@@ -1447,7 +1458,7 @@ def test_pause_and_resume(desktop):
     desktop.evaluate("() => window.game.stop()")
 
 
-@pytest.mark.parametrize("index", range(5))
+@pytest.mark.parametrize("index", range(CHAPTER_COUNT))
 def test_every_chapter_plays_to_the_finish_line(desktop, index):
     """The one test that would catch a level nobody can finish."""
     result = play_chapter(desktop, index)
@@ -1467,8 +1478,8 @@ def test_the_results_screen_appears(desktop):
 
 def test_progress_is_saved_and_unlocks_the_rest(desktop):
     saved = desktop.evaluate("JSON.parse(localStorage.getItem('forreallife.save.v1') || '{}')")
-    assert len(saved.get("chapters", {})) == 5, str(list(saved.get("chapters", {}).keys()))
-    assert saved.get("unlocked") == 4, str(saved.get("unlocked"))
+    assert len(saved.get("chapters", {})) == CHAPTER_COUNT, str(list(saved.get("chapters", {}).keys()))
+    assert saved.get("unlocked") == CHAPTER_COUNT - 1, str(saved.get("unlocked"))
 
 
 def test_unlocks_survive_a_reload(desktop):
@@ -3053,15 +3064,26 @@ def test_the_cadence_is_paid_for_in_ground_not_in_seconds(own_page):
 # source; the probe stubs all three afterwards, so a later frame's burst cannot
 # be counted as this one's.
 #
-# The one reason a burst can be missing that is not a fault: not every chapter
-# has a balloon. Spelled once, here, and substituted into the JS so the reason
-# the probe returns and the reason the test forgives cannot drift apart.
-NO_BALLOON = "this chapter has no balloon"
-ABSENT = {NO_BALLOON}
+# The reasons a burst can be missing that are not a fault: three of the eleven
+# mechanics belong to one chapter each. Spelled once, here, and substituted into
+# the JS by name, so the reason the probe returns and the reason the test
+# forgives cannot drift apart.
+ABSENT = {
+    "NO_BALLOON": "this chapter has no balloon",
+    "NO_BOUNCE": "this chapter has no bouncy castle",
+    "NO_GUST": "this chapter has no gusts of wind",
+    "NO_BELT": "this chapter has no moving floor",
+}
+
+# Every method on the engine that pushes a particle. The three general factories,
+# plus the two emitters that belong to a single mechanic: a gust column and a
+# travelator both throw something every few frames for as long as their chapter
+# is played, so a burst measured on chapter 8 or 7 is partly theirs unless they
+# are stubbed out. Everything but the one under test is (#351).
+FACTORIES = ["puff", "scuff", "sparkle", "gustMotes", "beltMotes"]
 
 PARTICLE_SOURCES = {
     "the takeoff puff": {"factory": "puff", "make": """
-        g.scuff = () => {}; g.sparkle = () => {};
         g.player.onGround = true; g.jumpBuffer = 0.2;
         g.particles = [];
         g.step(1 / 120);
@@ -3069,7 +3091,6 @@ PARTICLE_SOURCES = {
         return "";
     """},
     "the landing puff": {"factory": "puff", "make": """
-        g.scuff = () => {}; g.sparkle = () => {};
         g.player.onGround = true; g.jumpBuffer = 0.2;
         g.step(1 / 120);                       // up, and throw that puff away
         g.particles = [];
@@ -3078,7 +3099,6 @@ PARTICLE_SOURCES = {
         return "";
     """},
     "the footfall dust": {"factory": "scuff", "make": """
-        g.puff = () => {}; g.sparkle = () => {};
         g.particles = [];
         for (let n = 0; n < 600 && !g.particles.length; n++) {
             g.player.onGround = true; g.player.vy = 0;   // pinned: only footfalls
@@ -3088,7 +3108,6 @@ PARTICLE_SOURCES = {
         return "";
     """},
     "a collected token's sparkle": {"factory": "sparkle", "make": """
-        g.puff = () => {}; g.scuff = () => {};
         const tk = g.level.tokens.find((t) => !t.taken);
         if (!tk) return "no token left to collect";
         // moved to where one is about to be picked up — beside the player and a
@@ -3101,7 +3120,6 @@ PARTICLE_SOURCES = {
         return "";
     """},
     "the secret's sparkle": {"factory": "sparkle", "make": """
-        g.puff = () => {}; g.scuff = () => {};
         const sec = g.level.secret;
         if (sec.taken) return "the secret is already found";
         sec.x = g.player.x + 40; sec.y = g.player.y - 90;
@@ -3111,7 +3129,6 @@ PARTICLE_SOURCES = {
         return "";
     """},
     "the big bounce's launch puff": {"factory": "puff", "make": """
-        g.scuff = () => {}; g.sparkle = () => {};
         // restarted as the one hero whose move is a shove rather than a window,
         // so the ability comes from the game's own table rather than a copy of it
         g.start(g.chapterIndex, 'bandit');
@@ -3123,7 +3140,6 @@ PARTICLE_SOURCES = {
         return "";
     """},
     "a caught friend's sparkle": {"factory": "sparkle", "make": """
-        g.puff = () => {}; g.scuff = () => {};
         const f = g.friends.find((x) => !x.joined);
         if (!f) return "nobody left to catch";
         // brought to the player rather than the player walked across the level to
@@ -3135,8 +3151,42 @@ PARTICLE_SOURCES = {
         if (!g.particles.length) return "nobody was caught";
         return "";
     """},
+    "the bouncy castle's puff": {"factory": "puff", "make": """
+        const pad = g.level.plats.find((s) => s.bounce);
+        if (!pad) return NO_BOUNCE;
+        // dropped onto the castle from just above it: the bounce fires on the
+        // landing, so what is measured is the puff the pad throws rather than
+        // one a jump on the way there would have made
+        g.player.x = pad.x + 80; g.player.y = pad.y - 30;
+        g.player.vy = 240; g.player.onGround = false;
+        g.particles = [];
+        for (let n = 0; n < 60 && !g.particles.length; n++) g.step(1 / 120);
+        if (!g.particles.length) return "the castle did not bounce him";
+        return "";
+    """},
+    "the gust's flying leaves": {"factory": "gustMotes", "make": """
+        const u = (g.level.updrafts || [])[0];
+        if (!u) return NO_GUST;
+        g.player.x = u.x + u.w / 2; g.player.y = u.y + u.h - 20;
+        g.player.vy = 0; g.player.onGround = false;
+        g.particles = [];
+        g.step(1 / 120);
+        if (!g.particles.length) return "the wind blew nothing about";
+        return "";
+    """},
+    "the travelator's scuffs": {"factory": "beltMotes", "make": """
+        const belt = g.level.plats.find((s) => s.belt);
+        if (!belt) return NO_BELT;
+        // stood still on the moving floor: the scuffs are thrown by the floor,
+        // so nothing here has to be running for them to come off it
+        g.player.x = belt.x + 60; g.player.y = belt.y;
+        g.player.vy = 0; g.player.onGround = true;
+        g.particles = [];
+        for (let n = 0; n < 60 && !g.particles.length; n++) g.step(1 / 120);
+        if (!g.particles.length) return "the floor carried him without a mark";
+        return "";
+    """},
     "the bopped balloon's sparkle": {"factory": "sparkle", "make": """
-        g.puff = () => {}; g.scuff = () => {};
         if (!g.balloon) return NO_BALLOON;
         g.balloon.x = g.player.x + 40; g.balloon.y = g.player.y - 120;
         g.balloon.vy = 0;
@@ -3179,11 +3229,12 @@ SEEN_PROBE = """
     let out;
     try {
         g.start(chapter);
+        for (const f of FACTORIES) if (f !== FACTORY) g[f] = () => {};
         const make = () => { /*MAKE*/ };
         const why = make();
         if (why) return { skipped: why };
         const had = g.particles.length;
-        g.puff = () => {}; g.scuff = () => {}; g.sparkle = () => {};
+        for (const f of FACTORIES) g[f] = () => {};
         const c = g.ctx.canvas, w = c.width, h = c.height;
         let seen = 0, top = 0, alive = 0;
         for (let n = 0; n < frames && g.particles.length; n++) {
@@ -3221,7 +3272,7 @@ SEEN_PROBE = """
         // The stubs above are the *instance's* own properties, shadowing the
         // prototype's. Left there they outlive `start()`, and the next chapter
         // measured on this page quietly makes no particles at all.
-        delete g.puff; delete g.scuff; delete g.sparkle;
+        for (const f of FACTORIES) delete g[f];
         g.stop();     // `start()` began painting; five chapters of that is load
                       // on every page after this one (#182)
     }
@@ -3284,6 +3335,20 @@ def drawn_from(page, cid, *states):
         "arrived — the states this fades between are not the ones on the screen")
 
 
+def probe_js(source):
+    """The visibility probe wired for one source: its burst, its factory (so the
+    other four emitters are stubbed out), and the reasons a chapter can be
+    without it. One builder, because the two callers below must run the same
+    probe — one of them exists to prove the other gives the same answer twice.
+    """
+    js = (SEEN_PROBE.replace("/*MAKE*/", PARTICLE_SOURCES[source]["make"])
+                    .replace("FACTORIES", json.dumps(FACTORIES))
+                    .replace("FACTORY", json.dumps(PARTICLE_SOURCES[source]["factory"])))
+    for token, why in ABSENT.items():
+        js = js.replace(token, json.dumps(why))
+    return js
+
+
 def particles_seen(page, chapter, source, frames=40, seed=SEED):
     """How many pixels one source's burst is worth on one chapter, at its best
     frame: `seen` pixels changed by more than a nudge, `top` the strongest
@@ -3302,8 +3367,7 @@ def particles_seen(page, chapter, source, frames=40, seed=SEED):
       difference: measured mid-load, `top` came back 69 rather than 71 and the
       reproducibility test below failed a ship (#222).
     """
-    js = (SEEN_PROBE.replace("/*MAKE*/", PARTICLE_SOURCES[source]["make"])
-                    .replace("NO_BALLOON", json.dumps(NO_BALLOON)))
+    js = probe_js(source)
     page.evaluate(js, {"chapter": chapter, "frames": frames, "seed": seed, "warm": True})
     art_settled(page)
     return page.evaluate(js, {"chapter": chapter, "frames": frames, "seed": seed})
@@ -3318,7 +3382,7 @@ def test_every_particle_source_can_actually_be_seen(own_page, source):
     Chapter 1's path can be invisible on Chapter 4's.
     """
     seen, skipped = {}, {}
-    for chapter in range(5):
+    for chapter in range(CHAPTER_COUNT):
         r = particles_seen(own_page, chapter, source)
         if r.get("skipped"):
             skipped[chapter] = r["skipped"]
@@ -3327,7 +3391,7 @@ def test_every_particle_source_can_actually_be_seen(own_page, source):
     # "could not fire it here" is not "there is nothing to see here": the only
     # skip this accepts is a chapter that does not have the thing at all. Left
     # open, a probe that silently stopped working reads as five green chapters.
-    unexplained = {c: why for c, why in skipped.items() if why not in ABSENT}
+    unexplained = {c: why for c, why in skipped.items() if why not in set(ABSENT.values())}
     assert not unexplained, (
         f"the probe could not make {source} happen: {unexplained} — that is a broken "
         "probe, not an invisible burst")
@@ -3498,8 +3562,7 @@ def test_the_visibility_probe_answers_the_same_on_a_page_still_loading(own_page)
     mid = particles_seen(own_page, 4, "the footfall dust")
 
     own_page.wait_for_function(ART_SETTLED, timeout=60000)
-    js = (SEEN_PROBE.replace("/*MAKE*/", PARTICLE_SOURCES["the footfall dust"]["make"])
-                    .replace("NO_BALLOON", json.dumps(NO_BALLOON)))
+    js = probe_js("the footfall dust")
     settled = own_page.evaluate(js, {"chapter": 4, "frames": 40, "seed": SEED})
     assert (mid["seen"], mid["top"]) == (settled["seen"], settled["top"]), (
         f"asked on a page still fetching its sprites the probe said {mid}, and the "
@@ -3514,7 +3577,7 @@ def test_the_visibility_probe_answers_the_same_on_a_page_still_loading(own_page)
 # that the cloud bounce makes no puff (#233). Module level so test_prose can
 # check this parse against the naive one that reads the prose.
 PARTICLE_SITES = collections.Counter(re.findall(
-    r"this\.(puff|scuff|sparkle)\(",
+    r"this\.(" + "|".join(FACTORIES) + r")\(",
     code_only((APP / "public" / "js" / "game.js").read_text())))
 
 
@@ -3738,7 +3801,7 @@ NO_INPUT_RUN = """
     g.step(dt);
     if (g.splashes > seen) { seen = g.splashes; at.push(Math.round(g.player.x)); }
   }
-  const out = { at, splashes: g.splashes, mode: g.mode,
+  const out = { at, splashes: g.splashes, mode: g.mode, gusts: (g.level.updrafts || []).length,
                 x: Math.round(g.player.x), length: g.ch.length };
   g.stop();   // five chapters played to the end otherwise leaves five results
               // screens animating on this page, and every other page slows down
@@ -3768,16 +3831,35 @@ def test_a_game_left_alone_does_not_drown_at_the_same_pit(own_page):
     leaves the engine wherever the last level ended.
     """
     runs = {c: own_page.evaluate(NO_INPUT_RUN, {"chapter": c, "seconds": 60, "dt": 1 / 60})
-            for c in range(5)}
-    assert len(runs) == 5, f"only {len(runs)} chapters were driven"
+            for c in range(CHAPTER_COUNT)}
+    assert len(runs) == CHAPTER_COUNT, f"only {len(runs)} chapters were driven"
     for chapter, r in sorted(runs.items()):
         at, pits = r["at"], r["pits"]
         assert r["splashes"] == len(at), (
             f"chapter {chapter}: {r['splashes']} splashes but {len(at)} were seen "
             "— the run missed some")
-        assert at, (
-            f"chapter {chapter} never dropped an untouched player in the water in "
-            f"60s ({pits} pits, ended at x={r['x']}) — nothing here was measured")
+        if not pits:
+            # The pool has no gaps in it at all — the floor runs the length of
+            # the chapter, because what is under the player there is water and
+            # falling in is the point. Nothing can splash, so the only thing to
+            # say is that nothing did, and that it still got to the end.
+            assert not at, (
+                f"chapter {chapter} has no gaps in its floor and still splashed at {at}")
+        elif r["gusts"]:
+            # The chapter the wind carries is the one that is *meant* to stay
+            # dry: chapter 8's pits are 210px, wider than any jump can reach,
+            # and the gust column over each one lifts an untouched player
+            # across. So the question changes rather than being waived — a gust
+            # that stopped lifting shows up here as a splash, and one that
+            # stopped letting go shows up as "still playing" below.
+            assert not at, (
+                f"chapter {chapter} has {r['gusts']} gust columns and still dropped an "
+                f"untouched player in the water at {at} — the wind is meant to carry him "
+                f"over every one of its {pits} pits")
+        else:
+            assert at, (
+                f"chapter {chapter} never dropped an untouched player in the water in "
+                f"60s ({pits} pits, ended at x={r['x']}) — nothing here was measured")
         apart = [b - a for a, b in zip(at, at[1:])]
         assert all(d > 100 for d in apart), (
             f"chapter {chapter} splashed at {at}: a splash within 100px of the one "
@@ -3840,7 +3922,7 @@ def test_every_fall_a_chapter_can_produce_has_ground_ahead_of_it(own_page):
     """
     step = 1
     rows = own_page.evaluate(GROUND_AHEAD_SWEEP, {"step": step})
-    assert len(rows) == 5, f"only {len(rows)} chapters were swept"
+    assert len(rows) == CHAPTER_COUNT, f"only {len(rows)} chapters were swept"
     for r in rows:
         assert r["bad"] is None, (
             f"{r['id']}: a fall at x={r['bad'] and r['bad']['x']} of {r['length']} has "
@@ -4315,7 +4397,7 @@ def test_every_prop_stands_on_the_surface_its_chapter_paints(own_page):
     """
     r = own_page.evaluate(SCENERY_PROBE, {"clearRows": CLEAR_ROWS, "halfBand": HALF_BAND})
     chapters = r["chapters"]
-    assert len(chapters) == 5, f"only {len(chapters)} chapters were measured"
+    assert len(chapters) == CHAPTER_COUNT, f"only {len(chapters)} chapters were measured"
 
     # The band is a prop's footprint only while it stops short of the next prop.
     # Nothing above would notice if it did not: a neighbour's foot is on the
@@ -4376,20 +4458,28 @@ def test_every_prop_stands_on_the_surface_its_chapter_paints(own_page):
     assert sleepy["checked"] >= 6, (
         f"sleepytime is down to {sleepy['checked']} props — the chapter it was "
         "before #228 is 5400px of dream with an empty middle distance")
-    # Every chapter's middle distance is dressed in its own biome (#229). The
-    # beach shipped `kind: "tree"` — the creek's round oak with a greener leaf —
-    # for as long as this chapter existed, and nothing above can tell: an oak and
-    # a palm both stand perfectly well on the shoreline. This is the claim that
-    # was being made and never checked.
-    shared = {}
-    for ch in chapters:
-        for kind in {p["kind"] for p in ch["rows"]}:
-            shared.setdefault(kind, []).append(ch["id"])
-    borrowed = {k: v for k, v in shared.items() if len(v) > 1}
+    # Every chapter's middle distance has something of its own (#229). The beach
+    # shipped `kind: "tree"` — the creek's round oak with a greener leaf — for as
+    # long as that chapter existed, and nothing above can tell: an oak and a palm
+    # both stand perfectly well on the shoreline.
+    #
+    # The rule this asks is not "no prop is ever shared". Ten chapters in one
+    # suburb share props on purpose — a gum grows at home, at the park and at
+    # Nana's, and the same houses line the wet street. What made the beach wrong
+    # is that *every* prop it had belonged to somewhere else, so the chapter had
+    # no dressing of its own at all. That is the state this rejects, and it is
+    # what the hoist, the boulders, the brolly and the street lamp were drawn for
+    # (#351): four chapters were down to borrowed props once ten of them existed.
+    dressing = {ch["id"]: {p["kind"] for p in ch["rows"]} for ch in chapters}
+    borrowed = {}
+    for cid, kinds_here in dressing.items():
+        elsewhere = set().union(*(v for k, v in dressing.items() if k != cid))
+        if not kinds_here - elsewhere:
+            borrowed[cid] = sorted(kinds_here)
     assert borrowed == {}, (
-        f"{borrowed} — a prop standing in two chapters' middle distances means one "
-        "of them is dressed in the other's biome, which is what put a round shade "
-        "tree on a tropical shoreline until #229")
+        f"{borrowed} — every prop these chapters stand in their middle distance also "
+        "stands in another chapter's, so they are dressed entirely in someone else's "
+        "biome, which is what put a round shade tree on a tropical shoreline until #229")
 
     assert sleepy["horizon"] == r["consts"]["CLOUD_TOP"] < r["consts"]["GROUND_Y"], (
         f"the dream stands its planets on y={sleepy['horizon']}, which is not the top "
@@ -4566,6 +4656,12 @@ async ({ span, minPaint }) => {
 # this is here to keep off the shoreline, the round tree, comes in at 10-17.
 PALM_HOLE = 30
 SOLID_PROP_HOLE = 25
+# The one other prop that is meant to be mostly air: Nana's bunting is a string
+# of flags between two poles, so the sky between them is the shape (#351). It is
+# named here rather than quietly raising the bound for everything — its own floor
+# is well clear of both numbers above, and a bunting that came back solid would
+# be a garland drawn as a board.
+AIRY = {"palm": PALM_HOLE, "bunting": 60}
 
 
 def test_the_beach_is_dressed_in_palms_and_nothing_else_in_the_game_is(own_page):
@@ -4589,12 +4685,20 @@ def test_the_beach_is_dressed_in_palms_and_nothing_else_in_the_game_is(own_page)
         "shape with a shadow in it, i.e. the round shade tree the beach shipped "
         "until #229, not a crown of fronds")
 
-    solid = {k: v["gap"] for k, v in kinds.items() if k != "palm"}
+    for kind, floor in AIRY.items():
+        if kind == "palm":
+            continue                       # asked above, against the beach it is on
+        assert kinds[kind]["gap"] >= floor, (
+            f"the widest hole inside the {kind} is {kinds[kind]['gap']}px at "
+            f"y={kinds[kind]['atY']} — under {floor}px it is a solid shape, and it is "
+            "exempted below from the rule that every prop is one")
+
+    solid = {k: v["gap"] for k, v in kinds.items() if k not in AIRY}
     assert max(solid.values()) <= SOLID_PROP_HOLE, (
-        f"{ {k: g for k, g in solid.items() if g > SOLID_PROP_HOLE} } — every other prop "
-        "in the game is a solid thing, so a hole this wide in one of them means this "
-        "probe is measuring something other than sky between blades, and the palm's "
-        f"{palm['gap']}px says nothing")
+        f"{ {k: g for k, g in solid.items() if g > SOLID_PROP_HOLE} } — every prop in the "
+        f"game but {sorted(AIRY)} is a solid thing, so a hole this wide in one of them "
+        "means this probe is measuring something other than sky between blades, and the "
+        f"palm's {palm['gap']}px says nothing")
 
     # and that they are all really in the picture: a prop that painted nothing comes
     # back with no holes at all, which reads exactly like a solid one
@@ -6219,7 +6323,9 @@ def test_the_scene_fills_the_screen_top_to_bottom(make_page, viewport, touch, sc
     page = make_page(viewport, touch=touch)
     try:
         seen = page.evaluate(PAINTED_COLUMN, {"hex": LETTERBOX.group(1), "frames": 120})
-        assert len(seen) == 6, f"only {len(seen)} screens measured: {sorted(seen)}"
+        assert len(seen) == CHAPTER_COUNT + 1, (
+            f"only {len(seen)} screens measured: {sorted(seen)} — every chapter and the "
+            "menu")
         for where, m in sorted(seen.items()):
             painted = (m["height"] - m["bare"]) / m["height"]
             assert painted > 0.99, (
@@ -6249,7 +6355,7 @@ def test_the_scene_fills_the_screen_top_to_bottom(make_page, viewport, touch, sc
 #     *some* colour,
 #   * what colour the bar is, which is what says it belongs to *this* chapter.
 SIDEWAYS_FRAME = """
-async ({ hex, frames }) => {
+async ({ hex, frames, samples }) => {
   const { CHAPTERS } = await import('/js/chapters.js');
   const g = window.game;
   const c = g.canvas, ctx = c.getContext('2d');
@@ -6302,12 +6408,37 @@ async ({ hex, frames }) => {
              bar: [r / n, gg / n, b / n].map((v) => Math.round(v)) };
   };
 
-  const out = { idle: look() };
+  // One reading out of several camera positions: the worst quarter of the seam
+  // at each, and the middle one of those kept. A bar that is not the picture is
+  // wrong wherever the camera is, so the median of five is still ~150 for the
+  // thing this rejects; a guest standing where the world's edge happens to fall
+  // is wrong at one position and gone by the next, and chapter ten lines the
+  // whole route with 25 of them (#351). Everything else is taken at its worst
+  // over the same positions — bare frame at any of them is bare frame.
+  const over = (looks) => {
+    const seam = {};
+    for (const side of ["left", "right"]) {
+      const worsts = looks.map((l) => l.seam[side].worst).sort((a, b) => a - b);
+      const mid = worsts[Math.floor(worsts.length / 2)];
+      const at = looks.find((l) => l.seam[side].worst === mid);
+      seam[side] = { worst: mid, each: at.seam[side].each, samples: worsts };
+    }
+    const worstBy = (k) => looks.reduce((a, b) => (b[k] > a[k] ? b : a));
+    return { ...worstBy("bare"), dead: worstBy("dead").dead,
+             deadAt: worstBy("dead").deadAt, seam };
+  };
+
+  const out = { idle: over([look()]) };
   for (let i = 0; i < CHAPTERS.length; i++) {
     g.start(i);
-    for (let n = 0; n < frames; n++) g.step(1 / 60);   // a way into the chapter
-    g.render();
-    out[CHAPTERS[i].id] = look();
+    const looks = [];
+    for (let s = 0; s < samples; s++) {
+      // the first reading is a way into the chapter, the rest further along it
+      for (let n = 0; n < (s ? frames / 2 : frames); n++) g.step(1 / 60);
+      g.render();
+      looks.push(look());
+    }
+    out[CHAPTERS[i].id] = over(looks);
     g.stop();     // shared browser: a loop left painting costs every later test
   }
   return out;
@@ -6324,6 +6455,15 @@ async ({ hex, frames }) => {
 # beside this one), so the limit sits between a picture that carries on and one
 # that stops, with half the distance to spare on each side.
 SEAM_MAX = 40.0
+# How many camera positions each screen is read at, the middle reading kept. One
+# was enough until chapter ten stood 25 guests along its route: at 120 frames in,
+# one of them has his shoulder exactly where the world's edge falls, and a
+# silhouette that ends between the two sampled columns scores 47.8 on a picture
+# that is continuing perfectly well. Raising the limit past that would have moved
+# it halfway to the thing it rejects (96.6) instead; asking the same question five
+# times over answers it about the bar rather than about what is standing in front
+# of it, and leaves the limit where it was measured.
+SEAM_SAMPLES = 5
 # And how far apart the furthest two bars have to be. Measured: 161 between
 # hammerbarn's cream and sleepytime's night, 12 between the beach and the menu —
 # two chapters whose skies really are nearly the same blue. This asks that the
@@ -6352,8 +6492,11 @@ def test_sideways_no_column_of_the_screen_is_the_bare_frame(make_page):
                        "render() now starts with and re-point the pattern at it.")
     page = make_page(LANDSCAPE, touch=True)
     try:
-        seen = page.evaluate(SIDEWAYS_FRAME, {"hex": LETTERBOX.group(1), "frames": 120})
-        assert len(seen) == 6, f"only {len(seen)} screens measured: {sorted(seen)}"
+        seen = page.evaluate(SIDEWAYS_FRAME,
+                             {"hex": LETTERBOX.group(1), "frames": 120, "samples": SEAM_SAMPLES})
+        assert len(seen) == CHAPTER_COUNT + 1, (
+            f"only {len(seen)} screens measured: {sorted(seen)} — every chapter and the "
+            "menu")
         for where, m in sorted(seen.items()):
             assert m["dead"] == 0, (
                 f"{where} sideways: {m['dead']} device columns are the empty frame "
@@ -6367,8 +6510,9 @@ def test_sideways_no_column_of_the_screen_is_the_bare_frame(make_page):
                 assert got["worst"] <= SEAM_MAX, (
                     f"{where} sideways: over the worst quarter of the screen the {side} bar "
                     f"differs from the picture next to it by {got['worst']} levels a pixel "
-                    f"(limit {SEAM_MAX}, quarters {got['each']}). Something fills it, but "
-                    f"not this chapter's own scene continuing past the world's edge.")
+                    f"(limit {SEAM_MAX}, quarters {got['each']}, and {got['samples']} over "
+                    f"{SEAM_SAMPLES} camera positions). Something fills it, but not this "
+                    "chapter's own scene continuing past the world's edge.")
         bars = {k: v["bar"] for k, v in seen.items()}
         spread = max(max(abs(x - y) for x, y in zip(a, b))
                      for a in bars.values() for b in bars.values())
@@ -6464,20 +6608,39 @@ async ({ span, steps }) => {
   const g = window.game;
   const visRight = (g.canvas.clientWidth - g.offX) / g.scale;
 
-  const dry = (i, x, pit, press = true) => {
+  const run = (i, x, pit, press = true) => {
     g.start(i);
     const p = g.player;
     p.x = x; p.y = c.GROUND_Y; p.vy = 0; p.onGround = true; p.coyote = 0;
     const splashes = g.splashes;
     if (press) g.press();
+    // `helped`: something in the approach acted on him before the pit even
+    // opened — he was put down again, or a bouncy castle threw him. On its own
+    // that is just a jump started too early. Together with clearing the gap it
+    // means the approach did the work, and that is two decisions rather than
+    // the one this measures. The castle has to be counted separately because a
+    // bounce is not a landing: it takes off again in the same frame, so
+    // `onGround` is never true for it.
+    const bounces = g.bounced || 0;
+    let airborne = false, helped = false;
     for (let n = 0; n < 1200 && g.mode === 'playing'; n++) {
       g.step(1 / 120);
-      if (g.splashes > splashes) return false;
+      if (!p.onGround) airborne = true;
+      else if (airborne && p.x < pit.left) helped = true;
+      if (p.x < pit.left && (g.bounced || 0) > bounces) helped = true;
+      if (g.splashes > splashes) return { ok: false, helped };
       // past the far edge and back on his feet: this pit is behind him, and the
       // run stops here so the *next* pit cannot be blamed on this launch
-      if (p.onGround && p.x > pit.right + 20) return true;
+      if (p.onGround && p.x > pit.right + 20) return { ok: true, helped };
     }
-    return false;
+    return { ok: false, helped };
+  };
+  // "Cleared it, on this jump." A crossing the approach helped with is not one:
+  // it is a launch, a bounce or a landing, and then the gap — which is the
+  // two-decision case this measurement is not about.
+  const dry = (i, x, pit, press = true) => {
+    const r = run(i, x, pit, press);
+    return r.ok && !r.helped;
   };
 
   const out = [];
@@ -6490,6 +6653,15 @@ async ({ span, steps }) => {
       const pit = { left: ground[j].x + ground[j].w, right: ground[j + 1].x };
       pit.width = pit.right - pit.left;
       if (pit.width <= 8) continue;
+      // A pit with a gust column over it is not a jump decision at all — the
+      // wind lifts an untouched player across, which is the whole of chapter 8.
+      // Counted under its own name rather than dropped, and kept out of the
+      // measurement: the control arm below is "the same gap with the jump never
+      // pressed", and here that clears it.
+      if ((g.level.updrafts || []).some((u) => u.x < pit.right && u.x + u.w > pit.left)) {
+        out.push({ ch: ch.id, pit: pit.left, width: pit.width, oneJump: false, gust: true });
+        continue;
+      }
       // Only the gaps a single jump can cross at all. The rest are crossed by
       // landing on something in the middle, which is two decisions and not this
       // measurement — they are counted and named, never quietly dropped.
@@ -6636,11 +6808,12 @@ def test_the_zoom_is_paid_for_behind_the_player_not_in_front_of_him(make_page):
         # the thing below can still tell a safe zoom from a greedy one.
         rows = page.evaluate(REACTION, {"span": LEAD_SPAN, "steps": LEAD_STEPS})
         one_jump = [r for r in rows if r["oneJump"]]
-        rest = [r for r in rows if not r["oneJump"]]
+        gusted = [r for r in rows if r.get("gust")]
+        rest = [r for r in rows if not r["oneJump"] and not r.get("gust")]
         assert len(one_jump) >= 15, (
             f"only {len(one_jump)} of {len(rows)} gaps can be crossed by a single "
-            f"jump ({len(rest)} need a landing in the middle) — too few for this to "
-            "be a statement about the game")
+            f"jump ({len(rest)} need a landing in the middle, {len(gusted)} are crossed "
+            "on the wind) — too few for this to be a statement about the game")
         free = [r for r in one_jump if r["wet"]]
         assert not free, (
             f"{len(free)} gaps were crossed with the jump never pressed at all "
@@ -6787,7 +6960,7 @@ FRAME = """
 """
 
 
-@pytest.mark.parametrize("chapter", range(5))
+@pytest.mark.parametrize("chapter", range(CHAPTER_COUNT))
 def test_upright_the_top_of_the_screen_is_part_of_the_picture(make_page, chapter):
     """The sky a phone's spare height turns into, chapter by chapter (#326).
 
@@ -6980,7 +7153,7 @@ def test_a_phone_and_a_laptop_are_looking_at_the_same_sky(make_page):
           return { pts: out, camX: g.camAt() };
         }
         """
-        for i in range(5):
+        for i in range(CHAPTER_COUNT):
             a = phone.evaluate(probe, {"ch": i, "x": 900, "t": 3.0, "cam": 600})
             b = laptop.evaluate(probe, {"ch": i, "x": 900, "t": 3.0, "cam": 600})
             assert a["camX"] == b["camX"], (a["camX"], b["camX"])
@@ -7242,7 +7415,7 @@ DEEP_DETAIL = """
 DEEP_DETAIL_MIN = 4.0
 
 
-@pytest.mark.parametrize("chapter", range(5))
+@pytest.mark.parametrize("chapter", range(CHAPTER_COUNT))
 def test_upright_the_bottom_of_the_screen_is_part_of_the_picture(make_page, chapter):
     """The other end of #326, chapter by chapter (#328).
 
@@ -8389,7 +8562,7 @@ def test_the_friends_wait_in_places_a_player_can_reach_and_can_miss(own_page):
     test says so rather than skipping it.
     """
     page = own_page
-    for chapter in range(5):
+    for chapter in range(CHAPTER_COUNT):
         got = page.evaluate(
             """({ chapter }) => {
               const g = window.game;

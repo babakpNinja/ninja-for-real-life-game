@@ -485,6 +485,15 @@ p.joke { font-size: clamp(13px, 2.4vw, 18px); color: #7A8894; font-style: italic
 /* results */
 .stars-big { font-size: clamp(40px, 10vw, 76px); letter-spacing: 6px; margin: 6px 0; }
 .score-line { font-size: clamp(20px, 4vw, 30px); font-weight: 900; color: var(--orange); }
+/* The one line of the stats screen that has to be on the screen: the total,
+   sitting above its own breakdown so the list below it can be any length. */
+.stats-total {
+  margin: 0 0 8px;
+  font-size: clamp(15px, 3vw, 22px);
+  color: var(--blue);
+}
+.stats-total b { margin-right: 8px; }
+
 table.stats { width: 100%; border-collapse: collapse; font-size: clamp(13px, 2.5vw, 18px); }
 table.stats td, table.stats th { padding: 7px 6px; border-bottom: 2px solid #EFE3CC; text-align: left; }
 table.stats td:last-child, table.stats th:last-child { text-align: right; }

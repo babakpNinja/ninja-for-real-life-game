@@ -52,10 +52,16 @@ def server():
         proc.wait(timeout=10)
 
 
-# Chapters 2-5 are locked in a fresh profile, so the shot walk would only ever
-# reach the first one. Unlock them the same way playing does: in localStorage.
-SAVE = """() => localStorage.setItem('forreallife.save.v1', JSON.stringify(
-  {chapters: {0:{stars:3},1:{stars:3},2:{stars:3},3:{stars:3},4:{stars:3}}, unlocked: 4}))"""
+# Every chapter but the first is locked in a fresh profile, so the shot walk
+# would only ever reach that one. Unlock them the same way playing does: in
+# localStorage. How many there are is asked of the page (`window.__cast` has one
+# entry per chapter) rather than written down here — this script spent five
+# chapters knowing the number 5, and a sixth would have gone unphotographed
+# without anything saying so (#351).
+SAVE = """(n) => localStorage.setItem('forreallife.save.v1', JSON.stringify({
+  chapters: Object.fromEntries(Array.from({length: n}, (_, i) => [i, {stars: 3}])),
+  unlocked: n - 1,
+}))"""
 
 
 def separated(prefix: str) -> str:
@@ -71,7 +77,9 @@ def separated(prefix: str) -> str:
 
 def walk(page, url, prefix, wide=True):
     page.goto(url, wait_until="domcontentloaded")
-    page.evaluate(SAVE)
+    page.wait_for_function("window.__ready === true", timeout=15000)
+    chapters = page.evaluate("window.__cast.length")
+    page.evaluate(SAVE, chapters)
     page.goto(url, wait_until="networkidle")
     page.wait_for_function("window.__ready === true", timeout=15000)
     page.wait_for_timeout(1200)  # let the sprites decode and the idle settle
@@ -100,7 +108,7 @@ def walk(page, url, prefix, wide=True):
     page.click("#btn-chapters")
     page.wait_for_timeout(600)
     shot("04-chapters")
-    for i in range(5):
+    for i in range(chapters):
         page.evaluate(f"window.__jump = {i}")
         page.evaluate(
             "(i) => { const b = document.querySelector(`.chapter-card[data-ch='${i}']`);"

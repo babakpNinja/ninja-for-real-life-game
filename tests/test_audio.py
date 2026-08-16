@@ -192,7 +192,7 @@ def motifs() -> dict[str, str]:
 
     Read per entry rather than with one pattern over the whole table: a
     table-wide `motif: \\[(.*?)\\]` would answer about `menu` and say nothing
-    about the other five.
+    about any of the others.
     """
     src = (APP / "public/js/audio.js").read_text()
     out = {}
@@ -204,7 +204,7 @@ def motifs() -> dict[str, str]:
 
 
 def test_every_theme_has_its_own_written_tune():
-    """Six chapters, six melodies — not one formula wearing six hats.
+    """A tune per chapter, and no two the same — not one formula in ten hats.
 
     The old melody was `SCALE[(s * 3 + floor(s / 8)) % 5]`, which is why no
     chapter had a tune to recognise: the notes were computed from the step

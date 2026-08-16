@@ -450,6 +450,22 @@ export class Sound {
       // offbeat, so even the slowest loop in the game gets the swing (#305)
       sleepytime:{ root: 196.00, tempo: 460, mood: "sleepy",
                    motif: [0, null, null, null, null, 2, null, null, 1, null, null, null, null, 4, null, null] },
+      // Arc two (#351). A chapter with no theme of its own falls through to the
+      // menu's, which is the one tune a player has already heard on the way in —
+      // five new chapters sharing it would be five chapters that sound like the
+      // front door. Each is a phrase of its own, pitched and paced at what the
+      // chapter is: a party skips, the shops bustle, rain walks, water drifts,
+      // and the last one is the birthday song's shape without being it.
+      party:     { root: 277.18, tempo: 250, mood: "bright",
+                   motif: [0, 2, null, 4, null, 3, 2, null, 4, null, 2, 1, null, 2, null, null] },
+      shops:     { root: 311.13, tempo: 235, mood: "busy",
+                   motif: [0, null, 2, 1, null, 3, 2, null, 4, 3, null, 1, 2, null, 0, null] },
+      rain:      { root: 233.08, tempo: 320, mood: "bright",
+                   motif: [2, null, 1, null, 0, null, 2, null, 3, null, 2, null, 1, null, null, null] },
+      pool:      { root: 261.63, tempo: 340, mood: "sleepy",
+                   motif: [0, null, null, 2, null, null, 4, null, 3, null, null, 2, null, null, 1, null] },
+      nanas:     { root: 174.61, tempo: 300, mood: "bright",
+                   motif: [0, 0, 2, null, 0, null, 3, 2, null, 0, 0, 4, null, 3, 2, null] },
     };
     const cfg = themes[name] || themes.menu;
     const beat = cfg.tempo / 1000;

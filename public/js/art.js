@@ -403,6 +403,255 @@ export function drawStepLadder(ctx, x, groundY, scale) {
  * hanging below the body would put the planet's lowest paint somewhere the
  * planet is not standing.
  */
+/*
+ * The middle distance of the four new chapters that needed one (#351).
+ *
+ * Same contract as the hammerbarn three above: drawn upward from (x, groundY),
+ * nothing painted below it, so the foot is the horizon line the chapter
+ * declares and the placement test can measure them against the floor the
+ * background paints. That floor is the part it is easy to forget — twice
+ * already (#213, #228).
+ */
+
+export function drawMarquee(ctx, x, groundY, scale) {
+  ctx.save();
+  ctx.translate(x, groundY);
+  ctx.scale(scale, scale);
+  ctx.fillStyle = "#FFF3E2";                 // the tent walls
+  roundRect(ctx, -54, -58, 108, 58, 4);
+  ctx.fill();
+  ctx.fillStyle = "#E8624F";                 // a scalloped, striped roof
+  ctx.beginPath();
+  ctx.moveTo(-66, -56);
+  ctx.lineTo(0, -96);
+  ctx.lineTo(66, -56);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#FFF3E2";
+  for (let i = -2; i <= 2; i++) {
+    ctx.beginPath();
+    ctx.moveTo(i * 22, -84 + Math.abs(i) * 12);
+    ctx.lineTo(i * 22 + 10, -56);
+    ctx.lineTo(i * 22 - 10, -56);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.fillStyle = "#F7C948";                 // a flag on the pole
+  ctx.beginPath();
+  ctx.moveTo(0, -104);
+  ctx.lineTo(22, -96);
+  ctx.lineTo(0, -88);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = "#B4A48C";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(0, -96);
+  ctx.lineTo(0, -108);
+  ctx.stroke();
+  ctx.restore();
+}
+
+export function drawShopfront(ctx, x, groundY, scale) {
+  ctx.save();
+  ctx.translate(x, groundY);
+  ctx.scale(scale, scale);
+  ctx.fillStyle = "#EFE6DC";
+  roundRect(ctx, -80, -150, 160, 150, 4);
+  ctx.fill();
+  ctx.fillStyle = "#CFE4EE";                 // the window, lit from inside
+  roundRect(ctx, -66, -108, 132, 84, 3);
+  ctx.fill();
+  ctx.fillStyle = "#B7D3E0";
+  for (let i = 0; i < 3; i++) ctx.fillRect(-58 + i * 44, -100, 30, 68);
+  ctx.fillStyle = "#5FA9C4";                 // the awning over it
+  ctx.beginPath();
+  ctx.moveTo(-84, -118);
+  ctx.lineTo(84, -118);
+  ctx.lineTo(70, -138);
+  ctx.lineTo(-70, -138);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#F3F7F9";                 // the sign above the awning
+  roundRect(ctx, -48, -148, 96, 20, 5);
+  ctx.fill();
+  ctx.restore();
+}
+
+export function drawLounger(ctx, x, groundY, scale) {
+  ctx.save();
+  ctx.translate(x, groundY);
+  ctx.scale(scale, scale);
+  ctx.strokeStyle = "#E8E2D6";               // the frame
+  ctx.lineWidth = 4;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-34, 0);
+  ctx.lineTo(-28, -20);
+  ctx.moveTo(30, 0);
+  ctx.lineTo(24, -20);
+  ctx.stroke();
+  ctx.fillStyle = "#4FBFA8";                 // the seat, and the back tipped up
+  roundRect(ctx, -36, -26, 70, 9, 4);
+  ctx.fill();
+  ctx.save();
+  ctx.translate(-32, -26);
+  ctx.rotate(-0.62);
+  ctx.fillStyle = "#4FBFA8";
+  roundRect(ctx, -2, -9, 44, 9, 4);
+  ctx.fill();
+  ctx.restore();
+  // A towel spread over the foot of the seat, and no further: any part of it
+  // that hangs past the seat's own edge is a second island of paint with the
+  // sky between it and the frame, and every prop in the game but the beach's
+  // palm has to read as one solid thing (#229). It was 27px of sky when the
+  // towel floated above the backrest, and 27 again when it hung below the seat.
+  ctx.fillStyle = "#F7C948";
+  roundRect(ctx, 4, -26, 26, 9, 4);
+  ctx.fill();
+  ctx.restore();
+}
+
+export function drawBunting(ctx, x, groundY, scale) {
+  ctx.save();
+  ctx.translate(x, groundY);
+  ctx.scale(scale, scale);
+  ctx.strokeStyle = "#C8B79E";               // two poles
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(-70, 0);
+  ctx.lineTo(-70, -104);
+  ctx.moveTo(70, 0);
+  ctx.lineTo(70, -96);
+  ctx.stroke();
+  const sag = (u) => -104 + u * 8 + Math.sin(u * Math.PI) * 34;   // the string's droop
+  ctx.strokeStyle = "#8E8578";               // the string itself
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let i = 0; i <= 14; i++) {
+    const u = i / 14, px = -70 + u * 140;
+    if (i === 0) ctx.moveTo(px, sag(u)); else ctx.lineTo(px, sag(u));
+  }
+  ctx.stroke();
+  const flags = ["#E8624F", "#F7C948", "#4FBFA8", "#8FA8E8"];
+  for (let i = 0; i < 12; i++) {
+    const u = (i + 0.5) / 12, px = -70 + u * 140, py = sag(u);
+    ctx.fillStyle = flags[i % flags.length];
+    ctx.beginPath();
+    ctx.moveTo(px - 6, py);
+    ctx.lineTo(px + 6, py);
+    ctx.lineTo(px, py + 16);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+/*
+ * One prop each for the four chapters that had nothing of their own (#351).
+ *
+ * With ten chapters in one suburb, props are shared on purpose — a gum grows at
+ * home, at the park and at Nana's — but a chapter dressed *only* in another
+ * chapter's props is the defect #229 closed: the beach in the creek's oaks. So
+ * each of these is the one thing its chapter has and no other does.
+ *
+ * Like every prop above, they are drawn upward from (x, groundY) and paint
+ * nothing below it, and every row of them is a single run of paint — the
+ * placement test measures the foot, and the frond test measures the holes.
+ */
+
+export function drawHillsHoist(ctx, x, groundY, scale) {
+  ctx.save();
+  ctx.translate(x, groundY);
+  ctx.scale(scale, scale);
+  ctx.strokeStyle = "#B9BFC4";               // the pole and the arms
+  ctx.lineWidth = 6;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(0, -104);
+  ctx.moveTo(-56, -104);
+  ctx.lineTo(56, -104);
+  ctx.stroke();
+  const wash = ["#F3F7F9", "#8FD0E8", "#F7C948", "#E8624F", "#F3F7F9"];
+  for (let i = 0; i < wash.length; i++) {
+    ctx.fillStyle = wash[i];                 // a line of washing, hung close
+    roundRect(ctx, -54 + i * 22, -100, 18, 34 + (i % 2) * 8, 3);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+export function drawCreekRocks(ctx, x, groundY, scale) {
+  ctx.save();
+  ctx.translate(x, groundY);
+  ctx.scale(scale, scale);
+  // One boulder resting on the bank and two piled on it, rather than three side
+  // by side: two rocks that both bottom out on the ground line leave a wedge of
+  // sky between them along it, which is a 29px hole in a prop that has to read
+  // as one solid thing (#351).
+  ellipse(ctx, 0, -17, 44, 17, "#9AA3A8");
+  ellipse(ctx, -24, -30, 26, 17, "#8B959B");
+  ellipse(ctx, 26, -26, 20, 13, "#A8B0B4");
+  ellipse(ctx, -24, -45, 14, 5, "#6FAF63");  // moss, on the tops that get light
+  ellipse(ctx, 26, -37, 11, 4, "#6FAF63");
+  ctx.restore();
+}
+
+export function drawBeachBrolly(ctx, x, groundY, scale) {
+  ctx.save();
+  ctx.translate(x, groundY);
+  ctx.scale(scale, scale);
+  ctx.strokeStyle = "#E8E2D6";               // the pole, leaning not at all
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(0, -92);
+  ctx.stroke();
+  const stripes = ["#E8624F", "#F3F7F9"];
+  for (let i = 0; i < 6; i++) {              // a scalloped, striped canopy
+    ctx.fillStyle = stripes[i % stripes.length];
+    ctx.beginPath();
+    ctx.moveTo(0, -96);
+    ctx.arc(0, -96, 52, Math.PI + (i * Math.PI) / 6, Math.PI + ((i + 1) * Math.PI) / 6);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.fillStyle = "#E8624F";
+  for (let i = 0; i < 6; i++) {              // the scallops along its hem
+    ellipse(ctx, -44 + i * 17.6, -96, 9, 5, i % 2 ? "#E8624F" : "#F3F7F9");
+  }
+  ctx.restore();
+}
+
+export function drawStreetLamp(ctx, x, groundY, scale) {
+  ctx.save();
+  ctx.translate(x, groundY);
+  ctx.scale(scale, scale);
+  ctx.fillStyle = "#5E6470";                 // a plinth, so it has a foot to stand on
+  roundRect(ctx, -20, -14, 40, 14, 3);
+  ctx.fill();
+  ctx.fillStyle = "#6B7280";
+  ctx.fillRect(-5, -104, 10, 92);
+  ctx.fillStyle = "#5E6470";                 // the lantern's cap and cage
+  ctx.beginPath();
+  ctx.moveTo(-19, -112);
+  ctx.lineTo(19, -112);
+  ctx.lineTo(12, -124);
+  ctx.lineTo(-12, -124);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#FFE9A8";                 // lit: it is raining, it is grey out
+  ctx.beginPath();
+  ctx.moveTo(-17, -110);
+  ctx.lineTo(17, -110);
+  ctx.lineTo(11, -84);
+  ctx.lineTo(-11, -84);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
 export function drawDreamPlanet(ctx, x, baseY, scale) {
   const r = 40 * scale;
   ctx.save();
@@ -647,6 +896,73 @@ export function drawToken(ctx, x, y, r, kind, t) {
       ctx.lineTo(i * r * 0.42, r * 0.4 - r);
       ctx.stroke();
     }
+  } else if (kind === "cupcake") {
+    ctx.fillStyle = "#D9A066";                       // the case
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.75, 0);
+    ctx.lineTo(r * 0.75, 0);
+    ctx.lineTo(r * 0.5, r);
+    ctx.lineTo(-r * 0.5, r);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#F49AC1";                       // the icing, swirled
+    ellipse(ctx, 0, -r * 0.2, r * 0.85, r * 0.6, "#F49AC1");
+    ellipse(ctx, 0, -r * 0.6, r * 0.5, r * 0.4, "#FBB8D4");
+    ctx.fillStyle = "#E8624F";                       // and the cherry
+    ellipse(ctx, 0, -r, r * 0.24, r * 0.24, "#E8624F");
+  } else if (kind === "ticket") {
+    ctx.fillStyle = "#FFF3D6";
+    roundRect(ctx, -r, -r * 0.62, r * 2, r * 1.24, 4);
+    ctx.fill();
+    ctx.fillStyle = "#5FA9C4";                       // the tear-off stub
+    ctx.fillRect(r * 0.32, -r * 0.62, r * 0.2, r * 1.24);
+    ctx.strokeStyle = "#C4B49A";                     // and the perforation
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    for (let i = -2; i <= 2; i++) {
+      ctx.moveTo(r * 0.28, i * r * 0.24 - r * 0.06);
+      ctx.lineTo(r * 0.28, i * r * 0.24 + r * 0.06);
+    }
+    ctx.stroke();
+  } else if (kind === "leaf") {
+    ctx.fillStyle = "#C4652F";
+    ctx.beginPath();
+    ctx.moveTo(0, -r);
+    ctx.quadraticCurveTo(r, -r * 0.2, 0, r);
+    ctx.quadraticCurveTo(-r, -r * 0.2, 0, -r);
+    ctx.fill();
+    ctx.strokeStyle = "#8E4520";                     // the midrib
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(0, -r * 0.9);
+    ctx.lineTo(0, r * 0.9);
+    ctx.stroke();
+  } else if (kind === "bubble") {
+    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.82, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(190,240,255,0.45)";
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.82, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.85)";        // the highlight on top
+    ellipse(ctx, -r * 0.3, -r * 0.35, r * 0.18, r * 0.12, "rgba(255,255,255,0.85)");
+  } else if (kind === "candle") {
+    ctx.fillStyle = "#FFF3D6";                       // the candle
+    roundRect(ctx, -r * 0.22, -r * 0.3, r * 0.44, r * 1.3, 3);
+    ctx.fill();
+    ctx.fillStyle = "#F49AC1";                       // its stripe
+    ctx.fillRect(-r * 0.22, r * 0.2, r * 0.44, r * 0.22);
+    ctx.fillStyle = "#FFC53D";                       // the flame
+    ctx.beginPath();
+    ctx.moveTo(0, -r * 1.15);
+    ctx.quadraticCurveTo(r * 0.36, -r * 0.5, 0, -r * 0.3);
+    ctx.quadraticCurveTo(-r * 0.36, -r * 0.5, 0, -r * 1.15);
+    ctx.fill();
+    ctx.fillStyle = "#FFF0B0";
+    ellipse(ctx, 0, -r * 0.62, r * 0.12, r * 0.2, "#FFF0B0");
   } else {
     // dream star
     ctx.fillStyle = "#FFF3B0";
@@ -697,6 +1013,14 @@ export function drawObstacle(ctx, o, t) {
     ctx.fill();
     ctx.fillStyle = "#5FA05A";
     ellipse(ctx, w * 0.5, h * 0.4, w * 0.5, h * 0.35, "#5FA05A");
+  } else if (kind === "float") {
+    // a pool inflatable, bobbing: the softest thing you could possibly bump into
+    ctx.fillStyle = "#F7C948";
+    ellipse(ctx, w / 2, h * 0.55, w * 0.52, h * 0.42, "#F7C948");
+    ctx.fillStyle = "#4FC3E0";
+    ellipse(ctx, w / 2, h * 0.55, w * 0.2, h * 0.16, "#4FC3E0");
+    ctx.fillStyle = "#FFF3D6";
+    ellipse(ctx, w * 0.3, h * 0.35, w * 0.12, h * 0.09, "#FFF3D6");
   } else if (kind === "sandcastle") {
     ctx.fillStyle = "#E8C88F";
     roundRect(ctx, 0, h * 0.3, w, h * 0.7, 4); ctx.fill();

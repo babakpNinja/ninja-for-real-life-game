@@ -7,7 +7,7 @@
  */
 
 import { Game } from "./game.js";
-import { CHAPTERS, starsFor } from "./chapters.js";
+import { CHAPTERS, starsFor, STARS_PER_CHAPTER } from "./chapters.js";
 import {
   drawCharacter, loadArt, preload, creditFor, notice, noticeShort, artState,
 } from "./sprites.js";
@@ -1036,10 +1036,16 @@ function stats() {
   const found = CHAPTERS.filter((_, i) => (save.chapters[i] || {}).secret).length;
   showOverlay(`
     <h2>Stats</h2>
+    <!-- The total goes above the table, not under it (#351). It is what this
+         screen is for, and at the foot of a list that grew to ten chapters it
+         sat 41px below the fold on a phone held sideways — in a body that
+         scrolls, with nothing on the screen saying so. -->
+    <p class="stats-total" data-lead><b>Total</b>
+      ${Object.values(save.chapters).reduce((s, c) => s + c.stars, 0)}/${CHAPTERS.length * STARS_PER_CHAPTER} stars
+      · ${save.totalScore} points</p>
     <table class="stats">
       <tr><th>Chapter</th><th>Stars</th><th>Best</th></tr>
       ${rows}
-      <tr data-lead><th>Total</th><th>${Object.values(save.chapters).reduce((s, c) => s + c.stars, 0)}/15</th><th>${save.totalScore}</th></tr>
     </table>
     <p class="story">Hidden dollarbucks found: <b>${found} / ${CHAPTERS.length}</b></p>
     <p class="joke">Chapters played: ${save.plays}</p>
