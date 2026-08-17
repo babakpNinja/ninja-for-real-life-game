@@ -534,7 +534,14 @@ table.stats td:last-child, table.stats th:last-child { text-align: right; }
   /* `span 9` rather than `1 / -1`: with no explicit rows, line -1 resolves to
      line 1 and the table would be one row tall. Nine is more rows than the
      column can ever have, and the extra implicit rows are 0px. */
-  .panel-results .stats { grid-column: 2; grid-row: 1 / span 9; align-self: start; }
+  /* The whole of `.results-side` moves, not the table alone: the last chapter has a
+     second `p.story` after the breakdown — the finale line — and grid rows are
+     shared between columns, so an item placed in column 2 *below* the table's span
+     adds a row to the grid and makes the body taller rather than using the 62px of
+     blank column beside the words. Wrapped, column 2 is a column: its height is the
+     table plus the finale (203px) and column 1's is the words (205px), and the body
+     is as tall as the taller of the two instead of their sum (#407). */
+  .panel-results .results-side { grid-column: 2; grid-row: 1 / span 9; align-self: start; }
   /* One rhythm for the table wherever it is in two columns, tighter than either
      of the one-column rhythms (7px, and 4px under #309's short-window block): a
      row that wraps costs a whole line, so the padding is what pays for the two
@@ -576,6 +583,28 @@ table.stats td:last-child, table.stats th:last-child { text-align: right; }
   .panel-results { width: min(920px, 96vw); }
   .panel-results .stats { font-size: 20px; }
   .panel-results .stats td, .panel-results .stats th { padding: 7px 10px; }
+}
+
+/* Landscape with no height to spare: a phone held sideways at 844x390, or a laptop
+ * window 1024x420. #403 left the title at 26px on these two on the grounds that
+ * they already read 26px and so nothing changed for them — but what nothing had
+ * ever measured was a chapter other than the first (#407). "Keepy Uppy" is the
+ * shortest of the ten titles. Swept through the `h2` in the 314-316px column these
+ * windows give it, five of the ten take two lines at 26px, and the second line
+ * costs ~30px of a body that has 224px: chapters 2, 3, 5, 6 and 9 hid 25-66px of
+ * the breakdown behind the fade, which is #396's own complaint back again for nine
+ * chapters out of ten. 20px is the largest size at which none of the ten wrap, and
+ * the air around the title and the score gives back another 6px so that a longer
+ * title which does wrap still fits. The stars keep their size: their `vh` rhythm is
+ * what #309's guard measures, and overriding it here would answer that guard's
+ * question for it. */
+@media (orientation: landscape) and (max-height: 560px) {
+  .panel-results h2 { font-size: 20px; margin: 2px 0 4px; }
+  .panel-results .score-line { margin: 3px 0; }
+  /* the last 4px: chapter 2 has the longest outro as well as a long title, and
+     three lines of it left the column 225px in a 224px body */
+  .panel-results .stars-big { margin: 1px 0; }
+  .panel-results p.story { margin-top: 3px; }
 }
 
 /* In the flow, at the top of the block of pinned buttons — `main.js` puts it

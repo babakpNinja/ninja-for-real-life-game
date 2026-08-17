@@ -6771,6 +6771,211 @@ def test_the_results_columns_fill_the_widest_window_they_are_given(
         page.context.close()
 
 
+# --- the same two columns for a chapter that is not the first one (#407) --------
+
+# What `main.js` writes into the card, per chapter: everything above plays chapter
+# 0, and "Keepy Uppy" is the shortest of the ten titles
+# ([[the-default-fixture-holds-the-shortest-content]]). The words come out of
+# `chapters.js` rather than a list kept here, so a chapter added later is swept
+# without anyone remembering to add it.
+CHAPTER_WORDS = """
+async () => {
+  const { CHAPTERS } = await import('/js/chapters.js');
+  return CHAPTERS.map(c => ({ title: c.title, outro: c.outro }));
+}
+"""
+
+# Each chapter's title and outro substituted into the card that is already on the
+# screen. A substitution is not a play — the table's rows still belong to the
+# chapter that was played — but it measures the two elements whose length differs
+# per chapter, on all four windows, for the price of one play. The play of the
+# worst one below is what says the substitution told the truth.
+RESULTS_CONTENT = """
+(pairs) => {
+  const panel = document.querySelector('#overlay .panel-results');
+  const body = panel && panel.querySelector('.panel-body');
+  const h2 = panel && panel.querySelector('h2');
+  const story = panel && panel.querySelector('p.story');
+  if (!body || !h2 || !story) return null;
+  const lines = (n) => { const r = document.createRange(); r.selectNodeContents(n);
+                         return r.getClientRects().length; };
+  const wasTitle = h2.textContent, wasOutro = story.innerHTML;
+  const measured = pairs.map((p) => {
+    h2.textContent = p.title + ' \\u2014 done!';
+    story.innerHTML = p.outro;
+    return { title: p.title, lines: lines(h2),
+             font: getComputedStyle(h2).fontSize,
+             colW: h2.getBoundingClientRect().width,
+             over: body.scrollHeight - body.clientHeight };
+  });
+  h2.textContent = wasTitle;
+  story.innerHTML = wasOutro;
+  return { view: { w: window.innerWidth, h: window.innerHeight },
+           columns: getComputedStyle(body).display,
+           shown: h2.textContent.trim(),
+           over: body.scrollHeight - body.clientHeight,
+           measured };
+}
+"""
+
+
+@pytest.mark.parametrize("viewport,touch,screen", SCREENS, ids=SCREEN_IDS)
+@pytest.mark.smoke
+def test_the_results_card_fits_every_chapters_words_not_just_the_first(
+        make_page, viewport, touch, screen):
+    """#407: #396's complaint, back for nine chapters out of ten.
+
+    The two-column results layout was measured — twice — against chapter 0, whose
+    title is the shortest of the ten. In the 316px column a sideways phone gives
+    the heading, five of the ten wrap onto a second line, and that line costs 30px
+    of a body that has 224px: chapters 2, 3, 5, 6 and 9 hid 25-66px of the
+    breakdown behind the same 16px fade #396 was about, and every existing check
+    stayed green because none of them ever played anything but the first chapter.
+
+    So this sweeps the words of all ten through the card that is up — the title and
+    the outro are what `main.js` varies per chapter — and then plays the worst of
+    them for real, on all four windows.
+    """
+    page = make_page(viewport, touch=touch)
+    try:
+        pairs = page.evaluate(CHAPTER_WORDS)
+        assert len(pairs) >= 5, (
+            f"{screen}: only {len(pairs)} chapters came back from chapters.js, so this "
+            f"sweep is not sweeping the ten titles it is about: {pairs}")
+        play_chapter(page, 0)
+        page.wait_for_selector(".stars-big")
+        m = page.evaluate(RESULTS_CONTENT, pairs)
+        assert m, f"{screen}: no results card to measure"
+        assert len(m["measured"]) == len(pairs), (
+            f"{screen}: {len(m['measured'])} of {len(pairs)} chapters were measured")
+        # the card must be back to the chapter that was played: everything after
+        # this reads the real screen, not the last substitution
+        assert m["shown"].startswith(pairs[0]["title"]), (
+            f"{screen}: the sweep left {m['shown']!r} in the heading instead of "
+            f"restoring {pairs[0]['title']!r}")
+
+        worst = max(m["measured"], key=lambda x: x["over"])
+        for got in m["measured"]:
+            assert got["over"] <= 1, (
+                f"{screen}: with {got['title']!r} in the heading "
+                f"({got['lines']} line(s) of {got['font']} in a {got['colW']:.0f}px "
+                f"column) {got['over']:.0f}px of the results body is below the fold on "
+                f"a {m['view']['w']}x{m['view']['h']} window — the rows under the cut "
+                f"are the answer to 'what happened?', and this chapter's words are as "
+                f"real as chapter 1's")
+
+        # and the same chapter played, because a substituted title is not a played
+        # one: this one brings its own table, its own row count and its own stars
+        index = [p["title"] for p in pairs].index(worst["title"])
+        play_chapter(page, index)
+        page.wait_for_selector(".stars-big")
+        real = page.evaluate(RESULTS_CONTENT, pairs[:1])
+        assert real, f"{screen}: no results card after playing {worst['title']!r}"
+        assert real["shown"].startswith(worst["title"]), (
+            f"{screen}: played chapter {index} for {worst['title']!r} and the card "
+            f"says {real['shown']!r}")
+        assert real["over"] <= 1, (
+            f"{screen}: {real['over']:.0f}px of the results body is below the fold "
+            f"after actually playing {worst['title']!r} (chapter {index + 1}), the "
+            f"chapter the sweep called the tightest fit at {worst['over']:.0f}px")
+    finally:
+        page.evaluate("() => window.game && window.game.stop()")
+        page.context.close()
+
+
+# The finale line — the one paragraph on the results screen that only the last
+# chapter has. In two columns it is the sixth thing in the left column and the
+# left column is the tall one, so where it goes decides whether the card fits.
+RESULTS_FINALE = """
+() => {
+  const panel = document.querySelector('#overlay .panel-results');
+  const body = panel && panel.querySelector('.panel-body');
+  const table = document.querySelector('#overlay table.stats');
+  const score = panel && panel.querySelector('.score-line');
+  if (!body || !table || !score) return null;
+  const box = (n) => {
+    if (!n) return null;
+    const r = n.getBoundingClientRect();
+    return { text: n.textContent.trim().replace(/\\s+/g, ' ').slice(0, 40),
+             top: r.top, bottom: r.bottom, left: r.left, right: r.right };
+  };
+  const stories = [...panel.querySelectorAll('p.story')];
+  const finale = stories.length > 1 ? stories[stories.length - 1] : null;
+  const b = body.getBoundingClientRect();
+  return {
+    view: { w: window.innerWidth, h: window.innerHeight },
+    columns: getComputedStyle(body).display,
+    stories: stories.length,
+    finale: box(finale),
+    // the two things it has to be beside, or under
+    score: box(score), table: box(table),
+    // and the column it is written into, which is what makes it fit: a grid row
+    // is shared between the columns, so an item placed under the table's span
+    // makes the body taller instead of using the blank beside the words
+    inSide: !!(finale && finale.closest('.results-side')),
+    body: { top: b.top, bottom: b.bottom, over: body.scrollHeight - body.clientHeight },
+  };
+}
+"""
+
+
+@pytest.mark.parametrize("viewport,touch,screen", SCREENS, ids=SCREEN_IDS)
+@pytest.mark.smoke
+def test_the_last_chapters_finale_line_goes_beside_the_breakdown(
+        make_page, viewport, touch, screen):
+    """#407: the last chapter is the worst fit of the ten, by 41px.
+
+    "You found Floppy and got everyone home." is a seventh element in a body that
+    fits six, and sideways it hid 66px of the breakdown — the two-line title plus
+    this. It reads as the end of the screen, so it stays last in the document; what
+    changed is which column it is written into. Beside the table, in the column
+    that had 62px of blank space under six rows, it costs the card nothing.
+    """
+    page = make_page(viewport, touch=touch)
+    sideways = viewport["width"] > viewport["height"]
+    try:
+        count = page.evaluate("async () => (await import('/js/chapters.js')).CHAPTERS.length")
+        last = count - 1
+        play_chapter(page, last)
+        page.wait_for_selector(".stars-big")
+        m = page.evaluate(RESULTS_FINALE)
+        assert m, f"{screen}: no results card after playing chapter {count}"
+        assert m["stories"] > 1 and m["finale"], (
+            f"{screen}: chapter {count} is the last one and its results screen has "
+            f"{m['stories']} paragraph(s) — the finale line this is about is not "
+            f"there, so nothing below is being measured")
+        assert m["body"]["over"] <= 1, (
+            f"{screen}: {m['body']['over']:.0f}px of the last chapter's results body "
+            f"is below the fold — {m['finale']['text']!r} is the seventh thing in a "
+            f"body that fits six")
+        assert m["finale"]["bottom"] <= m["body"]["bottom"] + 0.5, (
+            f"{screen}: the finale line runs to y {m['finale']['bottom']:.0f} and the "
+            f"body ends at y {m['body']['bottom']:.0f} — the sentence that ends the "
+            f"game is under the cut")
+        if sideways:
+            assert m["inSide"], (
+                f"{screen}: the finale line is not inside `.results-side`, so it is "
+                f"placed in the grid on its own — under the table's span it adds a row "
+                f"to the body rather than using the column beside the words")
+            assert m["finale"]["left"] >= m["score"]["right"] - 0.5, (
+                f"{screen}: the finale line spans x {m['finale']['left']:.0f}.."
+                f"{m['finale']['right']:.0f} and the score ends at x "
+                f"{m['score']['right']:.0f} — it is under the words, in the taller of "
+                f"the two columns, which is where it did not fit")
+            assert m["finale"]["top"] >= m["table"]["bottom"] - 0.5, (
+                f"{screen}: the finale line starts at y {m['finale']['top']:.0f} and "
+                f"the breakdown ends at y {m['table']['bottom']:.0f} — it belongs "
+                f"under the table it follows in the document, not beside it")
+        else:
+            assert m["finale"]["top"] >= m["table"]["bottom"] - 0.5, (
+                f"{screen}: upright there is one column and the finale line is the "
+                f"last thing in it, but it starts at y {m['finale']['top']:.0f} with "
+                f"the breakdown ending at y {m['table']['bottom']:.0f}")
+    finally:
+        page.evaluate("() => window.game && window.game.stop()")
+        page.context.close()
+
+
 # --- and the pill that talks over the way out (#277) --------------------------
 
 HINT = "#rotate-hint"

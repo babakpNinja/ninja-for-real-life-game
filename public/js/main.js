@@ -913,15 +913,19 @@ function results(r) {
     <div class="stars-big">${starsText(r.stars)}</div>
     <p class="score-line" data-lead>Score ${r.score}</p>
     <p class="story">${ch.outro}</p>
-    <table class="stats">
-      <tr><td>${ch.tokenName} found</td><td>${r.collected} / ${r.total}</td></tr>
-      ${ch.hasBalloon ? `<tr><td>keepy uppy bops</td><td>${r.bops}</td></tr>` : ""}
-      <tr><td>hidden dollarbucks</td><td>${r.secret ? "found! 💰" : "still hidden"}</td></tr>
-      <tr><td>chapter bonus</td><td>+${r.bonus}</td></tr>
-      ${friendRow(r)}
-      <tr><td>your best here</td><td>${best}</td></tr>
-    </table>
-    ${next < CHAPTERS.length ? "" : `<p class="story"><b>You found Floppy and got everyone home. 🐾</b></p>`}
+    <div class="results-side">
+      <table class="stats">
+        <tr><td>${ch.tokenName} found</td><td>${r.collected} / ${r.total}</td></tr>
+        ${ch.hasBalloon ? `<tr><td>keepy uppy bops</td><td>${r.bops}</td></tr>` : ""}
+        <tr><td>hidden dollarbucks</td><td>${r.secret ? "found! 💰" : "still hidden"}</td></tr>
+        <tr><td>chapter bonus</td><td>+${r.bonus}</td></tr>
+        ${friendRow(r)}
+        <tr><td>your best here</td><td>${best}</td></tr>
+      </table>
+      ${/* the finale line belongs beside the breakdown, not under the words: in two
+            columns this whole block is column two (#407) */""}
+      ${next < CHAPTERS.length ? "" : `<p class="story"><b>You found Floppy and got everyone home. 🐾</b></p>`}
+    </div>
     <div class="actions">
       ${next < CHAPTERS.length
         ? `<button class="big-btn" id="btn-next">▶ Chapter ${next + 1}: ${CHAPTERS[next].title}</button>`
