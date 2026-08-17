@@ -1482,6 +1482,124 @@ def test_a_bio_opens_with_the_character_saying_hello(own_page):
     assert [r for _, r, _ in heard] == [CAST_ID[name] for name, _, _ in heard], heard
 
 
+def on_a_slow_link(page):
+    """A booted page whose artwork is still arriving, and the card ids on it.
+
+    Locally the 25 portraits are decoded off the disk before any tap can land,
+    so a test about *what is still downloading* would run over a dead branch and
+    pass forever (#370). The link is slowed with CDP — the same `SLOW_LINK` the
+    visibility probe uses, defined with the network tests below — and the cache
+    disabled, because a page that has already loaded once fetches nothing.
+    """
+    cdp = page.context.new_cdp_session(page)
+    cdp.send("Network.enable")
+    cdp.send("Network.emulateNetworkConditions", SLOW_LINK)
+    cdp.send("Network.setCacheDisabled", {"cacheDisabled": True})
+    page.reload(wait_until="domcontentloaded")
+    page.wait_for_function("window.__ready === true", timeout=60000)
+    page.click("#btn-gallery")
+    page.wait_for_selector(".char-card")
+    page.wait_for_function("() => window.__art().pending.length >= 5", timeout=60000)
+    return page.evaluate(
+        "() => [...document.querySelectorAll('.char-card')].map((b) => b.dataset.id)")
+
+
+def test_opening_a_bio_stops_the_gallery_downloading_the_other_dogs(own_page):
+    """The other 24 portraits are what the dog's own hello waits behind (#370).
+
+    Measured with `scripts/read_gap.py --mode hello`, four cards, 2026-08-17:
+    on fast 3G the *first* card tapped waited 3518ms to be audible, with 21
+    requests and 484KB of other dogs' artwork still in flight when its clip was
+    asked for, where the second card waited 1014ms behind 24KB. On slow 3G the
+    first card waited 13.2s. Nothing is prefetched to fix that — this screen
+    shows one dog, so it stops paying for the twenty-four it left behind.
+    """
+    page = own_page
+    # every picture asked for, from before the gallery is even open: the request
+    # this test is counting goes out while the cards are being laid out, long
+    # before there is a card to click
+    asked = []
+    page.on("request", lambda r: asked.append(r.url))
+
+    ids = on_a_slow_link(page)
+    before = page.evaluate("window.__art()")
+    # a card whose own picture has not landed yet, and the *least* far along of
+    # them: the first pending id is the one about to finish, and if it lands in
+    # the millisecond between this snapshot and the click there is no download
+    # left for the click to keep and the assertions below are about nothing
+    mid_flight = [c for c in ids if c in before["pending"]]
+    assert mid_flight, f"nothing was still downloading: {before['pending']}"
+    cid = mid_flight[-1]
+
+    page.locator(f".char-card[data-id='{cid}']").click()
+    page.wait_for_selector(".bio h3")
+    after = page.evaluate("window.__art()")
+
+    still_going = set(after["pending"]) - {cid}
+    assert not still_going, (
+        f"the bio for {cid} is still downloading {len(still_going)} other "
+        f"characters: {sorted(still_going)[:6]}")
+    # ...and it really did have something to stop, or the assertion above is
+    # about an empty set and this test cannot fail
+    dropped = set(before["pending"]) - set(after["loaded"]) - {cid}
+    assert dropped, (
+        f"nothing was still on its way when the card was opened ({len(before['pending'])} "
+        f"pending, {len(before['loaded'])} loaded) — the link is not slow enough for this")
+    # a call-off is not a failure: no backoff, no giving up, nothing to undo
+    assert not (dropped & set(after["failed"])), (
+        f"cancelled requests were recorded as failures: {sorted(dropped & set(after['failed']))}")
+    assert not after["gaveUp"], f"gave up on {after['gaveUp']}"
+
+    # ...and the one dog this screen is about keeps the download it already had.
+    # Calling that one off too is self-healing — the render loop asks again on
+    # the next frame, and this browser answers the repeat off its memory cache
+    # with nothing on the wire, so the count below stays 1 either way. It is here
+    # for the duplicate-fetch loop, not for the keep list; see dropPending.
+    assert cid in after["pending"], (
+        f"{cid}'s own portrait was called off with the other 24 — it is neither "
+        f"still coming nor here: pending={after['pending']} loaded={cid in after['loaded']}")
+    page.wait_for_function("(id) => window.__art().loaded.includes(id)", arg=cid, timeout=60000)
+    mine = [u for u in asked if f"/{cid}." in u]
+    assert len(mine) == 1, f"{cid}'s own portrait was asked for {len(mine)} times: {mine}"
+    assert not any("Uncaught" in e for e in page.errors), str(page.errors[:3])
+
+
+def test_going_back_to_the_gallery_asks_again_for_the_dogs_it_dropped(own_page):
+    """The undo, and the reason a drop must not go through the error path.
+
+    A cancelled portrait that had been marked failed would come back with a
+    doubling backoff behind it and, five taps later, be given up on — the dog
+    would simply stop having a picture, on the connection the whole cache exists
+    for. Instead nothing is recorded at all, the render loop finds it neither
+    loaded nor pending, and asks again.
+    """
+    page = own_page
+    ids = on_a_slow_link(page)
+    page.locator(f".char-card[data-id='{ids[0]}']").click()
+    page.wait_for_selector(".bio h3")
+
+    # The moment to look is here, on the bio, and not before: emptying `src`
+    # aborts the request and then fires `error` a tick later — measured, not
+    # assumed — so the handlers have to come off first. And not later either: a
+    # portrait that loads on the way back deletes its own failure record, so the
+    # settled gallery cannot tell a clean call-off from one that went through
+    # the error path with a doubling backoff behind it.
+    page.wait_for_timeout(500)
+    aside = page.evaluate("window.__art()")
+    assert not aside["failed"], (
+        f"calling off {len(aside['failed'])} portraits recorded them as failures, "
+        f"which is a backoff and then a give-up: {aside['tries']}")
+
+    page.click("#btn-back")
+    page.wait_for_selector(".char-card")
+    page.wait_for_function("() => window.__art().pending.length >= 5", timeout=60000)
+    page.wait_for_function("() => window.__art().loaded.length >= 25", timeout=90000)
+    art = page.evaluate("window.__art()")
+    assert set(art["loaded"]) >= set(ids), (
+        f"never came back for {sorted(set(ids) - set(art['loaded']))}")
+    assert not art["failed"], f"came back through the failure path: {art['failed']}"
+
+
 def test_a_caught_friend_says_hello_in_their_own_voice(own_page):
     """Mid-run, from a real catch: the greeting is a recording or it is silence.
 

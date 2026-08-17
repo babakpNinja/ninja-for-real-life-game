@@ -9,7 +9,7 @@
 import { Game } from "./game.js";
 import { CHAPTERS, starsFor, STARS_PER_CHAPTER } from "./chapters.js";
 import {
-  drawCharacter, loadArt, preload, creditFor, notice, noticeShort, artState,
+  drawCharacter, loadArt, preload, creditFor, notice, noticeShort, artState, dropPending,
 } from "./sprites.js";
 import { sound } from "./audio.js";
 import { greeting, hello } from "./lines.js";
@@ -1054,6 +1054,12 @@ function bio(id) {
       // floating over the gallery — and it replaces the gallery, it is not on
       // top of it.
   portrait(el("bio-dog"), c, "cheer");
+  // ...and the other 24 stop downloading, before the hello is asked for (#370).
+  // The gallery pulls 25 portraits at once and the first card is tapped while
+  // they are still coming: measured on fast 3G, that tap waited 3.7s behind
+  // 484KB of pictures of other dogs, where the second card waited 0.9s. This
+  // screen shows one dog, so it pays for one dog.
+  dropPending([id]);
   // the tap that got here was "tell me about this dog", and the answer was a
   // paragraph she cannot read (#293). The artwork credit is not read out: it is
   // for the grown-up holding the phone.

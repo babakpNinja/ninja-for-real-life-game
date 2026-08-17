@@ -37,7 +37,9 @@ import { drawDog } from "./art.js";
 function cache() {
   return {
     images: new Map(), // key -> HTMLImageElement once decoded
-    pending: new Set(),
+    // key -> the element downloading it, not just the key: a request can only be
+    // called off through the element that made it (`dropPending`, #370)
+    pending: new Map(),
     failed: new Map(), // key -> { tries, retryAt }, everything not showing yet
   };
 }
@@ -155,7 +157,7 @@ export function artState() {
   const { images, pending, failed } = art;
   return {
     loaded: [...images.keys()],
-    pending: [...pending],
+    pending: [...pending.keys()],
     // Still 'not showing its artwork right now', which is what every caller and
     // test reads it as — an id leaves this set only by actually loading.
     failed: [...failed.keys()],
@@ -173,7 +175,7 @@ export function artState() {
     // ...and the frames still on their way, for a caller that needs the picture
     // to have stopped changing before it measures anything: a run frame that
     // decodes between two renders swaps the character's drawing under them.
-    posePending: [...poseArt.pending],
+    posePending: [...poseArt.pending.keys()],
     // Which of the two copies of the artwork this browser is being sent, and
     // the characters that asked for the small one, could not have it, and are
     // now on the PNG. Both are the mechanism, not the outcome: a test that
@@ -240,8 +242,8 @@ function load(store, key, url) {
   if (pending.has(key)) return null;
   const gone = failed.get(key);
   if (gone && (gone.tries >= TRIES || Date.now() < gone.retryAt)) return null;
-  pending.add(key);
   const img = new Image();
+  pending.set(key, img);
   img.decoding = "async";
   img.onload = () => { pending.delete(key); failed.delete(key); images.set(key, img); };
   img.onerror = () => {
@@ -260,6 +262,47 @@ export function sprite(id) {
   const entry = creditFor(id);
   if (!entry) return art.images.get(id) || null;
   return load(art, id, artUrl(id, entry));
+}
+
+/**
+ * Stop downloading the characters nobody is looking at any more (#370).
+ *
+ * The gallery asks for 25 portraits at once, and on a phone they are still
+ * arriving when the first card is tapped — so the dog's own hello queues behind
+ * 484KB of pictures of other dogs and takes 3.7s on fast 3G where the second
+ * card takes 0.9s. Nothing here is prefetched or prioritised: the tap simply
+ * stops paying for a screen it has left. The bio shows one dog, so `keep` is
+ * that one, plus whatever is already decoded (this only touches requests still
+ * in flight).
+ *
+ * A dropped request is not a failed one: the handlers come off first, so
+ * `failed` is untouched and no backoff is started. Going back to the gallery
+ * puts each character back in the render loop, `sprite()` finds it neither
+ * loaded nor pending, and asks again — which is the whole undo.
+ *
+ * Returns the ids it called off, for a caller (or a test) that wants to say how
+ * many.
+ *
+ * `keep` is kept on intent, not on a measurement: dropping it and re-running the
+ * test showed the bio dog's picture still arrives, because the render loop asks
+ * again a frame later and Chromium answers the repeat without a second request
+ * on the wire — so a mutation of that line SURVIVED and is deliberately not
+ * drilled. Calling off the one download the screen you are opening is about is
+ * still wrong, and on a browser that does re-fetch it is the slowest file on the
+ * slowest screen.
+ */
+export function dropPending(keep = []) {
+  const spare = new Set(keep);
+  const dropped = [];
+  for (const [key, img] of [...art.pending]) {
+    if (spare.has(key)) continue;
+    img.onload = null;
+    img.onerror = null;
+    img.src = "";                 // the browser abandons the response for this one
+    art.pending.delete(key);
+    dropped.push(key);
+  }
+  return dropped;
 }
 
 /** Warm the cache for characters we know are about to be on screen. */

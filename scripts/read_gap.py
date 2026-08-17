@@ -88,7 +88,11 @@ PACE = """
 
 
 def open_page(browser, url, profile):
-    """A booted game on a throttled connection, with playback paced."""
+    """A booted game on a throttled connection, with playback paced.
+
+    The returned `net` grows for the life of the page: one entry per request,
+    in CDP's own monotonic seconds, which is what `queued_behind` reads.
+    """
     ctx = browser.new_context(viewport={"width": 900, "height": 600})
     page = ctx.new_page()
     page.goto(url)
@@ -96,11 +100,42 @@ def open_page(browser, url, profile):
     page.evaluate(PACE)                     # before the card is opened, not after
     cdp = ctx.new_cdp_session(page)
     cdp.send("Network.enable")
+    net = {}
+    cdp.on("Network.requestWillBeSent", lambda e: net.setdefault(e["requestId"], {
+        "url": e["request"]["url"], "sent": e["timestamp"], "done": None, "bytes": 0}))
+    for ev, key in (("Network.loadingFinished", "encodedDataLength"),
+                    ("Network.loadingFailed", None)):
+        cdp.on(ev, lambda e, key=key: net.get(e["requestId"], {}).update(
+            done=e["timestamp"], bytes=e.get(key, 0) if key else 0))
     cdp.send("Network.emulateNetworkConditions", {
         "offline": False, "latency": 0,
         "downloadThroughput": -1, "uploadThroughput": -1,
     } if profile is None else {"offline": False, **profile})
-    return ctx, page
+    return ctx, page, net
+
+
+def queued_behind(net, want, after):
+    """What was still in flight when the request for `want` went out (#370).
+
+    The delay a player meets is not the clip's own size — it is everything the
+    screen was already downloading when they tapped. This answers that with the
+    connection's own record rather than a guess: the entry for the wanted file,
+    and every request sent before it that had not finished by then.
+    """
+    mine = sorted((r for r in net.values() if want in r["url"] and r["sent"] >= after),
+                  key=lambda r: r["sent"])
+    if not mine:
+        return None
+    me = mine[0]
+    ahead = [r for r in net.values()
+             if r["sent"] < me["sent"] and (r["done"] is None or r["done"] > me["sent"])]
+    return {
+        "file": me["url"].rsplit("/", 1)[-1],
+        "took": None if me["done"] is None else round((me["done"] - me["sent"]) * 1000),
+        "ahead": len(ahead),
+        "ahead_kb": round(sum(r["bytes"] for r in ahead) / 1024),
+        "names": sorted({r["url"].rsplit("/", 1)[-1] for r in ahead})[:6],
+    }
 
 
 def report(name, rows, empty):
@@ -118,7 +153,7 @@ def report(name, rows, empty):
 
 def between_lines(browser, url, name, profile, wait):
     """Silence between line N ending and line N+1 being audible (#358)."""
-    ctx, page = open_page(browser, url, profile)
+    ctx, page, net = open_page(browser, url, profile)
     page.click("#btn-story")
     page.wait_for_selector("#btn-go")
     page.wait_for_timeout(wait)             # the card is ~20s of audio, paced
@@ -150,7 +185,7 @@ def first_line(browser, url, name, profile, wait):
     same run caught 1.5s in reports 2741ms on slow 3G, because 150KB has not
     arrived yet — and no player is there yet either.
     """
-    ctx, page = open_page(browser, url, profile)
+    ctx, page, net = open_page(browser, url, profile)
     page.click("#btn-play")                 # a save with no hero picks one first
     page.click(".hero-card[data-id='bluey']")
     page.wait_for_function("() => window.game && window.game.friends.length")
@@ -196,7 +231,7 @@ def bio_hello(browser, url, name, profile, wait):
     The same shape as the greeting: the first line of the bio read, fetched at
     the moment the card is opened. Four cards, tapped one after another.
     """
-    ctx, page = open_page(browser, url, profile)
+    ctx, page, net = open_page(browser, url, profile)
     page.click("#btn-gallery")
     page.wait_for_selector(".char-card")
     ids = page.evaluate(
@@ -204,19 +239,37 @@ def bio_hello(browser, url, name, profile, wait):
 
     delays = []
     for cid in ids:
-        page.evaluate("() => { window.__t0 = performance.now(); }")
+        # the clip this tap should produce, named before it is tapped: "the first
+        # thing that played" would happily time a portrait's own line, and on a
+        # slow profile the card before it is still finishing when this one opens
+        want = page.evaluate("""(id) => {
+          const b = document.querySelector(`.char-card[data-id='${id}'] b`);
+          const line = `G'day! I'm ${b.textContent}.`;
+          const clip = (window.__sound.voices || {})[line];
+          window.__want = line;
+          window.__t0 = performance.now();
+          return clip ? clip.file : null;
+        }""", cid)
+        mark = max((r["sent"] for r in net.values()), default=0)
         page.click(f".char-card[data-id='{cid}']")
+        heard = ("() => window.__log.some((r) => r.ev === 'playing' && "
+                 "r.at > window.__t0 && r.line === window.__want)")
         try:
-            page.wait_for_function(
-                "() => window.__log.some((r) => r.ev === 'playing' && r.at > window.__t0)",
-                timeout=wait)
+            page.wait_for_function(heard, timeout=wait)
             row = page.evaluate("""() => {
-              const r = window.__log.filter((x) => x.ev === 'playing' && x.at > window.__t0)[0];
+              const r = window.__log.find((x) => x.ev === 'playing' &&
+                x.at > window.__t0 && x.line === window.__want);
               return [Math.round(r.at - window.__t0), r.line];
             }""")
             delays.append((row[0], row[1]))
         except Exception:
             delays.append((wait, f"{cid}: nothing audible in {wait}ms"))
+        # what the tap was actually queued behind, from the connection's record
+        q = queued_behind(net, want, mark) if want else None
+        if q:
+            print(f"  {q['file']}: took {q['took']}ms, {q['ahead']} request(s) still in "
+                  f"flight when it was asked for ({q['ahead_kb']}KB in all)"
+                  + (f" — {', '.join(q['names'])}…" if q["names"] else ""))
         page.click("#btn-back")
         page.wait_for_selector(".char-card")
     ctx.close()
