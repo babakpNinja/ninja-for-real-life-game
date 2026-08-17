@@ -114,10 +114,15 @@ const starsText = (n) => "★★★".slice(0, n) + "☆☆☆".slice(0, 3 - n);
  * than a list of selectors kept beside it, so a screen added later declares its
  * own lead or fails for not having one.
  */
-function showOverlay(html, { transparent = false, keepReading = false } = {}) {
+function showOverlay(html, { transparent = false, keepReading = false, kind = "" } = {}) {
   if (!keepReading) sound.hush();
   overlay.className = "screen" + (transparent ? " transparent" : "");
-  overlay.innerHTML = `<div class="panel"><div class="panel-body">${html}</div></div>`;
+  // `kind` names the screen for the stylesheet — one class, so a rule can be about
+  // one screen's shape without a selector that guesses at its contents. The
+  // results screen and the stats screen both hold a `table.stats`, and only one of
+  // them may be laid out in two columns (#396).
+  overlay.innerHTML = `<div class="panel${kind ? " panel-" + kind : ""}">` +
+                      `<div class="panel-body">${html}</div></div>`;
   // The block of buttons that ends a screen — the way forward and the way back —
   // is lifted out of the scrolling part and pinned under it, so a list longer
   // than the window scrolls instead of pushing Back off the bottom. On a phone
@@ -927,7 +932,7 @@ function results(r) {
         <button class="med-btn" id="btn-back">Menu</button>
       </div>
     </div>
-  `, { transparent: true });
+  `, { transparent: true, kind: "results" });
   // the same gate as the menu's, and reached by a player who has just finished a
   // chapter and wants the next one: straight in, and the story is still one tap
   // away under Chapters (#255)

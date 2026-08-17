@@ -6536,6 +6536,141 @@ def test_the_thing_each_screen_is_for_is_on_the_screen(make_page, viewport, touc
         f"so no lead here could have been below a fold")
 
 
+# --- and the breakdown under it (#396) ----------------------------------------
+
+# Every row of the results table against the box it lives in, plus where the
+# words are relative to the table. Per row, not the table's own height: a table
+# pushed below the fold has a rect at a plausible y and none of it on the screen
+# ([[ask-the-element-that-scrolls-not-the-one-you-can-name]]), and the table's
+# height alone cannot say which rows a player can read.
+RESULTS_ROWS = """
+() => {
+  const body = document.querySelector('#overlay .panel-results > .panel-body');
+  const table = document.querySelector('#overlay table.stats');
+  if (!body || !table) return null;
+  const b = body.getBoundingClientRect();
+  // `null` rather than a throw for anything that may be missing: a mutant that
+  // deletes the score line should be reported as a missing score line, not as a
+  // TypeError from inside this probe
+  // ([[a-drill-caught-upstream-proves-nothing]]).
+  const box = (n) => {
+    if (!n) return null;
+    const r = n.getBoundingClientRect();
+    return { text: n.textContent.trim().replace(/\\s+/g, ' ').slice(0, 34),
+             top: r.top, bottom: r.bottom, left: r.left, right: r.right };
+  };
+  return {
+    body: { top: b.top, bottom: b.bottom, left: b.left, right: b.right,
+            over: body.scrollHeight - body.clientHeight, scrollTop: body.scrollTop },
+    rows: [...table.querySelectorAll('tr')].map(box),
+    table: box(table),
+    // the two things the table has to be beside, or under: the number the screen
+    // is for and the outro that runs above it
+    score: box(document.querySelector('#overlay .score-line')),
+    story: box(document.querySelector('#overlay p.story')),
+    // #309 took the score out of the table; sideways the table is now the other
+    // column, so a score put back inside it rides along and is on screen again —
+    // the lead check that used to catch that cannot any more, and this can
+    scoreInTable: !!table.querySelector('.score-line, [data-lead]'),
+    // one column or two, asked of the layout rather than of the media query —
+    // this is the difference a player sees, and it is the body that is laid out
+    columns: getComputedStyle(body).display,
+    view: { w: window.innerWidth, h: window.innerHeight },
+  };
+}
+"""
+
+
+@pytest.mark.parametrize("viewport,touch,screen", SCREENS, ids=SCREEN_IDS)
+@pytest.mark.smoke
+def test_every_row_of_the_results_breakdown_is_in_the_body_it_scrolls_in(
+        make_page, viewport, touch, screen):
+    """#396: on the two short windows all six rows were below the cut.
+
+    The score and the stars were fixed by #309 (shrink the type) and the panel's
+    way out by #269 (pin the buttons), and between them the *middle* of the screen
+    — "what happened?", the one thing #293 says that table is — went off the
+    bottom of a 224px body holding 444px. Nothing caught it: the lead was on
+    screen, the buttons were reachable, the body was not a peephole, and the
+    document never overflows because the panel scrolls its insides.
+
+    So this asks the question none of those do, of the rows themselves: with
+    nothing scrolled, is each one inside the box that scrolls? And on a window
+    that has the width for it, are the words beside the table rather than above
+    it — because that is the only reason they fit.
+    """
+    page = make_page(viewport, touch=touch)
+    sideways = viewport["width"] > viewport["height"]
+    try:
+        play_chapter(page, 0)
+        page.wait_for_selector(".stars-big")
+        m = page.evaluate(RESULTS_ROWS)
+        assert m, f"{screen}: no results table on the results screen"
+        assert m["body"]["scrollTop"] == 0, (
+            f"{screen}: the body was already scrolled {m['body']['scrollTop']:.0f}px, "
+            f"so this is not what a player arrives at")
+        assert len(m["rows"]) >= 5, (
+            f"{screen}: only {len(m['rows'])} rows on the breakdown, so 'every row is "
+            f"in view' is being asked about almost nothing: {m['rows']}")
+        # first, because it is the precise statement of #309's rule: a score put
+        # back into the table also disappears from `.score-line`, and "no score
+        # line" is the vaguer thing to be told
+        assert not m["scoreInTable"], (
+            f"{screen}: the score is inside the breakdown table. #309 took it out "
+            f"because a lead buried in that table goes under the fold; sideways the "
+            f"table is the second column now, so it would be on screen and nothing "
+            f"else would notice")
+        # a guard, not a claim: everything below reads these two rects
+        assert m["score"] and m["story"], (
+            f"{screen}: the results screen has no {'score line' if not m['score'] else 'outro'} "
+            f"to place the table against — score={m['score']}, outro={m['story']}")
+
+        for row in m["rows"]:
+            assert row["bottom"] <= m["body"]["bottom"] + 0.5, (
+                f"{screen}: {row['text']!r} is at y {row['top']:.0f}.."
+                f"{row['bottom']:.0f} and the scrolling body ends at y "
+                f"{m['body']['bottom']:.0f} on a {m['view']['h']}px window — a row "
+                f"of the answer to 'what happened?' is below the cut, behind a 16px "
+                f"fade that is the only sign there is more ({m['body']['over']:.0f}px "
+                f"of this body is hidden)")
+            assert row["top"] >= m["body"]["top"] - 0.5, (
+                f"{screen}: {row['text']!r} is above the top of the body "
+                f"({row['top']:.0f} vs {m['body']['top']:.0f})")
+            assert row["left"] >= m["body"]["left"] - 0.5 and \
+                row["right"] <= m["body"]["right"] + 0.5, (
+                f"{screen}: {row['text']!r} runs x {row['left']:.0f}.."
+                f"{row['right']:.0f} out of a body spanning "
+                f"{m['body']['left']:.0f}..{m['body']['right']:.0f} — nothing here "
+                f"scrolls sideways")
+
+        assert m["body"]["over"] <= 1, (
+            f"{screen}: {m['body']['over']:.0f}px of the results body is below the "
+            f"fold, behind a 16px fade that is the only sign there is more")
+
+        if sideways:
+            assert m["columns"] == "grid", (
+                f"{screen}: the results body is laid out as {m['columns']!r} on a "
+                f"{m['view']['w']}x{m['view']['h']} window — there is no height left "
+                f"to stack the table under the words, and the rows only fit because "
+                f"they are beside them")
+            assert m["table"]["left"] >= m["score"]["right"] - 0.5, (
+                f"{screen}: the table starts at x {m['table']['left']:.0f} and the "
+                f"score ends at x {m['score']['right']:.0f} — they are not side by "
+                f"side, so the rows that fit are fitting for some other reason")
+        else:
+            assert m["columns"] == "block", (
+                f"{screen}: the results body is laid out as {m['columns']!r} on a "
+                f"{m['view']['w']}x{m['view']['h']} window — a window held upright "
+                f"has the height to read one column and reads one column")
+            assert m["table"]["top"] >= m["story"]["bottom"] - 0.5, (
+                f"{screen}: the table's top is y {m['table']['top']:.0f} and the "
+                f"outro ends at y {m['story']['bottom']:.0f} — upright, the table "
+                f"belongs under the words it explains")
+    finally:
+        page.evaluate("() => window.game && window.game.stop()")
+        page.context.close()
+
+
 # --- and the pill that talks over the way out (#277) --------------------------
 
 HINT = "#rotate-hint"

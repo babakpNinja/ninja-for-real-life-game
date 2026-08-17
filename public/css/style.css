@@ -498,6 +498,69 @@ table.stats { width: 100%; border-collapse: collapse; font-size: clamp(13px, 2.5
 table.stats td, table.stats th { padding: 7px 6px; border-bottom: 2px solid #EFE3CC; text-align: left; }
 table.stats td:last-child, table.stats th:last-child { text-align: right; }
 
+/*
+ * The results screen, on a window that is wider than it is tall (#396).
+ *
+ * #309 bought height by shrinking the type and #269 bought it by pinning the
+ * buttons, and between them the middle of the screen still went off the bottom:
+ * held sideways the scrolling body was 224px holding 391px, and all six rows of
+ * the breakdown — "what happened?", which is what that table is (#293) — were
+ * below the cut, behind a 16px fade. A 1280x800 laptop hid the last two rows the
+ * same way; the first measurement missed that because it asked `#overlay`, which
+ * clips rather than scrolls, and answered "nothing hidden".
+ *
+ * Shrinking type runs out. Width does not: these windows are 844, 1024 and
+ * 1280px across and the card is `min(760px, 96vw)`. So the table moves into a
+ * second column beside the words, spanning from the top of the body — beside the
+ * title, not under it, because under the title there were only 141px left for a
+ * 186px table. Everything else stays in column one in the order it was written.
+ * A portrait window keeps the single column: 390x844 has nothing below the fold
+ * and 390px of width to split.
+ */
+@media (orientation: landscape) {
+  .panel-results > .panel-body {
+    display: grid;
+    /* The table gets the larger share: it is the column with two things on each
+       line ("friends who joined", "Bingo, Bandit and Muffin"), and an even split
+       wrapped three of its six rows onto a second line — 312px, taller than the
+       186px it was as one column, which would have defeated the move. Its
+       `max-content` is greedier still and squeezed the words to 218px, where the
+       outro ran to seven lines. This is the width at which both fit. */
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+    column-gap: clamp(12px, 2vw, 24px);
+    align-content: start;
+  }
+  .panel-results > .panel-body > * { grid-column: 1; }
+  /* `span 9` rather than `1 / -1`: with no explicit rows, line -1 resolves to
+     line 1 and the table would be one row tall. Nine is more rows than the
+     column can ever have, and the extra implicit rows are 0px. */
+  .panel-results .stats { grid-column: 2; grid-row: 1 / span 9; align-self: start; }
+  /* One rhythm for the table wherever it is in two columns, tighter than either
+     of the one-column rhythms (7px, and 4px under #309's short-window block): a
+     row that wraps costs a whole line, so the padding is what pays for the two
+     that do. And the type is sized against the column it is in rather than the
+     window: `2.5vw` is 18px on an 844px-wide phone held sideways, which is a
+     reasonable size for a table across the whole card and too big for one in half
+     of it — three of the six rows wrapped and the table came to 249px in a 224px
+     body. 13px is what the same table shows a portrait phone. */
+  .panel-results .stats { font-size: clamp(13px, 1.6vw, 18px); }
+  .panel-results .stats td, .panel-results .stats th { padding: 4px 6px; }
+  /* The gaps down the left column are `p` margins, sized against the type: at 18px
+     the score alone had 21px of air above it and 25px below. In two columns that
+     air is what pushes the end of the outro under the fade, so it goes — 46px of
+     the 71px that was hidden sideways. */
+  .panel-results .score-line { margin: 5px 0; }
+  .panel-results .stars-big { margin: 2px 0; }
+  /* Same `vw` mistake as the table's: the outro is 18px of prose in a 316px column
+     on a phone held sideways, four lines of it, and the last two were under the
+     fade. Sized against the column it wraps in, it is three. */
+  .panel-results p.story {
+    font-size: clamp(13px, 1.5vw, 18px);
+    line-height: 1.38;
+    margin: 5px 0 0;
+  }
+}
+
 /* In the flow, at the top of the block of pinned buttons — `main.js` puts it
  * there. Anchored to the bottom of the window it landed on "← Back", which is
  * the one control on the screen that is pinned so it can never be missed
