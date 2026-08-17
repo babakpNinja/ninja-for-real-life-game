@@ -6671,6 +6671,105 @@ def test_every_row_of_the_results_breakdown_is_in_the_body_it_scrolls_in(
         page.context.close()
 
 
+# --- those two columns on the window with the most room (#403) -----------------
+
+# The balance of the pair, which the check above cannot see: it asks whether
+# every row is inside the body, and two columns that fit badly still fit. Type
+# sized against the *window* is the thing to watch — #309's shrink is keyed on
+# `max-height: 560px`, so an 800px-tall laptop kept 38px headings inside a 300px
+# column and the widest window in `SCREENS` read the worst.
+RESULTS_BALANCE = """
+() => {
+  const panel = document.querySelector('#overlay .panel-results');
+  const body = panel && panel.querySelector('.panel-body');
+  const table = document.querySelector('#overlay table.stats');
+  const h2 = panel && panel.querySelector('h2');
+  if (!body || !table || !h2) return null;
+  // line boxes, not a font size: "does the title fit its column" is a question
+  // about wrapping, and a wrap can be undone by widening the column as well as
+  // by shrinking the type
+  const r = document.createRange();
+  r.selectNodeContents(h2);
+  const bottoms = [...body.children].map(c => c.getBoundingClientRect().bottom);
+  return {
+    view: { w: window.innerWidth, h: window.innerHeight },
+    cardW: panel.getBoundingClientRect().width,
+    columns: getComputedStyle(body).display,
+    h2: { text: h2.textContent.trim(), lines: r.getClientRects().length,
+          font: getComputedStyle(h2).fontSize },
+    tableW: table.getBoundingClientRect().width,
+    // how much shorter the table's column ends up than the words beside it: the
+    // blank the complaint is about, taken from the bottoms rather than from the
+    // grid, because a row that spans is not a row height
+    empty: Math.max(...bottoms) - table.getBoundingClientRect().bottom,
+    over: body.scrollHeight - body.clientHeight,
+  };
+}
+"""
+
+# 1280x800 is the widest window in `SCREENS`; 1100 is where the card is allowed
+# to grow. The two arms are on either side of it on purpose — the short landscape
+# windows were already tuned by #396 and #309 and this must not reach them.
+WIDE_ENOUGH = 1100
+BLANK_ALLOWED = 60
+
+
+@pytest.mark.parametrize("viewport,touch,screen",
+                         [s for s in SCREENS if s[0]["width"] > s[0]["height"]],
+                         ids=[n for v, _, n in SCREENS if v["width"] > v["height"]])
+def test_the_results_columns_fill_the_widest_window_they_are_given(
+        make_page, viewport, touch, screen):
+    """#403: on 1280x800 the card stayed 760px, so both columns were narrow.
+
+    "Keepy Uppy — done!" is 351px of 38px type in a 300px column: two lines, and
+    the table beside it ran out 127px before the words did. Everything else was
+    green — the rows were in the body, nothing scrolled — because a card that fits
+    badly still fits.
+
+    So this asks the balance, on both sides of the width the card grows at: does
+    the title fit its column on one line, and does the table's column run out
+    level with the words beside it?
+    """
+    page = make_page(viewport, touch=touch)
+    wide = viewport["width"] >= WIDE_ENOUGH
+    try:
+        play_chapter(page, 0)
+        page.wait_for_selector(".stars-big")
+        m = page.evaluate(RESULTS_BALANCE)
+        assert m, f"{screen}: no results card to measure"
+        assert m["columns"] == "grid", (
+            f"{screen}: the results body is {m['columns']!r} on a "
+            f"{m['view']['w']}x{m['view']['h']} window — there are no two columns "
+            f"here to be balanced")
+        assert m["over"] <= 1, (
+            f"{screen}: {m['over']:.0f}px of the results body is below the fold")
+
+        if wide:
+            assert m["h2"]["lines"] == 1, (
+                f"{screen}: {m['h2']['text']!r} wraps onto {m['h2']['lines']} lines at "
+                f"{m['h2']['font']} in a {m['cardW']:.0f}px card — on the roomiest "
+                f"window in the set, the shortest chapter title should not need two "
+                f"lines, and the ones it costs come straight out of the column beside it")
+            assert m["empty"] <= BLANK_ALLOWED, (
+                f"{screen}: the breakdown's column ends {m['empty']:.0f}px above the "
+                f"words beside it (table {m['tableW']:.0f}px wide in a "
+                f"{m['cardW']:.0f}px card) — more than {BLANK_ALLOWED}px of one column "
+                f"is blank, which is what a card sized for a phone looks like on a "
+                f"{m['view']['w']}px window")
+        else:
+            # the other half of the same rule: these two are short, not narrow,
+            # and #309/#396 already fit them. Growing the card here would be
+            # spending width on windows whose problem is height.
+            assert m["cardW"] <= 800, (
+                f"{screen}: the card is {m['cardW']:.0f}px wide on a "
+                f"{m['view']['w']}x{m['view']['h']} window — the room-to-spare rule "
+                f"(min-width: {WIDE_ENOUGH}px) has reached a window that is short "
+                f"rather than roomy")
+    finally:
+        page.evaluate("() => window.game && window.game.stop()")
+        page.context.close()
+
+
 # --- and the pill that talks over the way out (#277) --------------------------
 
 HINT = "#rotate-hint"

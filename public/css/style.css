@@ -559,6 +559,23 @@ table.stats td:last-child, table.stats th:last-child { text-align: right; }
     line-height: 1.38;
     margin: 5px 0 0;
   }
+  /* The last element still sized against the window rather than the column it
+     wraps in (#403). `h2`'s `5vw` is 38px on a 1280x800 laptop and
+     "Keepy Uppy — done!" is 351px of it in a 300px column: two lines, and the
+     92px they cost is most of the 127px of blank column that was left beside
+     them. The two shorter landscape windows already read 26px — from #309's
+     `max-height: 560px` block, which an 800px-tall laptop does not match — so the
+     floor here is 26px rather than the 22px `h2` would otherwise fall to, and
+     844x390 and 1024x420 are left exactly as they were. */
+  .panel-results h2 { font-size: clamp(26px, 2.4vw, 30px); }
+}
+
+/* A landscape window with room to spare, i.e. a laptop rather than a phone held
+ * sideways (#403). */
+@media (orientation: landscape) and (min-width: 1100px) {
+  .panel-results { width: min(920px, 96vw); }
+  .panel-results .stats { font-size: 20px; }
+  .panel-results .stats td, .panel-results .stats th { padding: 7px 10px; }
 }
 
 /* In the flow, at the top of the block of pinned buttons — `main.js` puts it
