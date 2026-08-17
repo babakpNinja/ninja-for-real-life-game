@@ -43,6 +43,28 @@ def pytest_addoption(parser):
                      help="where the game is served; omit to boot a local server")
 
 
+# What `-m smoke` means here, since a marker with a vague meaning grows until it
+# is the suite again (#332). The whole suite runs twice on every ship — once
+# before the push and once against the live site — and 13 minutes of the second
+# run re-asks questions whose answer *cannot* differ between two runs of one
+# commit: physics, layout arithmetic, what a function returns.
+#
+# A test earns `smoke` if a **deploy** can be the thing that makes it fail:
+#
+#   * a file that is in the repo and not in the deploy (an exclude, a
+#     .gitignore that followed the rsync, a build artifact never generated) —
+#     the pictures, the small copies of them, the recordings;
+#   * the page not booting at all over there: a module that 404s, a console
+#     error, a screen that renders empty;
+#   * the server in front of it: the wrong content type, a route that does not
+#     answer, a stale container still serving the old build.
+#
+# A test does *not* earn it for being fast, and a test that reads the repo off
+# the local disk can never earn it — it would ask the deployed URL nothing.
+SMOKE = ("smoke: this can fail because of how the build was deployed, not just "
+         "because of what the code does — the subset `ship.py` re-runs live")
+
+
 def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -245,12 +267,64 @@ def leak_message(left: dict, nodeid: str, which_page: str) -> str:
 
 HANDOFF = "leaves_a_game_running"
 
+#: every test this session collected, and the subset left after deselection.
+#: A handoff is a claim about another test, and whether that test is going to run
+#: depends on the selector — `-m smoke` (#332) collects the test that starts a
+#: chapter without the one that stops it.
+collected: set[str] = set()
+selected: set[str] = set()
+
 
 def pytest_configure(config):
+    # Both markers here, in one hook: a second `pytest_configure` in this module
+    # would not be a second hook, it would replace this one — and the marker it
+    # registered would be silently unknown.
+    config.addinivalue_line("markers", SMOKE)
     config.addinivalue_line(
         "markers",
-        f"{HANDOFF}(reason): this test hands a running game to the next one on "
-        "purpose; the reason must say which test picks it up")
+        f"{HANDOFF}(to, reason): this test hands a running game to another on "
+        "purpose; `to` names the test that picks it up and `reason` says why")
+
+
+def pytest_itemcollected(item):
+    collected.add(item.function.__name__)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(items):
+    # trylast: -m/-k deselect in this same hook, so this must run after them to
+    # see what is actually going to run.
+    selected.clear()
+    selected.update(item.function.__name__ for item in items)
+
+
+def handoff_state(mark, nodeid: str) -> tuple[str, str]:
+    """Whether the test this one hands its running game to is going to run.
+
+    Three answers, not two (#40), returned as (state, complaint):
+
+    ``held``  the receiver is in this run — the exemption stands and the loop is
+              left alone, which is the case the marker exists for.
+    ``void``  the receiver exists but this run deselected it (`-m smoke` collects
+              the test that starts a chapter without the one that stops it,
+              #332). Nothing is coming to pick the game up, so the guard puts it
+              down — quietly, because the test did nothing wrong.
+    ``broken`` the declaration cannot be checked: no ``to``/``reason``, or a
+              ``to`` this file does not contain (renamed, deleted). An exemption
+              nobody can check is how a leak gets waved through, so it fails.
+    """
+    to, reason = mark.kwargs.get("to"), mark.kwargs.get("reason")
+    if not to or not reason:
+        return "broken", (
+            f"{nodeid} is marked {HANDOFF} without both `to` and `reason`. An "
+            f"unexplained exemption is how a leak gets waved through: name the "
+            f"test that picks the running game up, and why.")
+    if to not in collected:
+        return "broken", (
+            f"{nodeid} hands its running game to {to!r}, which this file does not "
+            f"contain — renamed or deleted. The exemption cannot be checked, so it "
+            f"does not hold.")
+    return ("held", "") if to in selected else ("void", "")
 
 
 @pytest.fixture(autouse=True)
@@ -270,7 +344,9 @@ def no_leaked_game_loop(request):
     playing goes on playing, reaches its own finish line some tests later, and
     the results screen is then blamed on whichever test happened to be running.
     So the handoff is declared instead: ``@pytest.mark.leaves_a_game_running``
-    with a reason naming the test that picks it up.
+    with ``to`` naming the test that picks it up and ``reason`` saying why — and
+    the declaration is checked against what this run actually collected, because
+    a subset selector can leave the receiver out (see ``handoff_state``).
 
     The loop is put down *before* the test is failed: the blame belongs on the
     one test that left it, and a guard that reports the same leak on every test
@@ -278,19 +354,19 @@ def no_leaked_game_loop(request):
     """
     yield
     mark = request.node.get_closest_marker(HANDOFF)
-    if mark and not (mark.kwargs.get("reason") or mark.args):
-        pytest.fail(f"{request.node.nodeid} is marked {HANDOFF} with no reason. "
-                    f"An unexplained exemption is how a leak gets waved through: "
-                    f"say which test picks the running game up.", pytrace=False)
+    state, complaint = handoff_state(mark, request.node.nodeid) if mark else ("none", "")
     for page in pages:
         if page.is_closed():
             continue
         left = page.evaluate(RUNNING_GAME)
-        if left and not mark:
+        if left and state != "held":
             page.evaluate("() => window.game.stop()")
-            pytest.fail(leak_message(left, request.node.nodeid,
-                                     "a page every test after it goes on using"),
-                        pytrace=False)
+            if state == "none":
+                pytest.fail(leak_message(left, request.node.nodeid,
+                                         "a page every test after it goes on using"),
+                            pytrace=False)
+    if state == "broken":               # after the loops are down, as above
+        pytest.fail(complaint, pytrace=False)
 
 
 @pytest.fixture

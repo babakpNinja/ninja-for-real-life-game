@@ -18,6 +18,7 @@ place their state belongs.
 """
 
 import collections
+import concurrent.futures
 import contextlib
 import importlib.util
 import itertools
@@ -310,6 +311,7 @@ def art_credits(base_url):
         return json.loads(resp.read())
 
 
+@pytest.mark.smoke
 def test_every_character_has_credited_artwork(art_credits):
     assets = art_credits.get("assets", {})
     assert len(assets) == 25, f"got {len(assets)}"
@@ -317,6 +319,7 @@ def test_every_character_has_credited_artwork(art_credits):
     assert not missing, f"uncredited: {missing}"
 
 
+@pytest.mark.smoke
 def test_every_character_image_is_actually_served(base_url, art_credits):
     """A 404 here is a sprite that silently falls back to the old drawn dog."""
     bad = []
@@ -331,6 +334,7 @@ def test_every_character_image_is_actually_served(base_url, art_credits):
     assert not bad, f"not served: {bad}"
 
 
+@pytest.mark.smoke
 def test_every_character_ships_a_smaller_copy_too(base_url, art_credits):
     """The WebP beside each PNG is what nearly every browser is actually sent.
 
@@ -399,6 +403,7 @@ def test_the_gallery_stays_inside_its_transfer_budget(own_page):
         f"{sorted(got, key=lambda e: -e['size'])[:5]}")
 
 
+@pytest.mark.smoke
 def test_every_pose_frame_ships_a_smaller_copy_too(base_url, art_credits):
     """The same three ways as the characters, over the other block of credits.
 
@@ -800,6 +805,7 @@ SPY_ON_SPEECH = """
 """
 
 
+@pytest.mark.smoke
 def test_play_puts_nothing_to_read_between_the_menu_and_the_game(own_page):
     """The complaint itself: one tap, and the dog is moving."""
     page = own_page
@@ -829,6 +835,7 @@ def test_the_story_is_still_one_tap_away_and_still_leads_into_the_chapter(own_pa
     page.evaluate("() => window.game.stop()")
 
 
+@pytest.mark.smoke
 def test_the_story_card_reads_itself_out_loud(own_page):
     """The other half of the fix, and the one that serves the reason: a card
     nobody in the room can read is worth nothing sitting there silently."""
@@ -1233,6 +1240,57 @@ def clips_played(page):
         assert src.startswith("audio/"), f"a clip from outside the audio folder: {src}"
         assert (APP / "public" / src).is_file(), f"played a clip that was never shipped: {src}"
     return played
+
+
+def head(base_url, path, timeout=20):
+    """Status, content type and length of one file, or the reason there is none."""
+    req = urllib.request.Request(f"{base_url}/{path}", method="HEAD")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            length = resp.headers.get("content-length")
+            return {"status": resp.status, "type": resp.headers.get("content-type"),
+                    "bytes": int(length) if length is not None else None}
+    except Exception as exc:                                        # noqa: BLE001
+        return {"status": f"{type(exc).__name__}: {exc}", "type": None, "bytes": None}
+
+
+@pytest.mark.smoke
+def test_every_recorded_line_is_actually_served(base_url):
+    """All 209 mp3s, over HTTP — the only question a deploy can answer differently.
+
+    `clips_played` asks whether a src exists *in the repo*, which is the same
+    answer on every machine. The recordings are 34MB of generated files that
+    nothing but the manifest references, so they are exactly the shape of thing a
+    deploy drops (an exclude, a .gitignore that followed the rsync) — and the
+    game would then fall back to the browser's robot voice, or on this browser to
+    silence, with no error anywhere.
+
+    A wrong content type counts as not served: `<audio>` will not decode an
+    octet-stream. The length is only compared when the hop sends one — a missing
+    header is 'not checked', not a pass (#40).
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        got = dict(zip(MANIFEST, pool.map(
+            lambda e: head(base_url, f"audio/{e['file']}"), MANIFEST.values())))
+    bad, unchecked = [], []
+    for line, entry in MANIFEST.items():
+        r = got[line]
+        if r["status"] != 200:
+            bad.append(f"{entry['file']}: {r['status']}")
+        elif not (r["type"] or "").startswith("audio/"):
+            bad.append(f"{entry['file']}: served as {r['type']}")
+        elif r["bytes"] is None:
+            unchecked.append(entry["file"])
+        elif r["bytes"] != entry["bytes"]:
+            bad.append(f"{entry['file']}: {r['bytes']} bytes, manifest says {entry['bytes']}")
+    assert not bad, f"{len(bad)} of {len(MANIFEST)} recordings not served: {bad[:5]}"
+    if len(unchecked) == len(MANIFEST):
+        # Not a pass and not a failure: the files are served, and *whether they
+        # are the ones that were built* was not established. Railway's edge does
+        # not have to forward the length the server states, and a check that goes
+        # quiet when it is skipped is the one that rots (#40).
+        warnings.warn(f"no hop sent a content-length for any of the {len(MANIFEST)} "
+                      f"recordings, so their sizes went unchecked at {base_url}")
 
 
 @pytest.mark.parametrize("screen", ["story", "bio", "picker"])
@@ -1882,6 +1940,7 @@ def test_the_gallery_shows_every_character_with_a_bio(desktop):
     assert src and src.startswith("https://"), src
 
 
+@pytest.mark.smoke
 def test_the_whole_gallery_loads_its_portraits(desktop):
     """Twenty-five lazy-loaded images: any one of them can 404 on its own."""
     desktop.click("#btn-gallery")
@@ -1910,8 +1969,8 @@ def test_the_stats_screen_opens(desktop):
 # time, and the pause button. Each hands the running game to the next, so each
 # declares it (#182) — and the last one puts the loop down.
 
-@pytest.mark.leaves_a_game_running(reason="test_tapping_the_canvas_makes_the_player_jump "
-                                          "jumps the player this starts")
+@pytest.mark.leaves_a_game_running(to="test_tapping_the_canvas_makes_the_player_jump",
+                                   reason="it jumps the player this starts")
 def test_play_leads_straight_into_chapter_one(desktop):
     """Two taps from the menu to a moving dog: who, then go (#255, #303).
 
@@ -1928,8 +1987,8 @@ def test_play_leads_straight_into_chapter_one(desktop):
     assert desktop.evaluate("window.game.ch.title") == "Keepy Uppy"
 
 
-@pytest.mark.leaves_a_game_running(reason="test_the_score_climbs_while_the_level_runs "
-                                          "needs the same chapter still running")
+@pytest.mark.leaves_a_game_running(to="test_the_score_climbs_while_the_level_runs",
+                                   reason="it needs the same chapter still running")
 def test_tapping_the_canvas_makes_the_player_jump(desktop):
     before = desktop.evaluate("window.game.player.y")
     desktop.mouse.click(640, 500)
@@ -1938,8 +1997,8 @@ def test_tapping_the_canvas_makes_the_player_jump(desktop):
     assert after < before, f"{before} -> {after}"
 
 
-@pytest.mark.leaves_a_game_running(reason="test_pause_and_resume pauses the chapter "
-                                          "this one watched score")
+@pytest.mark.leaves_a_game_running(to="test_pause_and_resume",
+                                   reason="it pauses the chapter this one watched score")
 def test_the_score_climbs_while_the_level_runs(desktop):
     desktop.wait_for_timeout(1500)
     assert desktop.evaluate("window.game.score") > 0
@@ -5397,6 +5456,7 @@ def test_the_beach_is_sand_with_the_sea_on_one_side(own_page):
         f"the difference between a beach and a creek, which is all it is for")
 
 
+@pytest.mark.smoke
 def test_no_console_errors_on_desktop(desktop):
     """Last, so it covers everything the tests above did."""
     assert not desktop.errors, str(desktop.errors[:3])
@@ -6108,6 +6168,7 @@ LEAD_BOX = """
 
 
 @pytest.mark.parametrize("viewport,touch,screen", SCREENS, ids=SCREEN_IDS)
+@pytest.mark.smoke
 def test_the_thing_each_screen_is_for_is_on_the_screen(make_page, viewport, touch, screen):
     """#309: one extra results row pushed the score below the fold.
 
@@ -6378,8 +6439,9 @@ def test_the_pill_rule_notices_the_pill_back_over_the_way_out(make_page):
         page.context.close()
 
 
-@pytest.mark.leaves_a_game_running(reason="test_a_tap_jumps_on_touch taps the player "
-                                          "this starts, and stops it afterwards")
+@pytest.mark.leaves_a_game_running(to="test_a_tap_jumps_on_touch",
+                                   reason="it taps the player this starts, and stops it afterwards")
+@pytest.mark.smoke
 def test_it_plays_on_touch(phone):
     tap_play(phone)
     phone.wait_for_timeout(400)
@@ -6485,8 +6547,9 @@ def playability_verdict(measure, control, census, floor=PLAYABLE_FPS):
                     f"from a running game loop is the one that has happened (#182).")
 
 
-@pytest.mark.leaves_a_game_running(reason="it measures the chapter test_it_plays_on_touch "
-                                          "started, and hands it on to the tap test")
+@pytest.mark.leaves_a_game_running(to="test_a_tap_jumps_on_touch",
+                                   reason="this one only measures the chapter "
+                                          "test_it_plays_on_touch started; the tap test stops it")
 def test_the_phone_gets_enough_frames_to_be_played(phone):
     """Above the tap test on purpose, because it is the same fault said plainly.
 
@@ -7376,6 +7439,7 @@ def test_a_respawn_never_pushes_the_player_off_a_narrow_screen(make_page):
         page.context.close()
 
 
+@pytest.mark.smoke
 def test_no_console_errors_on_touch(phone):
     assert not phone.errors, str(phone.errors[:3])
 
@@ -8473,6 +8537,7 @@ EARLY_TAPS = [
 
 
 @pytest.mark.parametrize("button,heading", EARLY_TAPS, ids=[b for b, _ in EARLY_TAPS])
+@pytest.mark.smoke
 def test_a_tap_before_boot_finishes_is_not_lost(browser, base_url, button, heading):
     """#284: ▶ Play visible at 0.35s on the live phone, and dead until 1.13s.
 
@@ -8624,10 +8689,11 @@ def test_a_toast_lands_on_the_picture_not_in_the_sky(make_page, viewport, touch,
 DRILLS = Path(__file__).resolve().parent / "drills"
 
 
-def run_drill(base_url, name):
+def run_drill(base_url, name, *args):
     """Run one drill file in a pytest of its own and hand back what it printed."""
     run = subprocess.run(
-        [sys.executable, "-m", "pytest", str(DRILLS / name), "-q", "--base-url", base_url],
+        [sys.executable, "-m", "pytest", str(DRILLS / name), "-q", "--base-url", base_url,
+         *args],
         cwd=APP, capture_output=True, text=True, timeout=300)
     return run.returncode, run.stdout + run.stderr
 
@@ -8685,13 +8751,41 @@ def test_a_leak_on_a_shared_page_is_blamed_once_and_put_down(base_url):
     blamed = [ln for ln in out.splitlines() if "left the game loop running" in ln]
     assert len(blamed) == 1 and "walks_away_from_a_running_game" in blamed[0], (
         f"the leak was not blamed on exactly the test that left it:\n{out}")
-    unexplained = [ln for ln in out.splitlines() if "with no reason" in ln]
+    unexplained = [ln for ln in out.splitlines() if "without both `to` and `reason`" in ln]
     assert len(unexplained) == 1 and "no_reason_is_refused" in unexplained[0], (
         f"an exemption with no reason was accepted:\n{out}")
     # a teardown failure is an ERROR and the test still prints as passed, so the
     # count to read is the errors: the leaker and the empty exemption, and
     # nothing for the test that declared its handoff or the one that followed
     assert "4 passed, 2 errors" in out, f"the blame did not land where it should:\n{out}"
+
+
+def test_a_handoff_to_a_test_that_is_not_running_is_not_an_exemption(base_url):
+    """What a subset selector does to a declared handoff (#332).
+
+    `ship.py` re-runs `-m smoke` against the deploy, and that selection contains
+    the test that starts a chapter on the phone and not the one that stops it. The
+    marker's whole justification is "another test picks this up", so with that test
+    deselected the exemption is a claim about nothing — and a loop left painting
+    starves every page after it, which is the fault #182 cost a morning to.
+
+    Both wrong-ways-round in one run, because the difference between them is the
+    point: nobody-collected is *not* the leaker's fault and must be silent, while a
+    `to` that names no test at all is a declaration nobody can check and must fail.
+    The two `running is False` assertions are what proves the guard put the loop
+    down in each case rather than merely complaining about it.
+    """
+    code, out = run_drill(base_url, "handoff_nobody_picks_up.py",
+                          "-k", "not test_the_receiver_this_run_left_out")
+    void = [ln for ln in out.splitlines()
+            if "left the game loop running" in ln and "will_not_run" in ln]
+    assert not void, f"a test was blamed for a handoff this run deselected:\n{out}"
+    broken = [ln for ln in out.splitlines() if "renamed_away_two_refactors_ago" in ln]
+    assert len(broken) == 1 and "does_not_exist" in broken[0], (
+        f"a handoff to a test that does not exist was accepted:\n{out}")
+    assert code != 0, f"an uncheckable exemption passed:\n{out}"
+    assert "4 passed, 1 deselected, 1 error" in out, (
+        f"exactly one of the two handoffs should have been refused:\n{out}")
 
 
 # --- who you play as, and the move that comes with them (#303) ---------------
@@ -8787,6 +8881,7 @@ def test_the_hero_you_picked_is_who_the_engine_draws_in_every_chapter(desktop):
             f"{row['id']} would draw {row['offroster']}, who has no run artwork")
 
 
+@pytest.mark.smoke
 def test_picking_somebody_is_remembered_after_a_reload(own_page):
     """Asked once, at the start, and not again every time the game is opened.
 

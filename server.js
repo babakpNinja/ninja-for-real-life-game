@@ -20,6 +20,9 @@ const TYPES = {
   // ...and the smaller copy of every character beside it. Served as
   // application/octet-stream a browser will not decode it into an <img>.
   ".webp": "image/webp",
+  // the 209 recorded lines (#357). Chrome will sniff an octet-stream and play
+  // it anyway; Safari will not, and the game falls back to the robot voice.
+  ".mp3": "audio/mpeg",
   ".ico": "image/x-icon",
   ".webmanifest": "application/manifest+json",
 };
@@ -75,6 +78,9 @@ const server = http.createServer((req, res) => {
     const type = TYPES[path.extname(file).toLowerCase()] || "application/octet-stream";
     res.writeHead(200, {
       "Content-Type": type,
+      // stated rather than chunked, so a truncated or substituted file can be
+      // told apart from the one that was built (#332)
+      "Content-Length": buf.length,
       "Cache-Control": file.endsWith("index.html") ? "no-cache" : "public, max-age=300",
     });
     res.end(buf);

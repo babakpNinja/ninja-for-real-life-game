@@ -29,7 +29,8 @@ def test_the_next_test_inherits_a_page_that_is_no_longer_painting():
         "the guard blamed the test above and left the loop running anyway")
 
 
-@pytest.mark.leaves_a_game_running(reason="the test below picks this chapter up")
+@pytest.mark.leaves_a_game_running(to="test_a_declaration_with_no_reason_is_refused",
+                                   reason="the test below picks this chapter up")
 def test_a_declared_handoff_is_left_alone():
     LEAKED["page"].evaluate("() => window.game.start(0)")
     assert LEAKED["page"].evaluate("() => window.game.mode") == "playing"
