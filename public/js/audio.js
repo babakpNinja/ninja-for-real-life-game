@@ -31,6 +31,7 @@ export class Sound {
     // and whichever one of them is playing right now
     this.voices = null;
     this.clip = null;
+    this.ahead = null;             // the next line, loading while this one talks
   }
 
   unlock() {
@@ -240,6 +241,11 @@ export class Sound {
         return;
       }
       const step = plan[at++];
+      // the line after this one starts loading now, while this one is talking
+      // (#358). One ahead and no further: the whole screen up front is a story
+      // card that downloads a megabyte before it says anything.
+      const soon = plan[at];
+      if (soon && soon.clip) this.ahead = this.buffer(soon, run);
       const fallback = recorded ? next
                                 : () => this.speakLine(step, run, next, () => { heard++; });
       if (step.clip) this.playClip(step, run, () => { heard++; next(); }, fallback);
@@ -247,6 +253,36 @@ export class Sound {
     };
     next();
     return true;
+  }
+
+  /**
+   * Start fetching a line's recording before it is its turn (#358).
+   *
+   * Measured by `scripts/read_gap.py` on the chapter-1 story card, throttled
+   * with CDP to Chrome's own profiles: the silence between one line ending and
+   * the next being audible was 17ms unthrottled, **741ms on fast 3G and 2551ms
+   * on slow 3G** — a pause between every sentence of a story being read to a
+   * three-year-old. The element was only created once the previous line had
+   * ended, so the whole fetch happened in the silence. With this it is 1ms on
+   * all three (2026-08-17).
+   *
+   * The element is the same one `playClip` will play: it is put in the document
+   * here with `preload="auto"` and left alone, so by the time its turn comes the
+   * browser has it. The caller records it on `this.ahead` — not this method,
+   * which also makes the element for the line playing *now* — because `hush()`
+   * has to be able to throw away a download nobody is going to listen to: a
+   * screen left behind must not go on using a phone's data.
+   */
+  buffer(step, run) {
+    if (step.el || run !== this.speechRun) return step.el || null;
+    const el = document.createElement("audio");
+    el.className = "voice";
+    el.dataset.line = step.text;
+    el.preload = "auto";
+    el.src = `audio/${step.clip.file}`;
+    document.body.appendChild(el);
+    step.el = el;
+    return el;
   }
 
   /**
@@ -261,11 +297,11 @@ export class Sound {
    * sound like the game did before the recordings existed, not like a broken one.
    */
   playClip(step, run, onplayed, onmiss) {
-    const el = document.createElement("audio");
-    el.className = "voice";
-    el.dataset.line = step.text;
-    el.src = `audio/${step.clip.file}`;
-    document.body.appendChild(el);
+    // usually already here and already loaded: the previous line asked for it
+    // while it was still talking (#358)
+    const el = step.el || this.buffer(step, run);
+    if (!el) return;                 // a newer read owns the queue; buffer() refused
+    if (this.ahead === el) this.ahead = null;   // it is the current one now
     this.clip = el;
     let done = false;
     const finish = (played) => {
@@ -308,15 +344,24 @@ export class Sound {
     synth.speak(say);
   }
 
-  /** Stop a recording mid-word, and forget it. */
+  /**
+   * Stop a recording mid-word, and forget it.
+   *
+   * Both of them: the one being heard and the one loading behind it (#358). A
+   * screen that has been left goes quiet *and* stops downloading — the prefetch
+   * would otherwise keep pulling a clip nobody is ever going to hear, which on
+   * the connection that made the prefetch worth building is somebody's data.
+   */
   stopClip() {
-    const el = this.clip;
-    if (!el) return;
+    for (const el of [this.clip, this.ahead]) {
+      if (!el) continue;
+      el.onended = null;
+      el.onerror = null;
+      el.pause();
+      el.remove();
+    }
     this.clip = null;
-    el.onended = null;
-    el.onerror = null;
-    el.pause();
-    el.remove();
+    this.ahead = null;
   }
 
   hush() {

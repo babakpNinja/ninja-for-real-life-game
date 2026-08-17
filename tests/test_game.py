@@ -1537,6 +1537,114 @@ def test_no_two_characters_share_a_voice_and_a_direction(own_page):
         "scripts/render_voices.py")
 
 
+# --- and the silence between two of them (#358) ------------------------------
+# The recordings played one after another with the whole fetch happening in the
+# gap: the next line's element was not created until the previous one had ended.
+# Measured by `scripts/read_gap.py` on the chapter-1 story card with CDP
+# throttled to Chrome's own profiles, as the time from `ended` on line N to
+# `playing` on line N+1 — 17ms unthrottled, 741ms on fast 3G, 2551ms on slow 3G,
+# and 1ms on all three once the next line loads ahead. A story read to a
+# three-year-old stopped dead between every sentence.
+#
+# None of that is visible from here: `play()` is stubbed, so no test in this file
+# ever waits on a network. What these ask instead is the mechanism that closes
+# the gap — that the element for line N+1 is in the document *before* line N
+# ends, and that it is the one that then plays.
+
+
+def voice_els(page):
+    """Every recording element on the page: the one talking and the one loading.
+
+    Not in document order — the clip that is loading is appended while the
+    previous line is still being set up, so it can sit *before* the one playing.
+    `role` is what the tests below ask about.
+    """
+    return page.evaluate("""() => [...document.querySelectorAll("audio.voice")].map(
+      (el) => ({ line: el.dataset.line, src: el.getAttribute("src"),
+                 preload: el.preload,
+                 role: el === window.__sound.clip ? "playing"
+                     : el === window.__sound.ahead ? "ahead" : "loose" }))""")
+
+
+def one_voice_el(page, role):
+    """The single element in the given role, or an assertion naming what is there."""
+    els = voice_els(page)
+    mine = [e for e in els if e["role"] == role]
+    assert len(mine) == 1, f"{len(mine)} clip(s) in the {role!r} role, of {els}"
+    return mine[0]
+
+
+def test_the_next_line_is_already_loading_while_this_one_plays(own_page):
+    """The prefetch itself, asked at the only moment it can be seen.
+
+    Nothing has been finished yet, so line 1 is still playing — and line 2 is
+    already an element with `preload="auto"` and a src. Without the prefetch
+    there is exactly one element here.
+    """
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-go")
+    els = voice_els(page)
+    assert len(els) == 2, (
+        f"line 1 is playing and {len(els)} clip(s) exist — the next one only "
+        f"starts loading once this one has ended: {els}")
+    now = one_voice_el(page, "playing")
+    ahead = one_voice_el(page, "ahead")
+    assert page.evaluate("() => window.__said")[0] == now["line"]
+    assert ahead["preload"] == "auto", (
+        f"the clip ahead was created without preload: {ahead}")
+    assert ahead["src"] and ahead["src"] != now["src"], ahead
+
+    # and it is that element that talks next, not a spare fetched beside it
+    assert page.evaluate("() => window.__finish(1)") == 1
+    said = page.evaluate("() => window.__said")
+    assert said[1] == ahead["line"], (
+        f"the line that loaded ahead was {ahead['line']!r} and the card said "
+        f"{said[1]!r} next")
+    assert clips_played(page)[1] == ahead["src"]
+    page.evaluate("() => window.__sound.hush()")
+
+
+def test_it_loads_one_line_ahead_and_never_the_whole_card(own_page):
+    """One ahead, not five: #311 is that a screen must not fetch its payload up
+    front. Two elements at a time is the recording being heard and the one after
+    it; the last line has nothing after it and stands alone."""
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-go")
+    counts = []
+    for _ in range(8):
+        counts.append(len(voice_els(page)))
+        if not page.evaluate("() => window.__finish(1)"):
+            break
+    assert len(counts) > 2, f"the card read {len(counts)} line(s): {counts}"
+    assert max(counts) <= 2, (
+        f"the card had {max(counts)} clips loading at once — that is the whole "
+        f"screen fetched up front (#311): {counts}")
+    assert counts[0] == 2, f"nothing was loading ahead of line 1: {counts}"
+    assert counts[-1] <= 1, f"something is still loading after the last line: {counts}"
+    page.evaluate("() => window.__sound.hush()")
+
+
+def test_leaving_the_screen_drops_the_clip_that_was_loading(own_page):
+    """A download nobody will hear is somebody's data on the connection that
+    made the prefetch worth building — so `hush()` stops the one buffering as
+    well as the one playing."""
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-go")
+    gone = one_voice_el(page, "ahead")["line"]
+    page.click("#btn-go")                     # into the chapter, off the card
+    page.wait_for_timeout(300)
+    left = [e["line"] for e in voice_els(page)]
+    assert gone not in left, (
+        f"the card was left and {gone!r} is still loading: {left}")
+    page.evaluate("() => window.game.stop()")
+
+
 # --- and stopping when you walk away from it (#301) --------------------------
 # Nothing cancelled a read when you left a screen. `read()` clears the queue on
 # its way in, so a read only ever stopped if the screen you landed on also
