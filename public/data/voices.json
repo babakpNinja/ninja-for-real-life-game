@@ -234,11 +234,23 @@
    "role": "narrator",
    "voice": "sage"
   },
+  "Bounce with me! I can nearly touch the top!": {
+   "bytes": 34941,
+   "file": "bounce-with-me-i-can-nearly-touch-the-to-2c393f2f.mp3",
+   "role": "coco",
+   "voice": "nova"
+  },
   "Boundless imagination, bossy in the nicest way, never runs out of ideas for a game.": {
    "bytes": 71925,
    "file": "boundless-imagination-bossy-in-the-nices-65ff4c27.mp3",
    "role": "narrator",
    "voice": "sage"
+  },
+  "Bubble! Bubble! More bubble!": {
+   "bytes": 26421,
+   "file": "bubble-bubble-more-bubble-819d9375.mp3",
+   "role": "socks",
+   "voice": "coral"
   },
   "Bubbles: got. Towels, car, seatbelts — Nana's for tea, and we are only a bit late.": {
    "bytes": 71013,
@@ -480,6 +492,12 @@
    "role": "narrator",
    "voice": "sage"
   },
+  "Follow the shells! The good rock pools are down that end.": {
+   "bytes": 38397,
+   "file": "follow-the-shells-the-good-rock-pools-ar-b3c0c488.mp3",
+   "role": "lucky",
+   "voice": "alloy"
+  },
   "Free-spirited, imaginative and very in tune with nature.": {
    "bytes": 49893,
    "file": "free-spirited-imaginative-and-very-in-tu-fd427c4f.mp3",
@@ -654,6 +672,12 @@
    "role": "narrator",
    "voice": "sage"
   },
+  "Go on, get your feet wet. That's what creeks are for.": {
+   "bytes": 39141,
+   "file": "go-on-get-your-feet-wet-that-s-what-cree-33391fc7.mp3",
+   "role": "chilli",
+   "voice": "marin"
+  },
   "Grandad Bob": {
    "bytes": 21501,
    "file": "grandad-bob-df19b979.mp3",
@@ -803,6 +827,12 @@
    "file": "judo-s-mum-is-wendy-who-lives-next-door-0ec79c81.mp3",
    "role": "narrator",
    "voice": "sage"
+  },
+  "Keepy uppy! Don't let it touch the ground!": {
+   "bytes": 23877,
+   "file": "keepy-uppy-don-t-let-it-touch-the-ground-0160f42f.mp3",
+   "role": "bandit",
+   "voice": "ash"
   },
   "Labrador. A friend from far away, age 6.": {
    "bytes": 43869,
@@ -1050,6 +1080,12 @@
    "role": "narrator",
    "voice": "sage"
   },
+  "Sweet dreams, possum. Say hello to the sun for me.": {
+   "bytes": 39549,
+   "file": "sweet-dreams-possum-say-hello-to-the-sun-fa111294.mp3",
+   "role": "nana_chris",
+   "voice": "ballad"
+  },
   "The backyard": {
    "bytes": 14109,
    "file": "the-backyard-a3cfce64.mp3",
@@ -1098,6 +1134,12 @@
    "role": "narrator",
    "voice": "sage"
   },
+  "The reddest leaves are down by the big puddle!": {
+   "bytes": 26109,
+   "file": "the-reddest-leaves-are-down-by-the-big-p-3fb59c7a.mp3",
+   "role": "judo",
+   "voice": "shimmer"
+  },
   "The shopping centre": {
    "bytes": 18069,
    "file": "the-shopping-centre-5e504d23.mp3",
@@ -1139,6 +1181,18 @@
    "file": "there-is-sand-in-the-sandwiches-there-is-a17469bf.mp3",
    "role": "narrator",
    "voice": "sage"
+  },
+  "There you are, love! Bring those candles up to the cake.": {
+   "bytes": 42453,
+   "file": "there-you-are-love-bring-those-candles-u-b2471edb.mp3",
+   "role": "nana_chris",
+   "voice": "ballad"
+  },
+  "This is my trolley and I'm the driver!": {
+   "bytes": 29157,
+   "file": "this-is-my-trolley-and-i-m-the-driver-7dcf58cf.mp3",
+   "role": "muffin",
+   "voice": "shimmer"
   },
   "Thoughtful and grounded — the friend who asks the question everyone was thinking.": {
    "bytes": 62421,
@@ -1193,6 +1247,12 @@
    "file": "uncle-stripe-s-pool-and-everybody-is-alr-a2578ef0.mp3",
    "role": "narrator",
    "voice": "sage"
+  },
+  "Up the escalator, down the travelator. Best ride in the shops.": {
+   "bytes": 45573,
+   "file": "up-the-escalator-down-the-travelator-bes-9ef02688.mp3",
+   "role": "stripe",
+   "voice": "cedar"
   },
   "Warm, funny, endlessly patient — and the best at knowing exactly what a kid actually needs.": {
    "bytes": 77613,

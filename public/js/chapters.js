@@ -20,6 +20,13 @@
  *
  * Every one of them gives rather than takes — the design rule is that nothing
  * can be lost, so variety may not arrive as a way to fail (game.js header).
+ *
+ * `cameoSays` is the one thing that chapter's cameo calls out as you run past
+ * them (#364). It lives here rather than in lines.js because it is prose, not
+ * an assembled line, and prose belongs in the file it belongs to — lines.js
+ * says so itself. Keep the ten distinct: `render_voices.py` records one clip
+ * per line and dedupes by text, so two chapters sharing a sentence would share
+ * a reading, in whichever cameo's voice got there first.
  */
 
 export const GROUND_Y = 452;      // logical world units; canvas is 960x540
@@ -121,6 +128,7 @@ export const CHAPTERS = [
     where: "The backyard",
     hero: "bluey",
     cameo: "bandit",
+    cameoSays: "Keepy uppy! Don't let it touch the ground!",
     theme: "backyard",
     horizon: GROUND_Y,      // the hills in the far layer meet the ground line
     tokenKind: "balloon",
@@ -164,6 +172,7 @@ export const CHAPTERS = [
     where: "Down at the creek",
     hero: "bingo",
     cameo: "chilli",
+    cameoSays: "Go on, get your feet wet. That's what creeks are for.",
     theme: "creek",
     horizon: GROUND_Y,      // same hills
     tokenKind: "sticker",
@@ -214,6 +223,7 @@ export const CHAPTERS = [
     where: "The big hardware shop",
     hero: "bandit",
     cameo: "muffin",
+    cameoSays: "This is my trolley and I'm the driver!",
     theme: "hammerbarn",
     horizon: GROUND_Y,      // the warehouse row stands on the shop floor
     tokenKind: "light",
@@ -259,6 +269,7 @@ export const CHAPTERS = [
     where: "The beach",
     hero: "chilli",
     cameo: "lucky",
+    cameoSays: "Follow the shells! The good rock pools are down that end.",
     theme: "beach",
     // The far layer here is sea, not land: the only surface behind the play
     // area is the shoreline at the top of it. Standing a palm on GROUND_Y put
@@ -322,6 +333,7 @@ export const CHAPTERS = [
     where: "A dream, on the way home",
     hero: "bingo",
     cameo: "nana_chris",
+    cameoSays: "Sweet dreams, possum. Say hello to the sun for me.",
     theme: "sleepytime",
     // The cloud sea, far below the dream (#228). This chapter had no surface at
     // any y and so no middle distance at all — the same hole hammerbarn had
@@ -378,6 +390,7 @@ export const CHAPTERS = [
     where: "The park, Saturday morning",
     hero: "bluey",
     cameo: "coco",
+    cameoSays: "Bounce with me! I can nearly touch the top!",
     theme: "party",
     horizon: GROUND_Y,
     hills: "#A6D98C",     // the park backs onto the same hills as the backyard
@@ -437,6 +450,7 @@ export const CHAPTERS = [
     where: "The shopping centre",
     hero: "bandit",
     cameo: "stripe",
+    cameoSays: "Up the escalator, down the travelator. Best ride in the shops.",
     theme: "shops",
     horizon: GROUND_Y,
     tokenKind: "ticket",
@@ -499,6 +513,7 @@ export const CHAPTERS = [
     where: "The street home, in the rain",
     hero: "bingo",
     cameo: "judo",
+    cameoSays: "The reddest leaves are down by the big puddle!",
     theme: "rain",
     horizon: GROUND_Y,
     hills: "#6E9A72",     // the same hills, greyed out behind the rain
@@ -563,6 +578,7 @@ export const CHAPTERS = [
     where: "Uncle Stripe's pool",
     hero: "chilli",
     cameo: "socks",
+    cameoSays: "Bubble! Bubble! More bubble!",
     theme: "pool",
     horizon: POOL_DECK,
     tokenKind: "bubble",
@@ -624,6 +640,7 @@ export const CHAPTERS = [
     where: "Nana's backyard, at dusk",
     hero: "bluey",
     cameo: "nana_chris",
+    cameoSays: "There you are, love! Bring those candles up to the cake.",
     theme: "nanas",
     horizon: GROUND_Y,
     hills: "#46654B",     // the same hills again, gone dark with the evening

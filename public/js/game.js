@@ -609,12 +609,12 @@ export class Game {
 
     this.stepFriends();
 
-    // the cameo friend waves as you pass
+    // the cameo friend waves as you pass, and says their one line (#364)
     if (!this.cameoShown && p.x > this.cameoX) {
       this.cameoShown = true;
       const c = this.characters.find((x) => x.id === this.ch.cameo);
       if (c) this.toast(`${c.name} says g'day! 👋`);
-      this.onEvent({ type: "cameo", character: this.ch.cameo });
+      this.onEvent({ type: "cameo", character: this.ch.cameo, says: this.ch.cameoSays });
     }
 
     // particles + toasts

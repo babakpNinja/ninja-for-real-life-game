@@ -213,6 +213,12 @@ def lines_for() -> list[tuple[str, str]]:
             add("narrator", s)
         add("narrator", ch.get("joke"))
         add("narrator", ch.get("outro"))
+        # The cameo's one line, in the cameo's own voice (#364). Taken from the
+        # chapter rather than from a list here, so the recorded set is exactly
+        # the reachable one: every chapter has exactly one cameo and the player
+        # runs past it, which is the difference between this and the greetings
+        # (96 possible, 12 reachable — see below).
+        add(ch["cameo"], ch.get("cameoSays"))
 
     # ["characters"], the same key main.js reads: the file's top level is a note
     # about the game being a fan tribute, and that note is not spoken.

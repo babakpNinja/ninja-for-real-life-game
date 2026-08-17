@@ -1549,6 +1549,102 @@ def test_every_greeting_a_player_can_reach_is_recorded_and_no_more(own_page):
         f"greetings recorded that no run can reach: {sorted(recorded - {t for _, t in reachable})}")
 
 
+# --- the cameo says something (#364) -----------------------------------------
+# Nine of the 21 non-playable characters stand halfway through a chapter and
+# wave, and the whole of their part was a toast: "Muffin says g'day! 👋", read by
+# nobody. Each chapter now carries the one thing its cameo calls out
+# (`cameoSays`), said in that cameo's own voice, on the same `recorded: true`
+# plumbing as the caught-friend greeting.
+
+
+def test_running_past_the_cameo_hears_them_say_their_line(own_page):
+    """A real chapter, run past the cameo spot: the clip plays, no robot.
+
+    The line is taken off the chapter the game started rather than typed here —
+    a quote of prose in a test is a second author for it, and the drift is
+    silent (the game says one thing, the test asserts the old one and passes).
+    """
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    tap_play(page, hero="bluey")
+    page.wait_for_function("() => window.game && window.game.mode === 'playing'")
+    page.evaluate("() => { window.__said = []; window.__clips = []; }")
+    cameo = page.evaluate("""() => {
+      const g = window.game;
+      // dropped in just short of the cameo spot and *run* past it, rather than
+      // teleported one unit beyond: a chapter with a belt floor or an obstacle
+      // there can push the player back over the line in the same frame, which
+      // looked exactly like a cameo that says nothing (#364).
+      g.player.x = g.cameoX - 30;
+      for (let k = 0; k < 240 && !g.cameoShown; k++) g.step(1 / 120);
+      return { id: g.ch.cameo, says: g.ch.cameoSays, shown: g.cameoShown,
+               name: g.characters.find((c) => c.id === g.ch.cameo).name };
+    }""")
+    page.wait_for_timeout(120)
+
+    assert cameo["shown"], "the player never reached the cameo spot"
+    assert cameo["says"], f"chapter 1's cameo ({cameo['id']}) has no line to say"
+    said = page.evaluate("() => window.__said")
+    assert cameo["says"] in said, (
+        f"{cameo['name']} was run past and the game said {said}")
+    assert page.evaluate("() => window.__spoke") == [], (
+        "the cameo line went to the browser voice, which is a robot mid-chapter")
+    assert cameo["says"] in MANIFEST, f"{cameo['says']!r} is said in the game and was never recorded"
+    assert MANIFEST[cameo["says"]]["role"] == cameo["id"], (
+        f"{cameo['says']!r} was recorded as {MANIFEST[cameo['says']]['role']}, "
+        f"not as {cameo['id']}")
+    assert f"audio/{MANIFEST[cameo['says']]['file']}" in clips_played(page)
+    page.evaluate("() => window.game.stop()")   # a loop left running is load on
+                                                # every test after this one
+
+
+def test_every_cameo_line_a_chapter_can_reach_is_recorded_and_no_more(own_page):
+    """Ten chapters, ten cameo lines — the set, taken from the chapters.
+
+    The #361 lesson, applied one file over: the greetings were authored as
+    "every character x every hero" and only 12 of those 96 were reachable, so a
+    hand-written list in the test would have blessed 84 clips nothing can play.
+    Here the recorded set comes out of `CHAPTERS` (`render_voices.lines_for`
+    reads the same field), so the question worth asking is whether every
+    authored line is one a *run* actually produces — this walks each chapter to
+    its cameo spot and listens.
+    """
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    heard = page.evaluate("""() => {
+      const g = window.game, out = [];
+      for (let i = 0; i < window.__cast.length; i++) {   // however many chapters there are
+        g.start(i, "bluey");
+        window.__said = [];
+        g.player.x = g.cameoX - 30;                      // and run past it (see above)
+        for (let k = 0; k < 240 && !g.cameoShown; k++) g.step(1 / 120);
+        out.push({ n: i + 1, cameo: g.ch.cameo, says: g.ch.cameoSays,
+                   shown: g.cameoShown, said: window.__said.slice() });
+      }
+      g.stop();                          // ten starts, and none of them play on
+      return out;
+    }""")
+
+    assert len(heard) >= 10, f"only {len(heard)} chapters were walked"
+    for ch in heard:
+        assert ch["shown"], f"chapter {ch['n']}: the player never reached the cameo spot"
+        assert ch["says"], f"chapter {ch['n']}'s cameo ({ch['cameo']}) has no line"
+        assert ch["said"] == [ch["says"]], (
+            f"chapter {ch['n']} ran past {ch['cameo']} and said {ch['said']}")
+        assert ch["says"] in MANIFEST, (
+            f"chapter {ch['n']}: {ch['says']!r} can be heard in a run and was never recorded")
+        assert MANIFEST[ch["says"]]["role"] == ch["cameo"], (
+            f"chapter {ch['n']}: {ch['says']!r} was read by {MANIFEST[ch['says']]['role']}")
+    # Distinct, because the render dedupes by text: two chapters sharing a
+    # sentence would share one recording, in whichever cameo got there first —
+    # and the role check above would then fail for the other one, on a line
+    # nobody had noticed was a copy.
+    lines = [ch["says"] for ch in heard]
+    assert len(set(lines)) == len(lines), (
+        f"two chapters share a cameo line: {sorted(t for t in lines if lines.count(t) > 1)}")
+    assert clips_played(page)
+
+
 def test_a_line_said_by_a_character_is_a_recording_or_it_is_nothing(own_page):
     """`recorded: true`: no clip, no line — and no robot standing in for a dog.
 

@@ -1264,6 +1264,10 @@ async function boot() {
       const hero = characters.find((c) => c.id === game.hero);
       sound.read([greeting(hero ? hero.name : "Bluey", ev.name)], { recorded: true });
     }
+    // the chapter's cameo calls out their one line as you run past (#364). Same
+    // `recorded` deal: the wording is chapters.js's `cameoSays`, so a chapter
+    // that has not been rendered yet waves in silence.
+    if (ev.type === "cameo" && ev.says) sound.read([ev.says], { recorded: true });
     if (ev.type === "complete") { recordRun(ev); setTimeout(() => results(ev), 900); }
   };
   window.game = game;                       // handy for tests and for curious dads
