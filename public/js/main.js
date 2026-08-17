@@ -755,8 +755,31 @@ function play(index) {
   sound.setMuted(!!save.muted);
   game.autoRun = !save.walk;
   game.start(index, save.hero);
+  warmGreetings();
   abilityButton();
   updateHud();
+}
+
+/**
+ * Fetch the greetings this run can produce, now rather than mid-jump (#366).
+ *
+ * A catch is not asked for the way a story card is: the player jumps into a
+ * dog and the dog answers, so there is no moment between the request and the
+ * line in which to load it. On slow 3G the clip arrived 2.5s after the catch,
+ * by which time the greeting belongs to nothing on the screen.
+ *
+ * The set is taken from the run itself — `game.friends` is `placeFriends`,
+ * which is PLAYABLE minus whoever is being played as — so it is three clips,
+ * the three that can be heard in this chapter, and it changes with the hero
+ * without anything here knowing why. Not the twelve greetings that exist, and
+ * emphatically not the whole voice pack (#311).
+ */
+function warmGreetings() {
+  const hero = characters.find((c) => c.id === game.hero);
+  sound.warm(game.friends.map((f) => {
+    const c = characters.find((x) => x.id === f.id);
+    return greeting(hero ? hero.name : "Bluey", c ? c.name : f.id);
+  }));
 }
 
 /**

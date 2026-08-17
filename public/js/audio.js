@@ -32,6 +32,7 @@ export class Sound {
     this.voices = null;
     this.clip = null;
     this.ahead = null;             // the next line, loading while this one talks
+    this.warmed = new Map();       // lines that could be wanted at any moment (#366)
   }
 
   unlock() {
@@ -275,6 +276,16 @@ export class Sound {
    */
   buffer(step, run) {
     if (step.el || run !== this.speechRun) return step.el || null;
+    // already here, because somebody warmed it when the run began (#366). It
+    // leaves the warm set as it is taken: from here on it is this read's
+    // element, and `playClip` removes it from the document when it is done.
+    const warm = this.warmed.get(step.text);
+    if (warm) {
+      this.warmed.delete(step.text);
+      warm.className = "voice";        // it is a line being read now, not a spare
+      step.el = warm;
+      return warm;
+    }
     const el = document.createElement("audio");
     el.className = "voice";
     el.dataset.line = step.text;
@@ -368,6 +379,62 @@ export class Sound {
     this.speechRun++;              // whatever is in the queue is no longer anyone's
     this.stopClip();
     if (window.speechSynthesis) window.speechSynthesis.cancel();
+  }
+
+  /**
+   * Fetch a few lines that could be wanted at any moment, before they are (#366).
+   *
+   * #358 loads the *next* line while the current one talks, which leaves the
+   * first line of a read fetched at the moment it is wanted. That is fine for a
+   * card you asked to be read — you tapped a button and it starts — and wrong
+   * for the one-line reads nobody asks for: catching a friend mid-run says
+   * "Hi Bluey, I'm Bingo!", and measured by `scripts/read_gap.py --mode
+   * greeting` that clip arrived **568ms after the catch on fast 3G and 2313ms
+   * on slow 3G** (mean of three catches, 2026-08-17) — by then the dog is
+   * somewhere else on the screen and the greeting is attached to nothing. With
+   * the run's greetings warmed as it starts: 67ms and 108ms, which is the
+   * ~120ms this browser takes to start a clip it already has.
+   *
+   * The caller names the lines, and that is the whole bound (#311: never ship
+   * the payload up front). A run warms the three greetings it can produce —
+   * `placeFriends` puts out PLAYABLE minus the hero — and not the 12 the game
+   * has, let alone the 209 it has recorded. Each call replaces the last set, so
+   * what is held is one screen's worth and never grows.
+   *
+   * A line with no recording is skipped rather than queued: warming is only
+   * ever an optimisation, and the read it is for falls back on its own.
+   * Returns how many are held, which is the number a test can state.
+   */
+  warm(lines) {
+    this.cool();
+    // `recorded`, not the `clips` `read()` uses: the same expression twice in
+    // one file is one text for two lines, and a mutation drill that quotes it
+    // to break the lookup would then match both and defend neither.
+    const recorded = this.voices || {};
+    for (const line of lines) {
+      const text = String(line).replace(/\s+/g, " ").trim();
+      const clip = recorded[text];
+      if (!clip || this.warmed.has(text)) continue;
+      const el = document.createElement("audio");
+      // `warm`, not `voice`: nothing is being said yet. Everything that asks
+      // what the game is reading — `hush`, the suite's `voice_els` — asks for
+      // `audio.voice`, and a clip waiting for a catch that may never come is
+      // not an answer to that question. It becomes a `voice` in `buffer()`,
+      // when a read takes it.
+      el.className = "warm";
+      el.dataset.line = text;
+      el.preload = "auto";
+      el.src = `audio/${clip.file}`;
+      document.body.appendChild(el);
+      this.warmed.set(text, el);
+    }
+    return this.warmed.size;
+  }
+
+  /** Let go of the warmed lines: nobody on this screen can ask for them now. */
+  cool() {
+    for (const el of this.warmed.values()) el.remove();
+    this.warmed.clear();
   }
 
   /* ------------------------------------------------------------ voices -- */

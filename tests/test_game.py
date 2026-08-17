@@ -1703,6 +1703,104 @@ def test_leaving_the_screen_drops_the_clip_that_was_loading(own_page):
     page.evaluate("() => window.game.stop()")
 
 
+# --- the line nobody asked for, ready before it is wanted (#366) -------------
+# The prefetch above covers line N+1 of a read. The *first* line has nothing in
+# front of it, and one read in this game is only ever a first line: a caught
+# friend says hello. Nobody taps for that, so the fetch happens in the moment
+# the dog is on screen — `scripts/read_gap.py --mode greeting`, three catches in
+# chapter 1, timed from the catch to the clip being audible:
+#
+#     profile          before        after
+#     no throttling     127ms        116ms
+#     fast 3G           568ms         67ms
+#     slow 3G          2313ms        108ms
+#
+# So the run warms the greetings it can produce as it starts. These two say what
+# "the greetings it can produce" is allowed to mean — three, named by the run
+# itself — and that the warmed clip is the one that then talks.
+
+def warm_lines(page):
+    """The lines held ready right now, straight off the document."""
+    return page.evaluate(
+        """() => [...document.querySelectorAll("audio.warm")].map(
+             (el) => ({ line: el.dataset.line, preload: el.preload,
+                        src: el.getAttribute("src") }))""")
+
+
+def reachable_greetings(page):
+    """The greetings *this* run can produce, from the run — hero and friends."""
+    return page.evaluate("""() => {
+      const g = window.game;
+      const hero = g.characters.find((c) => c.id === g.hero);
+      return g.friends.map((f) => `Hi ${hero.name}, I'm ${
+        g.characters.find((c) => c.id === f.id).name}!`);
+    }""")
+
+
+@pytest.mark.smoke
+def test_a_run_warms_the_greetings_it_can_reach_and_none_of_the_others(own_page):
+    """The bound, in the run's own terms: three, not twelve, and not 209.
+
+    Played as Bingo rather than the default, so a warm set that came from a
+    list somewhere would be caught holding Bingo's own greeting — a line she
+    can never hear, because she is the one saying the others.
+    """
+    page = own_page
+    tap_play(page, hero="bingo")
+    page.wait_for_function("() => window.game && window.game.mode === 'playing'")
+    warm = warm_lines(page)
+    want = reachable_greetings(page)
+    recorded = page.evaluate("() => Object.keys(window.__sound.voices).length")
+
+    assert len(want) == 3, f"a run puts out {len(want)} friends, not 3: {want}"
+    assert sorted(e["line"] for e in warm) == sorted(want), (
+        f"warmed {[e['line'] for e in warm]}, and this run can produce {want}")
+    assert all(e["preload"] == "auto" and e["src"] for e in warm), (
+        f"a warmed clip was created without a preload or a src: {warm}")
+    assert all(e["line"].startswith("Hi Bingo,") for e in warm), (
+        f"a greeting was warmed that is not said to the hero of this run: {warm}")
+    assert not any("I'm Bingo!" in e["line"] for e in warm), (
+        f"the hero's own greeting was warmed — she cannot be caught: {warm}")
+    assert recorded > 3 * len(warm), (
+        f"only {recorded} recordings exist, so warming {len(warm)} of them says "
+        f"nothing about the bound")
+    page.evaluate("() => window.game.stop()")
+
+
+def test_the_caught_dog_is_greeted_with_the_clip_that_was_already_here(own_page):
+    """Warmed *and used*: the same element, not a second fetch beside it.
+
+    Identity is the whole mechanism. A warm-up that loads three clips and then
+    lets `read()` create a fresh element for the greeting downloads 150KB early
+    and still waits the 2.3s at the catch, and every count-the-elements
+    assertion would be just as green.
+    """
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    tap_play(page)
+    page.wait_for_function("() => window.game && window.game.mode === 'playing'")
+    page.evaluate("""() => [...document.querySelectorAll("audio.warm")].forEach(
+      (el) => { el.dataset.warmed = "yes"; })""")
+
+    said = page.evaluate("""() => {
+      const g = window.game;
+      g.catchFriend(g.friends[0]);
+      const el = window.__sound.clip;
+      return { line: el && el.dataset.line, warmed: !!(el && el.dataset.warmed),
+               klass: el && el.className, held: window.__sound.warmed.size,
+               loose: document.querySelectorAll("audio.warm").length };
+    }""")
+    assert said["line"] == reachable_greetings(page)[0], (
+        f"catching the first friend read {said['line']!r}")
+    assert said["warmed"], (
+        f"the greeting was said with an element that was not the warmed one: {said}")
+    assert said["klass"] == "voice", (
+        f"the clip being heard is still marked as a spare: {said}")
+    assert said["held"] == 2 and said["loose"] == 2, (
+        f"the other two greetings should still be waiting, warmed: {said}")
+    page.evaluate("() => { window.__sound.hush(); window.game.stop(); }")
+
+
 # --- and stopping when you walk away from it (#301) --------------------------
 # Nothing cancelled a read when you left a screen. `read()` clears the queue on
 # its way in, so a read only ever stopped if the screen you landed on also
