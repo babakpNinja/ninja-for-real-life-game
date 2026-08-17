@@ -8229,7 +8229,7 @@ SUN_COUNT = """
           && Math.abs(d[p + 2] - rgb[2]) <= 10) sun++;
     }
     out.push({ id: g.ch.id, n: g.ch.n, sun, overcast: !!g.ch.overcast,
-               swim: !!g.ch.swim });
+               dusk: !!g.ch.dusk, swim: !!g.ch.swim });
   }
   g.stop();
   return out;
@@ -8255,12 +8255,28 @@ def test_the_rain_chapter_has_no_sun_in_its_sky(own_page):
         assert r["sun"] == 0, (
             f"chapter {r['n']} ({r['id']}) is overcast and still has {r['sun']} pixels "
             "of the sun's yellow in it")
+    # Chapter 10 says `dusk` (#363), so the disc is not up in this band either —
+    # its sun is down on the hills in its own warmer colour, which is what
+    # test_the_dusk_chapters_sun_is_low_wide_and_warm measures. Asserted here too,
+    # rather than only excluded: "the midday disc is gone from the top corner" is
+    # half of what that field promises.
+    dusk = [r for r in seen if r["dusk"]]
+    assert [r["id"] for r in dusk] == ["nanas"], (
+        f"the chapters calling themselves dusk are {[r['id'] for r in dusk]}")
+    for r in dusk:
+        assert r["sun"] < 500, (
+            f"chapter {r['n']} ({r['id']}) is at dusk and still has {r['sun']} pixels of "
+            "the midday disc's yellow above world y=300 — a 46px disc is thousands, so "
+            "that is the shared sun still hanging in the corner")
     # Two chapters cannot answer, for reasons that have nothing to do with #355:
     # the night one draws a moon instead, and chapter 9 is *under* the water, so
     # its whole picture — sun included — is behind a wash of pool blue (#351).
     lit = [r for r in seen
-           if not r["overcast"] and r["id"] != "sleepytime" and not r["swim"]]
-    assert len(lit) >= 7, f"only {len(lit)} chapters are left to compare against: {seen}"
+           if not r["overcast"] and not r["dusk"]
+           and r["id"] != "sleepytime" and not r["swim"]]
+    # 6, not the 7 this said before #363: chapter 10 named its own sky, so the
+    # pool of chapters still drawing the shared disc is one smaller.
+    assert len(lit) >= 6, f"only {len(lit)} chapters are left to compare against: {seen}"
     dark = [r for r in lit if r["sun"] < 2000]
     assert not dark, (
         f"chapters with no sun and nothing saying they are overcast: "
@@ -8338,6 +8354,243 @@ def test_the_overcast_sky_is_still_lighter_where_the_sun_is(own_page):
         assert 700 < r["x"] < 940, (
             f"{r['id']}: the light in its sky sits at world x={r['x']:.0f}, nowhere near "
             "where the other chapters put the sun")
+
+
+# Where the far hill layer tops out in world coordinates: `ctx.ellipse(x, GROUND_Y
+# - 10, 240, 110, ...)` with GROUND_Y=452, so 452 - 10 - 110. Above this line the
+# sky is the only thing that has been painted, which is what makes it a usable
+# floor for "count the sun, not the party".
+HILL_TOP = 332
+
+
+def test_the_dusk_chapters_sun_is_low_wide_and_warm(own_page):
+    """Nana's sun is going down, and every daylight chapter's is still at (820,96).
+
+    #363's ask has three parts — lower, larger, warmer — and each one is a claim
+    about a disc that is really in the picture, so this reads both the *call* that
+    drew it and the *pixels* it left:
+
+    * the call, because a colour match cannot find a sun in chapter 3. Its sky is
+      `#FFD9A0` fading to cream, and a band of that gradient lands inside 10 of
+      the disc's own `#FFE9A8` — so "count the yellow" answers thousands for the
+      shop chapter whether or not it draws a disc at all, and a centroid of that
+      count sits in the middle of the sky. A wrapper around `ctx.arc`/`ctx.fill`
+      records where each sun-coloured disc was actually asked for, which is the
+      renderer's own answer rather than the palette's.
+    * the pixels, because a recorded call is still only a call: the disc has to
+      survive everything painted after it. Counted above the hills' top edge
+      (world y=332), since below that line this chapter alone has twenty-five
+      characters cheering and a cast of orange dogs would answer for a sunset.
+      That the sun's foot is behind those hills is the point of putting it there,
+      so the count is the part of it you can see — which is the part complained
+      about.
+
+    The daylight chapters are the falsifying case: each must still ask for its
+    disc at (820,96) with r=46, and none of them may carry any quantity of the
+    dusk fill — otherwise "the dusk chapter is the warm one" would be a statement
+    about a colour the whole game draws.
+    """
+    page = own_page
+    seen = page.evaluate("""
+    async (HILL_TOP) => {
+      const { DUSK_SUN } = await import('/js/game.js');
+      const g = window.game, c = g.canvas, ctx = c.getContext("2d");
+      const MIDDAY = "#ffe9a8";
+      const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+      const near = (d, p, want) => Math.abs(d[p] - want[0]) <= 10
+        && Math.abs(d[p + 1] - want[1]) <= 10 && Math.abs(d[p + 2] - want[2]) <= 10;
+      const warm = rgb(DUSK_SUN.fill);
+
+      // Which discs were asked for, in the two sun colours. `fillStyle` is read
+      // at arc() time and the disc is committed at the fill() after it, so the
+      // pair is what identifies a drawn circle; everything else the frame draws
+      // in a circle (tokens, eyes, balloons) is some other colour and drops out.
+      const realArc = ctx.arc, realFill = ctx.fill;
+      let discs = [], pending = null;
+      ctx.arc = function (x, y, r, ...rest) {
+        const fill = String(ctx.fillStyle).toLowerCase();
+        pending = (fill === MIDDAY || fill === DUSK_SUN.fill.toLowerCase())
+          ? { x, y, r, fill } : null;
+        return realArc.call(this, x, y, r, ...rest);
+      };
+      ctx.fill = function (...rest) {
+        if (pending) { discs.push(pending); pending = null; }
+        return realFill.call(this, ...rest);
+      };
+
+      const out = [];
+      try {
+        for (let i = 0; i < window.__cast.length; i++) {
+          g.start(i);
+          g.running = false;
+          g.mode = "playing";
+          g.t = 3; g.player.x = 900; g.camSlack = 0;
+          discs = [];
+          g.render();
+          const drew = discs.slice();
+          const d = ctx.getImageData(0, 0, c.width, c.height).data;
+          let n = 0, sx = 0, sy = 0;
+          for (let p = 0; p < d.length; p += 4) {
+            const wy = ((Math.floor(p / 4 / c.width) / g.dpr) - g.offY) / g.scale;
+            if (wy >= HILL_TOP || !near(d, p, warm)) continue;
+            n++;
+            sx += ((((p / 4) % c.width) / g.dpr) - g.offX) / g.scale;
+            sy += wy;
+          }
+          out.push({
+            id: g.ch.id, n: g.ch.n, dusk: !!g.ch.dusk,
+            overcast: !!g.ch.overcast, swim: !!g.ch.swim,
+            midday: drew.filter((s) => s.fill === MIDDAY),
+            warmDiscs: drew.filter((s) => s.fill !== MIDDAY),
+            lit: n, x: n ? sx / n : null, y: n ? sy / n : null,
+            px: g.scale * g.dpr,   // world units → device pixels, for "larger than"
+          });
+        }
+      } finally {
+        ctx.arc = realArc;
+        ctx.fill = realFill;
+        g.stop();
+      }
+      return out;
+    }
+    """, HILL_TOP)
+    assert len(seen) >= 10, f"only {len(seen)} chapters were looked at"
+
+    dusk = [r for r in seen if r["dusk"]]
+    assert [r["id"] for r in dusk] == ["nanas"], [r["id"] for r in dusk]
+    day = [r for r in seen if not r["dusk"] and not r["overcast"]
+           and not r["swim"] and r["id"] != "sleepytime"]
+    # 6 chapters: 10 less the night one (a moon), the rain (overcast, #355), the
+    # pool (its whole picture is under water) and Nana's itself.
+    assert len(day) >= 6, f"only {len(day)} daylight chapters to compare against: {seen}"
+
+    for r in day:
+        assert len(r["midday"]) == 1, (
+            f"chapter {r['n']} ({r['id']}) asked for {len(r['midday'])} midday discs, not "
+            "one — the shared sun has gone from a chapter that never said anything")
+        disc = r["midday"][0]
+        assert (disc["x"], disc["y"], disc["r"]) == (820, 96, 46), (
+            f"chapter {r['n']} ({r['id']}) draws its sun at {disc} instead of "
+            "(820,96) r46 — the dusk branch has moved the sun for chapters that "
+            "never asked for it")
+        assert not r["warmDiscs"], (
+            f"chapter {r['n']} ({r['id']}) also draws {r['warmDiscs']} — the dusk sun "
+            "is not one chapter's")
+        assert r["lit"] < 200, (
+            f"chapter {r['n']} ({r['id']}) has {r['lit']} pixels of the dusk sun's own "
+            "colour in its sky, so that colour does not tell the two skies apart")
+
+    shared = day[0]["midday"][0]
+    for r in dusk:
+        assert not r["midday"], (
+            f"{r['id']} is at dusk and still asks for the midday disc at "
+            f"{r['midday']} — both suns are in that sky")
+        assert len(r["warmDiscs"]) == 1, (
+            f"{r['id']} asked for {len(r['warmDiscs'])} warm discs, not one: "
+            f"{r['warmDiscs']}")
+        sun = r["warmDiscs"][0]
+        assert sun["fill"] != shared["fill"], (
+            f"{r['id']}'s sun is {sun['fill']}, the same colour as the midday one — "
+            "'warmer' is not a difference anything can see")
+        assert sun["y"] > shared["y"] + 100, (
+            f"{r['id']}'s sun is drawn at y={sun['y']} against the midday disc's "
+            f"{shared['y']}: not down near the horizon")
+        assert abs(sun["x"] - shared["x"]) > 100, (
+            f"{r['id']}'s sun is drawn at x={sun['x']}, the same side of the sky as "
+            f"the midday disc's {shared['x']}")
+        assert sun["r"] > shared["r"], (
+            f"{r['id']}'s sun has r={sun['r']} against the midday disc's "
+            f"{shared['r']}: not the larger of the two")
+        # ...and it survived the four layers painted over it. More of its colour on
+        # the screen than a whole midday disc would cover, low and to the left.
+        covers = math.pi * (shared["r"] * r["px"]) ** 2
+        assert r["lit"] > covers, (
+            f"{r['id']}: {r['lit']} pixels of its sun colour reached the screen, less "
+            f"than the {covers:.0f} a midday disc covers — asked for wide, painted over")
+        assert r["y"] > 200, (
+            f"{r['id']}: its sun's light lands at world y={r['y']:.0f}, up where the "
+            f"midday disc is ({shared['y']})")
+        assert r["x"] < 760, (
+            f"{r['id']}: its sun's light lands at world x={r['x']:.0f}, over the same "
+            f"shoulder as the midday disc's {shared['x']}")
+
+
+DUSK_FRAMING = """
+async (hillTop) => {
+  const { DUSK_SUN } = await import('/js/game.js');
+  const g = window.game, c = g.canvas, ctx = c.getContext("2d");
+  const warm = [1, 3, 5].map(i => parseInt(DUSK_SUN.fill.slice(i, i + 2), 16));
+  let idx = -1;
+  for (let i = 0; i < window.__cast.length; i++) {
+    g.start(i);
+    if (g.ch.dusk) { idx = i; break; }
+  }
+  g.start(idx);
+  g.running = false; g.mode = "playing"; g.t = 3; g.player.x = 900; g.camSlack = 0;
+  g.render();
+  // The world rectangle actually on this screen, from the engine's own transform.
+  const view = {
+    left: -g.offX / g.scale,
+    right: (c.width / g.dpr - g.offX) / g.scale,
+    top: -g.offY / g.scale,
+    bottom: (c.height / g.dpr - g.offY) / g.scale,
+  };
+  const d = ctx.getImageData(0, 0, c.width, c.height).data;
+  let lit = 0;
+  for (let p = 0; p < d.length; p += 4) {
+    const wy = ((Math.floor(p / 4 / c.width) / g.dpr) - g.offY) / g.scale;
+    if (wy >= hillTop) continue;
+    if (Math.abs(d[p] - warm[0]) <= 10 && Math.abs(d[p + 1] - warm[1]) <= 10 &&
+        Math.abs(d[p + 2] - warm[2]) <= 10) lit++;
+  }
+  // How much of the disc is above the hills at all, in device pixels: the circle
+  // minus the segment the range hides. This is the most that could show.
+  const r = DUSK_SUN.r, clear = hillTop - DUSK_SUN.y;
+  const hidden = r * r * Math.acos(clear / r) - clear * Math.sqrt(r * r - clear * clear);
+  const showable = (Math.PI * r * r - hidden) * (g.scale * g.dpr) ** 2;
+  g.stop();
+  return { id: g.ch.id, sun: DUSK_SUN, view, lit, showable };
+}
+"""
+
+
+@pytest.mark.parametrize("viewport,touch,name", SCREENS, ids=SCREEN_IDS)
+def test_the_dusk_sun_is_whole_on_the_screen_it_is_drawn_for(make_page, viewport, touch,
+                                                             name):
+    """A fixed disc's framing is a property of the screen, not of the sky (#363).
+
+    The sky does not scroll, so `DUSK_SUN` is at one place on the *canvas* — but
+    how much world that canvas shows depends on the shape of the phone. Held
+    upright the game fits 960 logical units of width into 390 CSS ones by
+    scaling to 0.61 and only ~640 of world x is on screen; the first version of
+    this sun sat at x=660 and the upright photograph showed a thumbnail of sun
+    against the right edge. (It is the same arithmetic that keeps the *midday*
+    disc at 820 off-screen entirely on an upright phone, in every chapter — a
+    thing worth knowing but not this issue.)
+
+    So the check is not "is it warm" — the test above owns that — it is "is all
+    of it in the picture", asked on each screen the game is played on, from the
+    engine's own `offX/offY/scale` rather than from arithmetic retyped here.
+    Corroborated in pixels: at least half of the disc's showable area survives
+    to the screen. Half, because the party is painted over this sky — bunting,
+    candles and a jacaranda take a real bite out of it (upright measures 0.73 of
+    showable, laptop 0.99) — while a disc hanging off an edge loses far more.
+    """
+    page = make_page(viewport, touch=touch)
+    got = page.evaluate(DUSK_FRAMING, HILL_TOP)
+    sun, view = got["sun"], got["view"]
+    for edge, gap in (("left", sun["x"] - sun["r"] - view["left"]),
+                      ("right", view["right"] - sun["x"] - sun["r"]),
+                      ("top", sun["y"] - sun["r"] - view["top"])):
+        assert gap >= 0, (
+            f"on a {name} the dusk sun runs off the {edge} of the screen by "
+            f"{-gap:.0f} world units: it is a disc at x={sun['x']} y={sun['y']} r="
+            f"{sun['r']} and this screen shows world x {view['left']:.0f}.."
+            f"{view['right']:.0f}, y {view['top']:.0f}..{view['bottom']:.0f}")
+    assert got["lit"] > got["showable"] * 0.5, (
+        f"on a {name} only {got['lit']} pixels of the dusk sun reached the screen out "
+        f"of the {got['showable']:.0f} standing clear of the hills — it is in frame on "
+        "paper and buried in practice")
 
 
 def test_the_menus_sky_is_its_own_field_not_chapter_ones(make_page):

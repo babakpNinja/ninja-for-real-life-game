@@ -102,6 +102,26 @@ const FRIEND_GAP = 78;
 const FRIEND_TRAIL = FRIEND_GAP * 4;
 const FRIEND_SCORE = 2;      // "double the scores when I hit the targets"
 
+/**
+ * Where a `dusk` chapter's sun sits, against the midday disc's (820, 96, r 46).
+ *
+ * Exported because the suite asks whether it is *drawn* there, and a coordinate
+ * typed into a test is a second author for the same fact. Low: the hills are an
+ * ellipse topping out at world y=332, so a disc centred at 300 with r 70 has its
+ * foot behind them and its top clear of them — sitting on the range rather than
+ * floating over it or hidden by it. Wide, because a sun near the horizon is.
+ *
+ * x=470 because the sky does not scroll: this disc is at a fixed place on the
+ * screen, and how much of the world is on that screen depends on the shape of the
+ * phone. Held upright only world x 0..640 is visible — which is why the midday
+ * disc at 820 is off-screen entirely in every chapter held that way, and why 660
+ * put a slice of sun against the right edge like a thumb over the lens. 470 is
+ * the middle of the sideways view and comfortably inside the upright one, so the
+ * sun is in the picture on the screen the game asks for *and* on the one it is
+ * nagging you to turn.
+ */
+export const DUSK_SUN = { x: 470, y: 300, r: 70, fill: "#FF9E6B" };
+
 export class Game {
   constructor(canvas, characters) {
     this.canvas = canvas;
@@ -1202,6 +1222,14 @@ export class Game {
       // for the sun *behind* the cloud: a soft brightening around the same point,
       // no edge anywhere in it. Chapters that say nothing keep the disc, so this
       // is one chapter's change and not a new sky for the other nine.
+      //
+      // `dusk` is the other half of that ask (#363). Nana's chapter says it is at
+      // dusk in its own prose and its sky is already salmon over indigo, but it
+      // was handed the same midday disc high in the top corner as eleven in the
+      // morning at the creek. Here the sun is on its way down: low enough for the
+      // hills to take its foot, half again as wide, and warmed towards this
+      // chapter's own sky instead of the shared #FFE9A8, with a haze around it
+      // because a sun this near the horizon is being looked at through the air.
       if (ch.overcast) {
         const glow = ctx.createRadialGradient(820, 96, 0, 820, 96, 210);
         glow.addColorStop(0, "rgba(255,255,255,0.30)");
@@ -1209,6 +1237,28 @@ export class Game {
         glow.addColorStop(1, "rgba(255,255,255,0)");
         ctx.fillStyle = glow;
         ctx.fillRect(820 - 210, 96 - 210, 420, 420);
+      } else if (ch.dusk) {
+        const haze = ctx.createRadialGradient(DUSK_SUN.x, DUSK_SUN.y, DUSK_SUN.r * 0.6,
+                                              DUSK_SUN.x, DUSK_SUN.y, DUSK_SUN.r * 2.6);
+        haze.addColorStop(0, "rgba(255,170,110,0.34)");
+        haze.addColorStop(0.5, "rgba(255,150,105,0.14)");
+        haze.addColorStop(1, "rgba(255,140,100,0)");
+        ctx.fillStyle = haze;
+        // The glow is sky, so it stops where the sky does: the range's ellipses are
+        // centred on GROUND_Y - 10 and only their top halves are painted, which
+        // leaves a 10px band of open sky under the hills for the standing scenery
+        // to be seen against. A haze bleeding into that band tints the rows
+        // directly above every prop's foot in this chapter, and those rows are
+        // exactly what the #210 guard reads as "is there sky above this foot" — so
+        // the whole chapter's scenery reads as planted *in* its surface.
+        const reach = DUSK_SUN.r * 2.6;
+        const top = DUSK_SUN.y - reach;
+        ctx.fillRect(DUSK_SUN.x - reach, top, reach * 2,
+                     Math.min(DUSK_SUN.y + reach, GROUND_Y - 10) - top);
+        ctx.fillStyle = DUSK_SUN.fill;
+        ctx.beginPath();
+        ctx.arc(DUSK_SUN.x, DUSK_SUN.y, DUSK_SUN.r, 0, Math.PI * 2);
+        ctx.fill();
       } else {
         ctx.fillStyle = "#FFE9A8";
         ctx.beginPath();

@@ -650,6 +650,9 @@ export const CHAPTERS = [
     speed: 244,
     sky: ["#F7A98C", "#4C3F72"],
     skyHigh: "#2C2551",
+    // the sun is going down behind the range, not blazing in the top corner: the
+    // other half of the ask #355 answered for the rain (#363)
+    dusk: true,
     ground: ["#5E8A55", "#3E6440"],
     deep: { fill: ["#4A3A22", "#241A10"], grit: "#C79A55", kind: "root" },
     crowd: true,
