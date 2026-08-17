@@ -1,0 +1,16 @@
+{
+  "name": "Ana Bingo! — a heeler family adventure",
+  "short_name": "Ana Bingo!",
+  "description": "A fan-made, unofficial, non-commercial side-scrolling adventure with the heeler family.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "theme_color": "#2C6FBB",
+  "background_color": "#2C6FBB",
+  "icons": [
+    { "src": "assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

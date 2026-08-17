@@ -570,6 +570,13 @@ table.stats td:last-child, table.stats th:last-child { text-align: right; }
   color: var(--blue); font: inherit; font-weight: 700; text-decoration: underline;
   cursor: pointer;
 }
+/* Not a `.link-btn`: on the phone this appears on, the way to full screen is
+   Safari's own Share sheet and nothing on the page can open it (#354). So it is
+   deliberately un-pressable-looking — no underline, no blue, no pointer. */
+/* No `nowrap`: held upright, the narrowest iPhone is 320 CSS px and this line
+   is wider than that on its own — it has to be allowed to break. */
+.install-hint { font-weight: 700; color: #7A8894; }
+
 .credits-body { text-align: left; max-width: 640px; margin: 0 auto; }
 .credits-body p { font-size: clamp(13px, 2.3vw, 17px); line-height: 1.5; color: #4A5A6A; }
 .credits-body h3 { margin: 18px 0 6px; color: var(--blue); font-size: clamp(16px, 3vw, 22px); }

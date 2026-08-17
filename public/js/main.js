@@ -17,6 +17,7 @@ import { PLAYABLE, ABILITIES, abilityFor, heroFor } from "./abilities.js";
 import {
   fullscreenSupported, fullscreenOn, enterFullscreen, leaveFullscreen, onFullscreenChange,
 } from "./fullscreen.js";
+import { homeScreenHintWanted, HOME_SCREEN_HINT } from "./homescreen.js";
 
 const SAVE_KEY = "forreallife.save.v1";
 
@@ -236,11 +237,22 @@ const CORNERS_IN = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false
 // take the browser's own scrollbar area along with it.
 const fullscreenAvailable = () => fullscreenSupported(stage);
 
-/** The menu's way in — and nothing at all on a phone that has no way in. */
+/**
+ * The menu's way in — or, on a phone that has no way in, how to get one.
+ *
+ * The iPhone branch is a `<span>` and not a `<button>` on purpose: adding to
+ * the home screen is done from Safari's own Share sheet and no script can open
+ * it, so a button here could only ever be pressed twice as hard (#310, #354).
+ */
 function fullscreenLink() {
-  if (!fullscreenAvailable()) return "";
-  return ` · <button class="link-btn" id="btn-full-menu">${
-    fullscreenOn() ? "Leave full screen" : "Full screen"}</button>`;
+  if (fullscreenAvailable()) {
+    return ` · <button class="link-btn" id="btn-full-menu">${
+      fullscreenOn() ? "Leave full screen" : "Full screen"}</button>`;
+  }
+  if (homeScreenHintWanted(false)) {
+    return ` · <span class="install-hint" id="full-hint">${HOME_SCREEN_HINT}</span>`;
+  }
+  return "";
 }
 
 /** Both controls, drawn from what the browser says is true right now. */

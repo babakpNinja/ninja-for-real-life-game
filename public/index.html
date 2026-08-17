@@ -8,7 +8,20 @@
 <meta name="robots" content="noindex, nofollow" />
 <meta name="description" content="Ana Bingo! — a fan-made, unofficial, non-commercial side-scrolling adventure. Bluey © Ludo Studio Pty Ltd." />
 <title>Ana Bingo! — a heeler family adventure</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='46' fill='%234A90D9'/><circle cx='36' cy='44' r='9' fill='%23fff'/><circle cx='66' cy='44' r='9' fill='%23fff'/><circle cx='38' cy='46' r='5' fill='%2322303F'/><circle cx='68' cy='46' r='5' fill='%2322303F'/><ellipse cx='52' cy='68' rx='9' ry='7' fill='%2322303F'/></svg>" />
+<!-- One drawing, in a file rather than inline here, because the home-screen
+     icons are photographs of it (scripts/render_icon.py) and a second copy of
+     the same dog would be free to drift from this one. -->
+<link rel="icon" href="assets/icon.svg" />
+<!-- Add to Home Screen (#354): iPhone Safari has no element Fullscreen API, so
+     a home-screen bookmark is the only way this game fills the screen there.
+     The manifest is what every other browser reads; the apple-* tags are what
+     iOS reads, and it will not take an SVG for the tile. -->
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" href="assets/icon-180.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Ana Bingo!" />
 <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>

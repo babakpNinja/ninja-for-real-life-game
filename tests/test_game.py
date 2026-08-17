@@ -21,6 +21,7 @@ import collections
 import concurrent.futures
 import contextlib
 import importlib.util
+import io
 import itertools
 import json
 import math
@@ -9909,3 +9910,236 @@ REMEMBER_FULLSCREEN = """
   return !!JSON.parse(localStorage.getItem(key)).fullscreen;
 }
 """
+
+
+# --- add to home screen, where full screen does not exist (#354) ---------------
+
+# The iPhone this game is played on has no element Fullscreen API, so #350
+# deliberately draws no control there — which left the person who asked for full
+# screen with nothing on their own device. iOS's answer is a home-screen
+# bookmark, and the only thing the page can do about it is *say so*.
+#
+# Same shape as FULLSCREEN_SUPPORT above and for the same reason: every case
+# here is a browser this suite cannot be, so each one has to be describable.
+# (what it is, is there a real control, what `navigator` says, what
+#  `display-mode` the window reports, should the line appear)
+IPHONE_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
+             "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1")
+DESKTOP_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+
+HOME_SCREEN_HINT_CASES = [
+    ("iphone safari in a tab", False, {"userAgent": IPHONE_UA}, "browser", True),
+    ("iphone safari, already added to the home screen", False,
+     {"userAgent": IPHONE_UA, "standalone": True}, "browser", False),
+    ("iphone safari launched as an app", False, {"userAgent": IPHONE_UA},
+     "standalone", False),
+    ("a phone that does have full screen", True, {"userAgent": IPHONE_UA},
+     "browser", False),
+    ("desktop chrome in an iframe that was refused full screen", False,
+     {"userAgent": DESKTOP_UA}, "browser", False),
+    ("an ipad reporting itself as a mac", False,
+     {"userAgent": DESKTOP_UA, "maxTouchPoints": 5}, "browser", True),
+]
+
+ASK_HINT = """
+async (cases) => {
+  const m = await import('/js/homescreen.js');
+  return cases.map(([what, here, nav, mode]) => m.homeScreenHintWanted(here, nav, {
+    matchMedia: (q) => ({ matches: q === `(display-mode: ${mode})` }),
+  }));
+}
+"""
+
+
+@pytest.mark.parametrize("what,here,nav,mode,wanted", HOME_SCREEN_HINT_CASES,
+                         ids=[c[0] for c in HOME_SCREEN_HINT_CASES])
+def test_the_home_screen_line_is_offered_only_where_it_is_the_only_way_in(
+        desktop, what, here, nav, mode, wanted):
+    """All six cases in one page call, each test reading its own answer out."""
+    answers = desktop.evaluate(ASK_HINT, [[c[0], c[1], c[2], c[3]]
+                                          for c in HOME_SCREEN_HINT_CASES])
+    assert len(answers) == len(HOME_SCREEN_HINT_CASES), (
+        f"asked about {len(HOME_SCREEN_HINT_CASES)} browsers and got "
+        f"{len(answers)} answers, so some case here was never measured")
+    mine = answers[[c[0] for c in HOME_SCREEN_HINT_CASES].index(what)]
+    assert mine is wanted, (
+        f"{what}: full screen here {here}, navigator {nav}, display-mode {mode} — "
+        f"the game {'says' if mine else 'says nothing'} and it should "
+        f"{'say' if wanted else 'say nothing'}")
+
+
+# An iPhone, as far as anything on the page can tell: the UA string says so and
+# the element Fullscreen API is gone. Installed before any module loads, because
+# `fullscreenSupported` is asked while the menu is first drawn.
+NO_FULLSCREEN_API = """
+Object.defineProperty(document, 'fullscreenEnabled', { value: undefined,
+                                                       configurable: true });
+delete Element.prototype.requestFullscreen;
+delete Element.prototype.webkitRequestFullscreen;
+"""
+
+
+def test_an_iphone_is_told_how_to_get_full_screen_instead_of_nothing(make_page):
+    """The acceptance for #354, on the device the issue is about.
+
+    Three things in one page, because they are the three ways this goes wrong:
+    nothing is said at all (the state before this change), the wrong thing is
+    said (the real control, which cannot work here), or the line is said as a
+    button — and a button that cannot do what it offers is exactly the defect
+    #350 avoided by drawing nothing (#310's class).
+    """
+    page = make_page(LANDSCAPE, touch=True, user_agent=IPHONE_UA,
+                     init_script=NO_FULLSCREEN_API)
+    try:
+        assert page.evaluate("() => document.fullscreenEnabled") is None, (
+            "this page still has the Fullscreen API, so it is not the phone "
+            "the test is about and nothing below is being asked")
+        assert page.locator("#btn-full-menu").count() == 0, (
+            "the menu offers real full screen on a browser that cannot do it")
+        assert page.evaluate(
+            "() => document.getElementById('btn-full').classList.contains('hidden')"), (
+            "the HUD's full-screen button is showing on a browser that cannot do it")
+
+        hint = page.locator("#full-hint")
+        assert hint.count() == 1, (
+            "an iPhone gets no full-screen control and now no explanation either")
+        assert hint.is_visible(), "the line is in the page but not on the screen"
+        said = hint.inner_text().strip()
+        assert "Home Screen" in said, f"the line does not say what to do: {said!r}"
+        assert page.evaluate(
+            "() => document.getElementById('full-hint').tagName") == "SPAN", (
+            f"the line {said!r} is a control, and nothing on the page can open "
+            f"Safari's Share sheet for the player")
+    finally:
+        page.context.close()
+
+
+def test_this_browser_is_given_the_control_and_not_the_line(desktop):
+    """The other half of the table: where full screen exists, say nothing.
+
+    Without this, a predicate that answered `false` to everything would pass
+    every case above that expects no line — and would also pass if the line
+    were shown *beside* a working button, which is two ways in for one thing.
+    """
+    assert desktop.locator("#full-hint").count() == 0, (
+        "a browser with real full screen is also being told to add the game to "
+        "a home screen it does not have")
+
+
+def test_the_manifest_makes_the_game_an_app_and_names_icons_that_are_served(base_url):
+    """A manifest is only as good as the files it points at (#354).
+
+    `display: standalone` is the whole point — it is what makes a home-screen
+    launch fill the screen — and an icon entry that 404s or comes back as
+    octet-stream leaves iOS to invent a tile from a screenshot (#369's class).
+    """
+    with urllib.request.urlopen(f"{base_url}/manifest.webmanifest", timeout=15) as resp:
+        assert resp.status == 200
+        kind = resp.headers.get("Content-Type", "")
+        assert "manifest+json" in kind or "json" in kind, (
+            f"the manifest is served as {kind!r}, which no browser will read as one")
+        manifest = json.loads(resp.read())
+
+    assert manifest["display"] == "standalone", (
+        f"display is {manifest['display']!r}: launched from the home screen the "
+        f"game would still have Safari's address bar over it")
+    assert manifest["icons"], "a manifest with no icons gets a screenshot for a tile"
+
+    bad = []
+    for icon in manifest["icons"]:
+        try:
+            with urllib.request.urlopen(f"{base_url}/{icon['src']}", timeout=15) as resp:
+                got = resp.headers.get("Content-Type", "").split(";")[0]
+                if resp.status != 200 or got != icon["type"]:
+                    bad.append(f"{icon['src']}: {resp.status} {got}")
+        except Exception as exc:
+            bad.append(f"{icon['src']}: {exc}")
+    assert not bad, f"icons the manifest names but the server will not serve: {bad}"
+
+
+def test_the_head_carries_the_tags_only_ios_reads(base_url):
+    """iOS reads none of the manifest that matters here: it has its own tags.
+
+    `apple-mobile-web-app-capable` is what makes the launched bookmark run
+    without the browser furniture, and `apple-touch-icon` is the tile — Safari
+    will not take the SVG the manifest offers, so its absence would mean a
+    blurry screenshot on the player's home screen.
+    """
+    with urllib.request.urlopen(f"{base_url}/", timeout=15) as resp:
+        head = resp.read().decode("utf-8").split("</head>")[0]
+
+    assert 'rel="manifest"' in head, "no manifest is linked, so nothing else is read"
+    assert 'name="apple-mobile-web-app-capable" content="yes"' in head, (
+        "an iPhone would launch the bookmark straight back into a Safari tab")
+    touch = re.search(r'rel="apple-touch-icon" href="([^"]+)"', head)
+    assert touch, "no apple-touch-icon: the home screen tile would be a screenshot"
+    with urllib.request.urlopen(f"{base_url}/{touch.group(1)}", timeout=15) as resp:
+        assert resp.status == 200 and resp.headers.get("Content-Type") == "image/png", (
+            f"{touch.group(1)} is not a PNG the phone can use")
+
+
+def test_the_home_screen_tile_is_the_games_own_face_on_the_manifests_colour(base_url):
+    """The tile is a photograph of the favicon, not a second drawing of it.
+
+    Two questions the file size cannot answer. The corner must be the colour the
+    manifest declares — that is the one number `render_icon.py` is not allowed
+    to invent, and it is also what the phone paints while the app starts, so a
+    disagreement shows as a flash of the wrong blue. And the middle must *not*
+    be that colour: the first version of the renderer loaded the SVG through a
+    `file://` `<img>`, which a page built with `set_content` refuses, and wrote
+    three tiles of flat blue while reporting success.
+    """
+    from PIL import Image
+
+    with urllib.request.urlopen(f"{base_url}/manifest.webmanifest", timeout=15) as resp:
+        manifest = json.loads(resp.read())
+    want = tuple(int(manifest["background_color"].lstrip("#")[i:i + 2], 16)
+                 for i in (0, 2, 4))
+
+    pngs = [i for i in manifest["icons"] if i["type"] == "image/png"]
+    assert pngs, "the manifest names no PNG, so there is nothing an iPhone can use"
+    for icon in pngs:
+        with urllib.request.urlopen(f"{base_url}/{icon['src']}", timeout=15) as resp:
+            img = Image.open(io.BytesIO(resp.read())).convert("RGB")
+        px = int(str(icon["sizes"]).lower().split("x")[0])
+        assert img.size == (px, px), (
+            f"{icon['src']} is {img.size} and the manifest promises {px}x{px}")
+        corner, middle = img.getpixel((1, 1)), img.getpixel((px // 2, px // 2))
+        assert corner == want, (
+            f"{icon['src']} sits on {corner} and the manifest declares "
+            f"{manifest['background_color']} ({want}) — the tile and the launch "
+            f"screen would not match")
+        assert middle != corner, (
+            f"{icon['src']} is {px}x{px} of flat {corner}: the drawing never "
+            f"made it onto the tile")
+
+
+# The narrowest iPhone still in use, held upright — 320 CSS px, and the line is
+# wider than that on its own. It was written `white-space: nowrap` and overflowed
+# the card by 11px here while `scrollWidth` stayed at 320, so nothing but a rect
+# would have said so.
+NARROW_PHONE = {"width": 320, "height": 568}
+
+
+def test_the_home_screen_line_fits_the_narrowest_phone(make_page):
+    """Fine print that runs off the edge is fine print nobody can follow (#354)."""
+    page = make_page(NARROW_PHONE, touch=True, user_agent=IPHONE_UA,
+                     init_script=NO_FULLSCREEN_API)
+    try:
+        got = page.evaluate("""() => {
+          const h = document.getElementById('full-hint');
+          if (!h) return null;
+          const r = h.getBoundingClientRect();
+          return { left: r.left, right: r.right, win: window.innerWidth,
+                   lines: h.getClientRects().length };
+        }""")
+        assert got, "no line on the phone the whole feature is for"
+        assert got["left"] >= 0 and got["right"] <= got["win"] + 0.5, (
+            f"the line runs from {got['left']:.0f} to {got['right']:.0f} in a "
+            f"{got['win']}px window, so the player is told half of it")
+        assert got["lines"] >= 2, (
+            f"the line fitted a {got['win']}px window on one line, which this "
+            f"phone cannot do — it is being measured somewhere it is not drawn")
+    finally:
+        page.context.close()

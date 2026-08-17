@@ -151,9 +151,15 @@ def make_page(browser, base_url):
     """
     contexts = []
 
-    def make(viewport, touch=False):
+    def make(viewport, touch=False, user_agent=None, init_script=None):
+        """``user_agent``/``init_script`` are how a test reaches a browser this
+        one is not: the phone in #354 has no element Fullscreen API and says so
+        in its UA, and both have to be in place before the modules load."""
         ctx = browser.new_context(viewport=viewport, has_touch=touch, is_mobile=touch,
-                                  device_scale_factor=2 if touch else 1)
+                                  device_scale_factor=2 if touch else 1,
+                                  **({"user_agent": user_agent} if user_agent else {}))
+        if init_script:
+            ctx.add_init_script(init_script)
         page = ctx.new_page()
         page.errors = []
         page.on("pageerror", lambda e: page.errors.append(str(e)))
