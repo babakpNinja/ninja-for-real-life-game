@@ -6717,6 +6717,7 @@ BLANK_ALLOWED = 60
 @pytest.mark.parametrize("viewport,touch,screen",
                          [s for s in SCREENS if s[0]["width"] > s[0]["height"]],
                          ids=[n for v, _, n in SCREENS if v["width"] > v["height"]])
+@pytest.mark.smoke
 def test_the_results_columns_fill_the_widest_window_they_are_given(
         make_page, viewport, touch, screen):
     """#403: on 1280x800 the card stayed 760px, so both columns were narrow.
