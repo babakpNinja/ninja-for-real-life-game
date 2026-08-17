@@ -36,6 +36,7 @@ from pathlib import Path
 import pytest
 # DESKTOP is the viewport `own_page` opens too; the census is the leak guard's own
 # question, asked of the whole session (#302). Both authored in conftest.
+import conftest
 from conftest import DESKTOP, census_phrase, page_census
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
@@ -9704,6 +9705,15 @@ def run_drill(base_url, name, *args):
     return run.returncode, run.stdout + run.stderr
 
 
+def run_one_id(base_url, name, *args):
+    """Run one test of *this* file on its own, the way `ship.rerun_command()` does."""
+    run = subprocess.run(
+        [sys.executable, "-m", "pytest", f"{Path(__file__).name}::{name}", "-q",
+         "--base-url", base_url, *args],
+        cwd=Path(__file__).resolve().parent, capture_output=True, text=True, timeout=300)
+    return run.returncode, run.stdout + run.stderr
+
+
 def test_a_leaked_game_loop_fails_the_test_that_left_it(base_url):
     """The failure it is here to prevent lands somewhere else entirely: five
     results screens animating on abandoned pages dropped the phone page to about
@@ -9792,6 +9802,74 @@ def test_a_handoff_to_a_test_that_is_not_running_is_not_an_exemption(base_url):
     assert code != 0, f"an uncheckable exemption passed:\n{out}"
     assert "4 passed, 1 deselected, 1 error" in out, (
         f"exactly one of the two handoffs should have been refused:\n{out}")
+
+
+# --- and the same run of one, which is what a ship does now (#409, #412) ------
+# `ship.py` re-runs 1–3 failed node ids on their own to tell #387's load flake
+# from a regression. That selects *one* test, and both ends of a handoff broke on
+# it: every receiver looked renamed (nothing else was collected, so five tests
+# errored at teardown accusing a test forty lines below them), and the receivers
+# themselves raise on an undefined player because the chapter they act on is
+# started by the test above. The ship would have called both "a regression".
+
+
+def handoff_pairs(module) -> list[tuple[str, str]]:
+    """(sender, receiver) for every declared handoff in `module`, in file order.
+
+    Read off the marks rather than listed here: the point of this check is that a
+    handoff *added tomorrow* is asked the same question, and a hand-written list is
+    the shape of that going stale.
+    """
+    pairs = []
+    for attr in vars(module).values():
+        for mark in getattr(attr, "pytestmark", ()):
+            if mark.name == conftest.HANDOFF and mark.kwargs.get("to"):
+                pairs.append((attr.__name__, mark.kwargs["to"]))
+    return pairs
+
+
+def test_every_declared_handoff_survives_being_selected_on_its_own(monkeypatch):
+    """Alone, a sender's exemption must go `void` — not `broken`.
+
+    `broken` is an accusation ("renamed or deleted") and it fails the test at
+    teardown, so before this was fixed a lone re-run of any of these came back red
+    for a reason that had nothing to do with the change being shipped. And the
+    receiver has to be reachable in the other direction too, or nothing knows to
+    skip it instead of letting it raise.
+    """
+    module = sys.modules[__name__]
+    pairs = handoff_pairs(module)
+    assert len(pairs) >= 5, f"the declarations moved: {pairs}"
+    for sender, receiver in pairs:
+        mark = next(m for m in getattr(getattr(module, sender), "pytestmark", ())
+                    if m.name == conftest.HANDOFF)
+        monkeypatch.setattr(conftest, "selected", {sender})     # a run of one id
+        state, complaint = conftest.handoff_state(mark, f"::{sender}", module)
+        assert state == "void", f"{sender} alone: {state} — {complaint}"
+        assert sender in conftest.senders_of(module, receiver), (
+            f"nothing links {receiver} back to {sender}, so alone it would raise "
+            f"rather than skip")
+
+
+def test_a_lone_receiver_says_it_cannot_be_asked_and_a_lone_sender_passes(base_url):
+    """The whole thing, through a real pytest running one node id (#412).
+
+    The first pair in the file, both ends, as `ship.rerun_command()` would select
+    them. A subprocess because the finding *is* pytest's report: a skip with a
+    reason is what tells the ship "this one cannot be asked alone", and the
+    accusation this used to print arrived at teardown, which no test can see from
+    inside its own run.
+    """
+    sender, receiver = handoff_pairs(sys.modules[__name__])[0]
+    code, out = run_one_id(base_url, sender)
+    assert code == 0 and "1 passed" in out, f"{sender} did not pass alone:\n{out}"
+    assert "renamed or deleted" not in out, f"{sender} was accused alone:\n{out}"
+
+    code, out = run_one_id(base_url, receiver, "-rs")
+    assert code == 0, f"{receiver} alone was not a clean skip:\n{out}"
+    assert "1 skipped" in out, f"{receiver} alone did not skip:\n{out}"
+    assert sender in out and "asks nothing" in out, (
+        f"the skip does not say which test it is waiting for:\n{out}")
 
 
 # --- who you play as, and the move that comes with them (#303) ---------------

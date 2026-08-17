@@ -304,7 +304,24 @@ def pytest_collection_modifyitems(items):
     selected.update(item.function.__name__ for item in items)
 
 
-def handoff_state(mark, nodeid: str) -> tuple[str, str]:
+def declares_the_receiver(module, to: str) -> bool:
+    """Does the *file* have a test called ``to``, whatever this run selected?
+
+    ``collected`` cannot answer this. Run one node id — which is what ``ship.py``
+    does with a failed test now (#409) — and the only thing collected is that one
+    test, so every receiver looks renamed and every handoff in the suite reads
+    ``broken``: five real tests errored at teardown, each accused of naming a test
+    "renamed or deleted" that is forty lines below it (#412). The module is
+    imported either way, so it is the module that knows.
+
+    Still or-ed with ``collected``: a receiver in another file of the same run is
+    also evidence the receiver exists, and this check's job is only to catch a
+    ``to`` that names nothing at all.
+    """
+    return callable(getattr(module, to, None)) or to in collected
+
+
+def handoff_state(mark, nodeid: str, module=None) -> tuple[str, str]:
     """Whether the test this one hands its running game to is going to run.
 
     Three answers, not two (#40), returned as (state, complaint):
@@ -313,8 +330,9 @@ def handoff_state(mark, nodeid: str) -> tuple[str, str]:
               left alone, which is the case the marker exists for.
     ``void``  the receiver exists but this run deselected it (`-m smoke` collects
               the test that starts a chapter without the one that stops it,
-              #332). Nothing is coming to pick the game up, so the guard puts it
-              down — quietly, because the test did nothing wrong.
+              #332), or never selected it (a single-id re-run, #412). Nothing is
+              coming to pick the game up, so the guard puts it down — quietly,
+              because the test did nothing wrong.
     ``broken`` the declaration cannot be checked: no ``to``/``reason``, or a
               ``to`` this file does not contain (renamed, deleted). An exemption
               nobody can check is how a leak gets waved through, so it fails.
@@ -325,12 +343,62 @@ def handoff_state(mark, nodeid: str) -> tuple[str, str]:
             f"{nodeid} is marked {HANDOFF} without both `to` and `reason`. An "
             f"unexplained exemption is how a leak gets waved through: name the "
             f"test that picks the running game up, and why.")
-    if to not in collected:
+    if not declares_the_receiver(module, to):
         return "broken", (
             f"{nodeid} hands its running game to {to!r}, which this file does not "
             f"contain — renamed or deleted. The exemption cannot be checked, so it "
             f"does not hold.")
     return ("held", "") if to in selected else ("void", "")
+
+
+def senders_of(module, name: str) -> list[str]:
+    """The tests that hand ``name`` a chapter already playing, in file order.
+
+    A list, because two tests can hand to one: both phone tests name
+    ``test_a_tap_jumps_on_touch`` as the one that stops the chapter. So "was the
+    state I inherit going to be built?" is *any* of them being in the run, and
+    returning the first one found would skip a test whose other sender did run.
+
+    The inverse of the ``to`` declaration, and it too has to be read off the
+    module: a run of one node id collects the receiver and nothing else, so the
+    run itself has no memory of who was supposed to have started the chapter.
+
+    Four of this file's tests are one chapter played across four, so three of them
+    read `window.game.player` on the strength of the test above having started it.
+    Alone they do not fail, they raise — `player` is undefined — and #409's
+    re-run-alone would report that as "failed again alone: a regression" (#412).
+    """
+    found = []
+    for attr in vars(module).values():
+        for mark in getattr(attr, "pytestmark", ()):
+            if mark.name == HANDOFF and mark.kwargs.get("to") == name:
+                found.append(getattr(attr, "__name__", str(attr)))
+    return found
+
+
+@pytest.fixture(autouse=True)
+def handed_the_game(request):
+    """Skip a test whose sender — the test that starts the chapter it acts on —
+    this run left out.
+
+    The handoff is a two-ended claim and only one end was checked. ``to`` protects
+    the *sender*: it may walk away from a running loop because somebody is coming.
+    Nothing protected the receiver, which reads ``window.game.player.y`` on the
+    strength of the sender having played the chapter first. Run one of them alone —
+    which is what ``ship.py`` does to a failed test now (#409) — and it raises on
+    an undefined player, and the ship calls that "failed again alone: a regression"
+    when the real answer is *this test cannot be asked on its own*.
+
+    Skipped, not started-for-it: fabricating the chapter here would be a second
+    copy of the sender, and in a full run it would let a sender that stopped
+    starting chapters go unnoticed. This only fires when the sender is out of the
+    run, which is exactly when the test's own verdict would mean nothing (#412).
+    """
+    senders = senders_of(request.node.module, request.node.function.__name__)
+    if senders and not any(s in selected for s in senders):
+        pytest.skip(f"{' / '.join(senders)} hands this test a chapter already playing, "
+                    f"and this run selected none of them — alone this test asks nothing "
+                    f"(#412)")
 
 
 @pytest.fixture(autouse=True)
@@ -360,7 +428,8 @@ def no_leaked_game_loop(request):
     """
     yield
     mark = request.node.get_closest_marker(HANDOFF)
-    state, complaint = handoff_state(mark, request.node.nodeid) if mark else ("none", "")
+    state, complaint = (handoff_state(mark, request.node.nodeid, request.node.module)
+                        if mark else ("none", ""))
     for page in pages:
         if page.is_closed():
             continue
