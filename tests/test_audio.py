@@ -22,6 +22,8 @@ a human wanting to compare.
 """
 from __future__ import annotations
 
+import importlib.util
+import json
 import re
 import subprocess
 import sys
@@ -279,3 +281,29 @@ def test_the_recordings_still_cover_the_prose_the_game_speaks():
         "the recordings and the game's words have drifted apart — run "
         "`python scripts/render_voices.py` to record what is missing:\n"
         + out.stdout + out.stderr)
+
+
+def test_a_line_recorded_by_the_wrong_character_is_drift_too(capsys):
+    """Recasting is the one kind of drift a file listing cannot show (#361).
+
+    Every other answer `--check` gives is about a file: missing, gone, silent,
+    orphaned. A line moved from one voice to another leaves the old clip on disk
+    saying the right words in the wrong mouth, and the check above would call
+    that green forever. Asked of `check()` directly rather than through a
+    hand-edited manifest on disk, because the manifest in the repo is the one the
+    deploy ships.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "bluey_render_voices_check", APP / "scripts" / "render_voices.py")
+    rv = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rv)
+
+    manifest = json.loads((APP / "public/data/voices.json").read_text())
+    wanted = [(v["role"], t) for t, v in manifest["lines"].items()]
+    assert rv.check(manifest, wanted) == 0, "the manifest as shipped is not clean"
+
+    role, text = next((r, t) for r, t in wanted if r != "narrator")
+    recast = [(("narrator" if r == role else r), t) for r, t in wanted]
+    assert rv.check(manifest, recast) == 1, (
+        f"{text!r} moved from {role} to the narrator and --check called it fine")
+    assert "wrong voice" in capsys.readouterr().out

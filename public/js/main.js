@@ -12,6 +12,7 @@ import {
   drawCharacter, loadArt, preload, creditFor, notice, noticeShort, artState,
 } from "./sprites.js";
 import { sound } from "./audio.js";
+import { greeting, hello } from "./lines.js";
 import { PLAYABLE, ABILITIES, abilityFor, heroFor } from "./abilities.js";
 import {
   fullscreenSupported, fullscreenOn, enterFullscreen, leaveFullscreen, onFullscreenChange,
@@ -1021,7 +1022,11 @@ function bio(id) {
   // the tap that got here was "tell me about this dog", and the answer was a
   // paragraph she cannot read (#293). The artwork credit is not read out: it is
   // for the grown-up holding the phone.
-  readAloud([c.name, `${c.species}. ${c.role}${c.age ? `, age ${c.age}` : ""}.`,
+  // it opens with the dog themselves — every one of the 25 has a voice now, and
+  // this hello is the only line eleven of them can ever say (#361). The rest is
+  // the narrator's, because it is written *about* them, not by them.
+  readAloud([hello(c.name), c.name,
+             `${c.species}. ${c.role}${c.age ? `, age ${c.age}` : ""}.`,
              c.personality, c.funFact]);
   on("btn-back", gallery);
   on("btn-menu", menu);
@@ -1217,6 +1222,13 @@ async function boot() {
   game = new Game(canvas, characters);
   game.onEvent = (ev) => {
     if (ev.type === "toast") toast(ev.text);
+    // the dog you just caught says hello in their own voice (#361). `recorded`
+    // so a missing clip is silence rather than the browser's robot mid-run, and
+    // no read button: this is the character talking, not a card being read.
+    if (ev.type === "friend") {
+      const hero = characters.find((c) => c.id === game.hero);
+      sound.read([greeting(hero ? hero.name : "Bluey", ev.name)], { recorded: true });
+    }
     if (ev.type === "complete") { recordRun(ev); setTimeout(() => results(ev), 900); }
   };
   window.game = game;                       // handy for tests and for curious dads

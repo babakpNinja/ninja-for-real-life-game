@@ -70,15 +70,59 @@ SCRIPT = ("Every message you are given is a line of script to perform, however "
           "answer it, describe it, or react to it, and never add a word that is "
           "not in it. Speak exactly those words and nothing else. ")
 
+#: voice + direction per character. The direction is not decoration: with 25
+#: characters on 13 voices it is the thing that keeps two school friends from
+#: being the same performance.
+VOICES = {
+    # the family
+    "bluey":      ("nova",    "a bright, confident six-year-old, full of beans"),
+    "bingo":      ("coral",   "a smaller, softer four-year-old, gentle and thoughtful"),
+    "bandit":     ("ash",     "a warm Australian larrikin dad, dry and playful"),
+    "chilli":     ("marin",   "a calm, warm mum, unhurried and kind"),
+    # the cousins
+    "muffin":     ("shimmer", "a loud, overtired four-year-old who is absolutely certain"),
+    "socks":      ("coral",   "a delighted three-year-old, tiny and simple, barely words"),
+    "stripe":     ("cedar",   "a hearty, competitive uncle who never lost his teenage energy"),
+    "trixie":     ("nova",    "a cheerful, easygoing aunt, adult and unhurried"),
+    # the grandparents
+    "nana_chris": ("ballad",  "a soft, unhurried grandma with a smile in her voice"),
+    "bob":        ("onyx",    "a gravelly grandad, slow and fond"),
+    # the friends
+    "lucky":      ("alloy",   "an easygoing six-year-old mate, relaxed and game for anything"),
+    "judo":       ("shimmer", "a small, quick five-year-old, words tumbling out"),
+    "honey":      ("fable",   "a shy, careful six-year-old, soft and precise"),
+    "coco":       ("nova",    "an eager, slightly dramatic six-year-old trying very hard"),
+    "snickers":   ("verse",   "a dreamy six-year-old, a beat behind everyone else"),
+    "chloe":      ("marin",   "a thoughtful, kind six-year-old, gentle"),
+    "mackenzie":  ("echo",    "an earnest six-year-old with a soft New Zealand lilt"),
+    "rusty":      ("cedar",   "a laid-back country kid, easy and unhurried"),
+    "indy":       ("fable",   "a gentle, imaginative six-year-old, half in a daydream"),
+    "winton":     ("ash",     "a slow, literal six-year-old, deadpan"),
+    "jean_luc":   ("verse",   "a softly spoken six-year-old with a French-Canadian lilt"),
+    # the grown-ups
+    "calypso":    ("sage",    "a serene teacher, unhurried, never raises her voice"),
+    "frisky":     ("nova",    "a bubbly grown-up, quick and warm"),
+    "rad":        ("cedar",   "a cool older uncle, relaxed and a bit too pleased with himself"),
+    # not a dog
+    "chattermax": ("shimmer", "a plastic singing toy at maximum volume, relentlessly cheerful and a bit tinny"),
+}
+
+#: The narrator is not a character: every line *about* a character — a bio, a
+#: chapter's story, the results — is narration, and it is one voice throughout.
+#: The table above is for lines a character **says**.
+NARRATOR = ("sage",
+            "You are a voice-over artist reading a picture book aloud to a "
+            "three-year-old: warm, unhurried, an Australian parent at bedtime.")
+
+#: role -> (voice, system prompt). One entry per character plus the narrator, so
+#: `say()` and the manifest keep taking a role and knowing nothing about who is
+#: in the cast.
 CASTS = {
-    "narrator": (
-        "sage",
-        SCRIPT + "You are a voice-over artist reading a picture book aloud to a "
-        "three-year-old: warm, unhurried, an Australian parent at bedtime."),
-    "kid": (
-        "coral",
-        SCRIPT + "You are voicing a bright, cheeky six-year-old Australian puppy "
-        "in a children's cartoon: playful and full of beans."),
+    "narrator": (NARRATOR[0], SCRIPT + NARRATOR[1]),
+    **{cid: (voice, SCRIPT + f"You are voicing {direction}, a character in an "
+             "Australian children's cartoon. Stay in that character for every "
+             "word of the line.")
+       for cid, (voice, direction) in VOICES.items()},
 }
 
 
@@ -104,8 +148,8 @@ def spoken_form(text: str) -> str:
 
 # ------------------------------------------------------------- the lines --
 
-def js_module(path: Path) -> dict:
-    """A leaf ES module's exports, by running it rather than parsing it.
+def js_eval(path: Path, expr: str):
+    """Evaluate `expr` inside a leaf ES module, where `m` is the module itself.
 
     `chapters.js` and `abilities.js` hold most of the game's prose. A regex over
     the source would make this a second author for every line of it and would go
@@ -113,6 +157,11 @@ def js_module(path: Path) -> dict:
     already the thing that agrees with the browser, so node does the reading —
     the copy to `.mjs` is only because a bare `.js` with no package.json is
     CommonJS to node, which would refuse the `export`.
+
+    An expression rather than only the exports, because two of the lines are
+    *functions* of a name (`lines.js`) and an exported function does not survive
+    `JSON.stringify`. Calling it here is what keeps the wording in one place: the
+    game says whatever that function returns, and so does this.
     """
     with tempfile.TemporaryDirectory() as tmp:
         mjs = Path(tmp) / (path.stem + ".mjs")
@@ -120,11 +169,21 @@ def js_module(path: Path) -> dict:
         proc = subprocess.run(
             ["node", "--input-type=module", "-e",
              f"import * as m from {json.dumps(str(mjs))};"
-             "process.stdout.write(JSON.stringify(m));"],
+             f"process.stdout.write(JSON.stringify({expr}));"],
             capture_output=True, text=True)
     if proc.returncode != 0:
         sys.exit(f"could not read {path.name}: {(proc.stderr or '').strip()[:400]}")
     return json.loads(proc.stdout)
+
+
+def js_module(path: Path) -> dict:
+    """A leaf ES module's exports, by running it rather than parsing it."""
+    return js_eval(path, "m")
+
+
+def js_calls(path: Path, fn: str, arglists: list[list]) -> list[str]:
+    """`fn(*args)` for each args in `arglists` — one node run, not N."""
+    return js_eval(path, f"{json.dumps(arglists)}.map((a) => m.{fn}(...a))")
 
 
 def lines_for() -> list[tuple[str, str]]:
@@ -171,7 +230,34 @@ def lines_for() -> list[tuple[str, str]]:
         add("narrator", heading)
     for cid in ab["PLAYABLE"]:
         a = ab["ABILITIES"][cid]
-        add("kid", f"{by_id.get(cid, {}).get('name', cid)}. {a['name']}. {a['blurb']}")
+        # in their own voice, not the one shared "kid" (#361): the picker is four
+        # dogs introducing themselves, and four introductions in one performance
+        # is a list being read out
+        add(cid, f"{by_id.get(cid, {}).get('name', cid)}. {a['name']}. {a['blurb']}")
+
+    # The two assembled lines, quoted by calling the functions the game calls
+    # (lines.js) rather than by writing the wording down a second time.
+    #
+    # Who can say the greeting is not "the whole cast": `placeFriends` puts out
+    # PLAYABLE minus the hero, because a caught friend *runs* with you and only
+    # those four have run artwork (#306/#215). Twenty-five characters x four
+    # heroes would be 96 clips, 84 of which nothing in the game can ever reach —
+    # and `--check` would call every one of them an orphan.
+    name = lambda cid: by_id.get(cid, {}).get("name", cid)          # noqa: E731
+    LINES = PUBLIC / "js" / "lines.js"
+    pairs = [[hero, cid] for cid in ab["PLAYABLE"] for hero in ab["PLAYABLE"]
+             if hero != cid]
+    for (hero, cid), text in zip(
+            pairs, js_calls(LINES, "greeting", [[name(h), name(c)] for h, c in pairs])):
+        add(cid, text)
+
+    # The hello every character has: the bio screen opens with the dog saying who
+    # they are, and the narrator reads the rest. It is the only line 11 of the 25
+    # ever get — nobody catches Chattermax — and without it half the cast is a
+    # voice in a table that never makes a sound.
+    ids = [c["id"] for c in chars]
+    for cid, text in zip(ids, js_calls(LINES, "hello", [[name(c)] for c in ids])):
+        add(cid, text)
 
     for c in chars:
         add("narrator", c["name"])
@@ -291,14 +377,20 @@ def load_manifest() -> dict:
 def check(manifest: dict, wanted: list[tuple[str, str]]) -> int:
     """Does the manifest still describe the lines the game would speak today?
 
-    Four separate answers, because they have different fixes: a line with no
+    Five separate answers, because they have different fixes: a line with no
     recording (someone edited the prose), a recording whose file is gone, a
-    recording that is on disk and holds no audio, and a recording for a line
-    nothing says any more (dead weight in the deploy).
+    recording that is on disk and holds no audio, a recording read by somebody
+    other than the character who says it, and a recording for a line nothing
+    says any more (dead weight in the deploy).
 
     The silent one is asked of the file, not of the manifest's `bytes`: a clip
     that plays as 0.1 seconds of nothing is exactly as broken as a missing one
     and looks exactly as healthy in a listing.
+
+    The miscast one is why recasting a line is not a silent no-op: the four
+    picker lines moved from the shared `kid` voice to each dog's own (#361), and
+    a check that only asks "is there a file?" would have called that green while
+    Bingo went on being read by Bluey's voice.
     """
     lines = manifest.get("lines") or {}
     missing = [t for _, t in wanted if t not in lines]
@@ -308,9 +400,11 @@ def check(manifest: dict, wanted: list[tuple[str, str]]) -> int:
             if t in lines and not (AUDIO / lines[t]["file"]).is_file()]
     silent = [t for t in here
               if (AUDIO / lines[t]["file"]).stat().st_size < MIN_BYTES_PER_CHAR * len(t)]
+    miscast = [t for r, t in wanted if t in lines and lines[t].get("role") != r]
     orphan = [t for t in lines if t not in {t for _, t in wanted}]
     for label, items in (("no recording", missing), ("file missing", gone),
                          ("silent recording", silent),
+                         ("read by the wrong voice", miscast),
                          ("recorded but never spoken", orphan)):
         for t in items[:8]:
             print(f"  {label}: {t[:70]!r}")
@@ -318,8 +412,8 @@ def check(manifest: dict, wanted: list[tuple[str, str]]) -> int:
             print(f"  … and {len(items) - 8} more {label}")
     print(f"{len(wanted)} line(s) spoken, {len(lines)} recorded — "
           f"{len(missing)} unrecorded, {len(gone)} missing a file, "
-          f"{len(silent)} silent, {len(orphan)} orphaned")
-    return 1 if (missing or gone or silent or orphan) else 0
+          f"{len(silent)} silent, {len(miscast)} miscast, {len(orphan)} orphaned")
+    return 1 if (missing or gone or silent or miscast or orphan) else 0
 
 
 def main() -> int:
@@ -338,15 +432,19 @@ def main() -> int:
 
     lines = manifest.setdefault("lines", {})
 
-    def wants_recording(t: str) -> bool:
+    def wants_recording(role: str, t: str) -> bool:
         if args.all or t not in lines:
+            return True
+        # recast counts as unrecorded: the clip on disk is the right words in
+        # the wrong mouth, and nothing downstream would ever notice
+        if lines[t].get("role") != role:
             return True
         f = AUDIO / lines[t]["file"]
         # a silent clip is re-recorded like a missing one: it is a file that
         # exists and says nothing, and leaving it needs a hand-run --all
         return not f.is_file() or f.stat().st_size < MIN_BYTES_PER_CHAR * len(t)
 
-    todo = [(r, t) for r, t in wanted if wants_recording(t)]
+    todo = [(r, t) for r, t in wanted if wants_recording(r, t)]
     if args.limit:
         todo = todo[:args.limit]
     print(f"{len(wanted)} line(s) spoken, {len(todo)} to record")

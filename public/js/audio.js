@@ -193,7 +193,7 @@ export class Sound {
    * pins the numbers above, so the day the environment gains a voice the suite
    * says so instead of quietly staying green over a stub.
    */
-  read(lines, { onend, onerror } = {}) {
+  read(lines, { onend, onerror, recorded = false } = {}) {
     const synth = window.speechSynthesis;
     if (this.muted) return false;
     const texts = [];
@@ -203,7 +203,13 @@ export class Sound {
     }
     if (!texts.length) return false;
     const clips = this.voices || {};
-    const plan = texts.map((text) => ({ text, clip: clips[text] || null }));
+    let plan = texts.map((text) => ({ text, clip: clips[text] || null }));
+    // `recorded` is for a line said *by a character* rather than read off a
+    // card: a dog greeting you mid-run in the browser's robot voice is worse
+    // than the same moment in silence, so an unrecorded line is dropped here
+    // instead of being handed to the fallback (#361).
+    if (recorded) plan = plan.filter((step) => step.clip);
+    if (recorded && !plan.length) return false;
     // Nothing here can make a sound: no recordings for any of these lines and no
     // browser voice to fall back on. Said now, synchronously, because the button
     // that has to explain itself is looking at the return value (#294).
@@ -234,9 +240,10 @@ export class Sound {
         return;
       }
       const step = plan[at++];
-      if (step.clip) this.playClip(step, run, () => { heard++; next(); },
-                                   () => this.speakLine(step, run, next, () => { heard++; }));
-      else this.speakLine(step, run, next, () => { heard++; });
+      const fallback = recorded ? next
+                                : () => this.speakLine(step, run, next, () => { heard++; });
+      if (step.clip) this.playClip(step, run, () => { heard++; next(); }, fallback);
+      else fallback();
     };
     next();
     return true;

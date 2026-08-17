@@ -19,6 +19,7 @@ place their state belongs.
 
 import collections
 import contextlib
+import importlib.util
 import itertools
 import json
 import math
@@ -1211,7 +1212,14 @@ def test_a_muted_game_says_so_on_both_new_screens_instead_of_doing_nothing(own_p
 # The fallback survives per line, not per screen: the results screen says "You
 # found 41 of 45 things", and no build-time render can know the number.
 
-MANIFEST = json.loads((APP / "public/data/voices.json").read_text())["lines"]
+VOICES_JSON = json.loads((APP / "public/data/voices.json").read_text())
+MANIFEST = VOICES_JSON["lines"]
+#: role -> the voice that read it. Since #361 there is one per character rather
+#: than a narrator and a single shared "kid".
+CAST_VOICE = VOICES_JSON["voice"]
+#: the name on a bio card -> the id the manifest records a role by
+CAST_ID = {c["name"]: c["id"] for c in
+           json.loads((APP / "public/data/characters.json").read_text())["characters"]}
 
 
 def clips_played(page):
@@ -1323,6 +1331,210 @@ def test_a_recording_really_plays_in_this_browser(own_page):
     assert result["outcome"] == "ended", (
         f"{line!r} ({MANIFEST[line]['file']}) did not play to its end: {result}")
     assert result["left"] == 0, "the finished clip was left in the document"
+
+
+def render_voices():
+    """`scripts/render_voices.py` as a module, loaded by path.
+
+    By path and under a private name: it is a script beside the app, not on the
+    import path, and every app in this repo has one — importing it by bare name
+    would load whichever `scripts` package came first.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "bluey_render_voices", APP / "scripts" / "render_voices.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# --- every dog has their own voice (#361) ------------------------------------
+# Until now the whole game was read by two voices: a narrator, and one "kid" who
+# read all four picker lines — Bluey, Bingo, Bandit and Chilli introducing
+# themselves one after another in the same mouth, which is a list being read out
+# rather than four dogs. There are 25 characters and each has a voice and a
+# direction now, and the lines that prove it are the ones a character says about
+# *themselves*: the picker line, the bio's hello, and the greeting a caught
+# friend says mid-run.
+
+
+def test_each_character_introduces_themselves_in_their_own_voice(own_page):
+    """The picker: four cards, four different voices, none of them the narrator.
+
+    Asked of the manifest (which voice read the file) rather than of the audio,
+    because nothing in this container can tell two mp3 voices apart by ear — and
+    the manifest is what the render script wrote down, so a line recorded by the
+    wrong cast member is exactly what it catches.
+    """
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.click("#btn-play")              # a fresh save opens the picker (#303)
+    page.wait_for_selector(".hero-card")
+    page.evaluate("() => window.__finish()")
+    said = page.evaluate("() => window.__said")
+
+    # the four ability lines, i.e. everything but the heading the narrator asks
+    mine = [t for t in said if t in MANIFEST and MANIFEST[t]["role"] != "narrator"]
+    assert len(mine) == 4, f"the picker read {len(mine)} lines in a character's voice: {said}"
+    roles = [MANIFEST[t]["role"] for t in mine]
+    assert roles == ["bluey", "bingo", "bandit", "chilli"], roles
+    voices = {MANIFEST[t]["voice"] for t in mine}
+    assert len(voices) == 4, f"four dogs sharing {len(voices)} voice(s): {voices}"
+    assert CAST_VOICE["narrator"] not in voices, (
+        "a dog introduces themselves in the narrator's voice")
+
+
+def test_a_bio_opens_with_the_character_saying_hello(own_page):
+    """The one line eleven of the 25 can ever say.
+
+    Only four characters are playable and only they can be caught, so for
+    everyone else this hello is the whole of their part — without it, most of
+    the cast is a row in a table that never makes a sound.
+    """
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.click("#btn-gallery")
+    page.wait_for_selector(".char-card")
+    heard = []
+    for nth in (0, 7, 18):               # a playable dog, and two who are not
+        # emptied *before* the tap, not after the card is up: the first clip
+        # starts playing during the click and clearing afterwards threw away the
+        # very line this is about, which read as a bio with no hello in it
+        page.evaluate("() => { window.__said = []; }")
+        page.locator(".char-card").nth(nth).click()
+        page.wait_for_selector(".bio h3")
+        name = page.locator(".bio h3").inner_text().strip()
+        page.evaluate("() => window.__finish()")
+        said = page.evaluate("() => window.__said")
+        first = said[0] if said else None
+        assert first and first.startswith("G'day! I'm "), (
+            f"{name}'s bio opened with {first!r} instead of their own hello")
+        assert name in first, f"{name}'s bio said {first!r}"
+        assert first in MANIFEST, f"{first!r} was said and never recorded"
+        rec = MANIFEST[first]
+        assert rec["voice"] != CAST_VOICE["narrator"], (
+            f"{name} says hello in the narrator's voice")
+        heard.append((name, rec["role"], rec["voice"]))
+        page.click("#btn-back")
+        page.wait_for_selector(".char-card")
+    # each hello read by *that* character, which is the claim. Not "three
+    # different voices": 25 characters over the API's 11 means dogs share one
+    # (Bluey and Trixie are both `nova`), and the direction is what separates
+    # them — `test_no_two_characters_share_a_voice_and_a_direction` asks that.
+    assert [r for _, r, _ in heard] == [CAST_ID[name] for name, _, _ in heard], heard
+
+
+def test_a_caught_friend_says_hello_in_their_own_voice(own_page):
+    """Mid-run, from a real catch: the greeting is a recording or it is silence.
+
+    `recorded: true` on this read, so a line with no clip is dropped rather than
+    handed to `speechSynthesis` — a dog greeting you in the browser's robot voice
+    while you are running is worse than the same moment quiet, and on this
+    browser the robot is silence anyway.
+    """
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    tap_play(page, hero="bluey")
+    page.wait_for_function("() => window.game && window.game.mode === 'playing'")
+    page.evaluate("() => { window.__said = []; window.__clips = []; }")
+    caught = page.evaluate("""() => {
+      const g = window.game;
+      const f = g.friends[0];
+      g.player.x = f.atX; g.player.y = f.atY; g.player.vy = 0;
+      g.step(1 / 120);
+      return { id: f.id, name: g.characters.find((c) => c.id === f.id).name,
+               hero: g.characters.find((c) => c.id === g.hero).name };
+    }""")
+    page.wait_for_timeout(120)
+
+    want = f"Hi {caught['hero']}, I'm {caught['name']}!"
+    said = page.evaluate("() => window.__said")
+    assert want in said, f"{caught['name']} was caught and said {said}"
+    assert page.evaluate("() => window.__spoke") == [], (
+        "the greeting went to the browser voice, which is a robot mid-chapter")
+    assert want in MANIFEST, f"{want!r} is said in the game and was never recorded"
+    assert MANIFEST[want]["role"] == caught["id"], (
+        f"{want!r} was recorded as {MANIFEST[want]['role']}")
+    assert f"audio/{MANIFEST[want]['file']}" in clips_played(page)
+    page.evaluate("() => window.game.stop()")   # a loop left running is load on
+                                                # every test after this one
+
+
+def test_every_greeting_a_player_can_reach_is_recorded_and_no_more(own_page):
+    """The set, not a sample: which (catcher, hero) pairs the game can produce.
+
+    Taken from `placeFriends` in a real run rather than from a list here — it
+    puts out PLAYABLE minus the hero, so the reachable pairs are 4x3 and the 96
+    a whole-cast reading would record are 84 clips nothing can ever play. The
+    "no more" half is what keeps them from being recorded anyway.
+    """
+    page = own_page
+    reachable = page.evaluate("""() => {
+      const g = window.game, out = [];
+      for (const hero of ["bluey", "bingo", "bandit", "chilli"]) {
+        g.start(0, hero);
+        const heroName = g.characters.find((c) => c.id === g.hero).name;
+        for (const f of g.friends) {
+          out.push([f.id, `Hi ${heroName}, I'm ${
+            g.characters.find((c) => c.id === f.id).name}!`]);
+        }
+      }
+      g.stop();                          // four starts, and none of them play on
+      return out;
+    }""")
+    assert len(reachable) == 12, f"{len(reachable)} reachable greetings, not 12"
+    for role, text in reachable:
+        assert text in MANIFEST, f"{text!r} can be heard in a run and was never recorded"
+        assert MANIFEST[text]["role"] == role, f"{text!r} was read by the wrong dog"
+    recorded = {t for t in MANIFEST if t.startswith("Hi ")}
+    assert recorded == {t for _, t in reachable}, (
+        f"greetings recorded that no run can reach: {sorted(recorded - {t for _, t in reachable})}")
+
+
+def test_a_line_said_by_a_character_is_a_recording_or_it_is_nothing(own_page):
+    """`recorded: true`: no clip, no line — and no robot standing in for a dog.
+
+    Both halves, on the same sentence: it is dropped with the option and handed
+    to the browser voice without it, so this cannot pass on a browser that says
+    nothing (this one) or on a read that was never wired up.
+    """
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    line = "This sentence is not in the manifest and never will be."
+    assert line not in MANIFEST
+    got = page.evaluate("""(line) => {
+      const out = {};
+      out.queued = window.__sound.read([line], { recorded: true });
+      out.saidRecorded = window.__said.slice();
+      window.__said = [];
+      out.queuedPlain = window.__sound.read([line]);
+      out.saidPlain = window.__said.slice();
+      return out;
+    }""", line)
+    assert got["saidRecorded"] == [] and got["queued"] is False, (
+        f"an unrecorded line was said anyway with recorded:true — {got}")
+    assert got["saidPlain"] == [line], (
+        f"without recorded:true the same line should reach the browser voice: {got}")
+
+
+def test_no_two_characters_share_a_voice_and_a_direction(own_page):
+    """25 characters, 11 voices in the API: the collisions have to be deliberate.
+
+    Two dogs on the same voice is unavoidable and fine — what is not is two dogs
+    on the same voice *and* the same performance direction, which is one
+    character reading both parts. The direction is in the render script; what
+    ships is the voice per role, so this asks the script.
+    """
+    table = render_voices().VOICES
+    chars = json.loads((APP / "public/data/characters.json").read_text())["characters"]
+    assert sorted(table) == sorted(c["id"] for c in chars), (
+        "the cast table and characters.json disagree about who is in this game")
+    pairs = [(v, d.lower()) for v, d in table.values()]
+    dupes = {p for p in pairs if pairs.count(p) > 1}
+    assert not dupes, f"the same voice reading the same direction twice: {dupes}"
+    assert all(cid in CAST_VOICE and CAST_VOICE[cid] == v
+               for cid, (v, _) in table.items()), (
+        "voices.json was rendered from an older cast table — re-run "
+        "scripts/render_voices.py")
 
 
 # --- and stopping when you walk away from it (#301) --------------------------

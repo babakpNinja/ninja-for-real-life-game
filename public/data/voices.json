@@ -97,10 +97,10 @@
    "voice": "sage"
   },
   "Bandit. Big Bounce. One enormous dad-sized jump.": {
-   "bytes": 51381,
+   "bytes": 45045,
    "file": "bandit-big-bounce-one-enormous-dad-sized-e42201ae.mp3",
-   "role": "kid",
-   "voice": "coral"
+   "role": "bandit",
+   "voice": "ash"
   },
   "Beagle. School friend, age 6.": {
    "bytes": 32277,
@@ -139,9 +139,9 @@
    "voice": "sage"
   },
   "Bingo. Floaty. Floats down as light as a feather.": {
-   "bytes": 41301,
+   "bytes": 45741,
    "file": "bingo-floaty-floats-down-as-light-as-a-f-9f178bf5.mp3",
-   "role": "kid",
+   "role": "bingo",
    "voice": "coral"
   },
   "Blue Heeler (Australian Cattle Dog). Bandit's dad, age Grandad.": {
@@ -211,10 +211,10 @@
    "voice": "sage"
   },
   "Bluey. Zoomies. Runs super fast for a bit!": {
-   "bytes": 33645,
+   "bytes": 33885,
    "file": "bluey-zoomies-runs-super-fast-for-a-bit-46087fa5.mp3",
-   "role": "kid",
-   "voice": "coral"
+   "role": "bluey",
+   "voice": "nova"
   },
   "Bob is not supposed to be doing that. Bob is doing it anyway.": {
    "bytes": 52149,
@@ -367,10 +367,10 @@
    "voice": "sage"
   },
   "Chilli. Sniff Out. Sniffs out treats and pulls them in!": {
-   "bytes": 43485,
+   "bytes": 46125,
    "file": "chilli-sniff-out-sniffs-out-treats-and-p-36b9eff7.mp3",
-   "role": "kid",
-   "voice": "coral"
+   "role": "chilli",
+   "voice": "marin"
   },
   "Chinese Crested. Friend of Bluey and Bingo, age 5.": {
    "bytes": 44853,
@@ -498,6 +498,156 @@
    "role": "narrator",
    "voice": "sage"
   },
+  "G'day! I'm Aunt Trixie.": {
+   "bytes": 18717,
+   "file": "g-day-i-m-aunt-trixie-f24f68d5.mp3",
+   "role": "trixie",
+   "voice": "nova"
+  },
+  "G'day! I'm Bandit.": {
+   "bytes": 20013,
+   "file": "g-day-i-m-bandit-003b533e.mp3",
+   "role": "bandit",
+   "voice": "ash"
+  },
+  "G'day! I'm Bingo.": {
+   "bytes": 24189,
+   "file": "g-day-i-m-bingo-921a3b4f.mp3",
+   "role": "bingo",
+   "voice": "coral"
+  },
+  "G'day! I'm Bluey.": {
+   "bytes": 16293,
+   "file": "g-day-i-m-bluey-8e72f3c4.mp3",
+   "role": "bluey",
+   "voice": "nova"
+  },
+  "G'day! I'm Calypso.": {
+   "bytes": 21645,
+   "file": "g-day-i-m-calypso-8f733884.mp3",
+   "role": "calypso",
+   "voice": "sage"
+  },
+  "G'day! I'm Chattermax.": {
+   "bytes": 19941,
+   "file": "g-day-i-m-chattermax-9804c26f.mp3",
+   "role": "chattermax",
+   "voice": "shimmer"
+  },
+  "G'day! I'm Chilli.": {
+   "bytes": 17037,
+   "file": "g-day-i-m-chilli-6df26ec6.mp3",
+   "role": "chilli",
+   "voice": "marin"
+  },
+  "G'day! I'm Chloe.": {
+   "bytes": 19365,
+   "file": "g-day-i-m-chloe-7dcc8d29.mp3",
+   "role": "chloe",
+   "voice": "marin"
+  },
+  "G'day! I'm Coco.": {
+   "bytes": 17925,
+   "file": "g-day-i-m-coco-02dcd228.mp3",
+   "role": "coco",
+   "voice": "nova"
+  },
+  "G'day! I'm Frisky.": {
+   "bytes": 16893,
+   "file": "g-day-i-m-frisky-57d15fd7.mp3",
+   "role": "frisky",
+   "voice": "nova"
+  },
+  "G'day! I'm Grandad Bob.": {
+   "bytes": 34125,
+   "file": "g-day-i-m-grandad-bob-db014b23.mp3",
+   "role": "bob",
+   "voice": "onyx"
+  },
+  "G'day! I'm Honey.": {
+   "bytes": 22365,
+   "file": "g-day-i-m-honey-cb239e4d.mp3",
+   "role": "honey",
+   "voice": "fable"
+  },
+  "G'day! I'm Indy.": {
+   "bytes": 18453,
+   "file": "g-day-i-m-indy-cafac4d9.mp3",
+   "role": "indy",
+   "voice": "fable"
+  },
+  "G'day! I'm Jean-Luc.": {
+   "bytes": 19701,
+   "file": "g-day-i-m-jean-luc-ebdce0c4.mp3",
+   "role": "jean_luc",
+   "voice": "verse"
+  },
+  "G'day! I'm Judo.": {
+   "bytes": 19533,
+   "file": "g-day-i-m-judo-7ada4df7.mp3",
+   "role": "judo",
+   "voice": "shimmer"
+  },
+  "G'day! I'm Lucky.": {
+   "bytes": 14709,
+   "file": "g-day-i-m-lucky-22e873cf.mp3",
+   "role": "lucky",
+   "voice": "alloy"
+  },
+  "G'day! I'm Mackenzie.": {
+   "bytes": 19293,
+   "file": "g-day-i-m-mackenzie-d90e027c.mp3",
+   "role": "mackenzie",
+   "voice": "echo"
+  },
+  "G'day! I'm Muffin.": {
+   "bytes": 18813,
+   "file": "g-day-i-m-muffin-a01c5fc5.mp3",
+   "role": "muffin",
+   "voice": "shimmer"
+  },
+  "G'day! I'm Nana Chris.": {
+   "bytes": 26517,
+   "file": "g-day-i-m-nana-chris-f71680de.mp3",
+   "role": "nana_chris",
+   "voice": "ballad"
+  },
+  "G'day! I'm Rusty.": {
+   "bytes": 17469,
+   "file": "g-day-i-m-rusty-ce362922.mp3",
+   "role": "rusty",
+   "voice": "cedar"
+  },
+  "G'day! I'm Snickers.": {
+   "bytes": 20589,
+   "file": "g-day-i-m-snickers-f75e2feb.mp3",
+   "role": "snickers",
+   "voice": "verse"
+  },
+  "G'day! I'm Socks.": {
+   "bytes": 23901,
+   "file": "g-day-i-m-socks-0c57f1d1.mp3",
+   "role": "socks",
+   "voice": "coral"
+  },
+  "G'day! I'm Uncle Rad.": {
+   "bytes": 17157,
+   "file": "g-day-i-m-uncle-rad-7a324740.mp3",
+   "role": "rad",
+   "voice": "cedar"
+  },
+  "G'day! I'm Uncle Stripe.": {
+   "bytes": 17397,
+   "file": "g-day-i-m-uncle-stripe-8ce1a2c3.mp3",
+   "role": "stripe",
+   "voice": "cedar"
+  },
+  "G'day! I'm Winton.": {
+   "bytes": 23445,
+   "file": "g-day-i-m-winton-7bfc1802.mp3",
+   "role": "winton",
+   "voice": "ash"
+  },
   "Gentle, thoughtful and quietly brave. Feels big feelings and says the wisest things.": {
    "bytes": 82197,
    "file": "gentle-thoughtful-and-quietly-brave-feel-cd07c4af.mp3",
@@ -521,6 +671,78 @@
    "file": "heeler-bandit-and-stripe-s-older-brother-f240d3e1.mp3",
    "role": "narrator",
    "voice": "sage"
+  },
+  "Hi Bandit, I'm Bingo!": {
+   "bytes": 22989,
+   "file": "hi-bandit-i-m-bingo-533d3c76.mp3",
+   "role": "bingo",
+   "voice": "coral"
+  },
+  "Hi Bandit, I'm Bluey!": {
+   "bytes": 23853,
+   "file": "hi-bandit-i-m-bluey-ac1e9a49.mp3",
+   "role": "bluey",
+   "voice": "nova"
+  },
+  "Hi Bandit, I'm Chilli!": {
+   "bytes": 25221,
+   "file": "hi-bandit-i-m-chilli-0649fdbd.mp3",
+   "role": "chilli",
+   "voice": "marin"
+  },
+  "Hi Bingo, I'm Bandit!": {
+   "bytes": 20325,
+   "file": "hi-bingo-i-m-bandit-b74c4dbc.mp3",
+   "role": "bandit",
+   "voice": "ash"
+  },
+  "Hi Bingo, I'm Bluey!": {
+   "bytes": 23157,
+   "file": "hi-bingo-i-m-bluey-f6c9b7fe.mp3",
+   "role": "bluey",
+   "voice": "nova"
+  },
+  "Hi Bingo, I'm Chilli!": {
+   "bytes": 27885,
+   "file": "hi-bingo-i-m-chilli-66529c88.mp3",
+   "role": "chilli",
+   "voice": "marin"
+  },
+  "Hi Bluey, I'm Bandit!": {
+   "bytes": 31125,
+   "file": "hi-bluey-i-m-bandit-ce1eec21.mp3",
+   "role": "bandit",
+   "voice": "ash"
+  },
+  "Hi Bluey, I'm Bingo!": {
+   "bytes": 28941,
+   "file": "hi-bluey-i-m-bingo-007d27c6.mp3",
+   "role": "bingo",
+   "voice": "coral"
+  },
+  "Hi Bluey, I'm Chilli!": {
+   "bytes": 22053,
+   "file": "hi-bluey-i-m-chilli-6a101985.mp3",
+   "role": "chilli",
+   "voice": "marin"
+  },
+  "Hi Chilli, I'm Bandit!": {
+   "bytes": 18333,
+   "file": "hi-chilli-i-m-bandit-266bc319.mp3",
+   "role": "bandit",
+   "voice": "ash"
+  },
+  "Hi Chilli, I'm Bingo!": {
+   "bytes": 25509,
+   "file": "hi-chilli-i-m-bingo-855f3c0f.mp3",
+   "role": "bingo",
+   "voice": "coral"
+  },
+  "Hi Chilli, I'm Bluey!": {
+   "bytes": 16629,
+   "file": "hi-chilli-i-m-bluey-825b5dc9.mp3",
+   "role": "bluey",
+   "voice": "nova"
   },
   "Hold on tight — the gusts come up the street in swirls of leaves, and Nana wants the reddest ones for her table.": {
    "bytes": 91149,
@@ -1034,7 +1256,31 @@
   }
  },
  "voice": {
-  "kid": "coral",
-  "narrator": "sage"
+  "bandit": "ash",
+  "bingo": "coral",
+  "bluey": "nova",
+  "bob": "onyx",
+  "calypso": "sage",
+  "chattermax": "shimmer",
+  "chilli": "marin",
+  "chloe": "marin",
+  "coco": "nova",
+  "frisky": "nova",
+  "honey": "fable",
+  "indy": "fable",
+  "jean_luc": "verse",
+  "judo": "shimmer",
+  "lucky": "alloy",
+  "mackenzie": "echo",
+  "muffin": "shimmer",
+  "nana_chris": "ballad",
+  "narrator": "sage",
+  "rad": "cedar",
+  "rusty": "cedar",
+  "snickers": "verse",
+  "socks": "coral",
+  "stripe": "cedar",
+  "trixie": "nova",
+  "winton": "ash"
  }
 }
