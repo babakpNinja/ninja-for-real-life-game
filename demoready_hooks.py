@@ -24,9 +24,10 @@ hook is for what neither can see over a status code:
 
 There is deliberately no staleness or dirty-state check: progress lives in each
 visitor's ``localStorage``, so there is no server-side state for one person's
-play session to leave behind. That is said out loud as a SKIPPED check rather
-than left as a silent gap — a check nobody made reads exactly like one that
-passed.
+play session to leave behind. That is said out loud as an N/A check rather than
+left as a silent gap — a check nobody made reads exactly like one that passed.
+N/A and not SKIPPED: SKIPPED means "could not ask this time", which the weekly
+sweep chases until it can; this one has nothing to ask and never will (#429).
 
 HTTP only, ~7 requests, no browser: this runs on the daily/weekly crons, and a
 Playwright launch per demo is the kind of cost that gets a cron switched off.
@@ -49,6 +50,7 @@ from html_tags import EXTERNAL, LINK, SCRIPT, attrs_of, fetched, tags_in  # noqa
 
 TIMEOUT = 30
 READY, STALE, DIRTY, DOWN, SKIPPED = "READY", "STALE", "DIRTY", "DOWN", "SKIPPED"
+NA = "N/A"          # nothing to ask, by this app's design — not "could not ask"
 
 # What the game needs of every dog to be drawable and namable. `art.js` reads the
 # palette directly, so a character missing one is drawn as a hole.
@@ -293,8 +295,11 @@ def player_state(base: str) -> dict:
     MUSC can go DIRTY because a smoke test leaves cases half-submitted on a
     shared board. Here every visitor's stars and chapter progress live in their
     own ``localStorage``: nobody can dirty this demo for anybody else.
+
+    N/A rather than SKIPPED, because the weekly sweep now chases a SKIPPED check
+    until it can be asked — and this one is an answer, not an outage (#429).
     """
-    return {"name": "player state", "state": SKIPPED,
+    return {"name": "player state", "state": NA,
             "detail": "progress is per-visitor localStorage — no shared state to leave dirty"}
 
 
