@@ -9872,6 +9872,50 @@ def test_a_lone_receiver_says_it_cannot_be_asked_and_a_lone_sender_passes(base_u
         f"the skip does not say which test it is waiting for:\n{out}")
 
 
+def ask_for_companions(base_url, receiver: str) -> list[str]:
+    """What `ship.py` asks this suite before re-running a failure (#416).
+
+    The argv is assembled here rather than imported from `tools.ship`: this suite
+    also runs from the mirror repo, which has no `tools/`. The tools suite asserts
+    the other half — that ship builds exactly this query.
+    """
+    run = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests", "-q", "--base-url", base_url,
+         "--collect-only", "--companions-of", f"tests/{Path(__file__).name}::{receiver}"],
+        cwd=APP, capture_output=True, text=True, timeout=300)
+    assert run.returncode == 0, f"the query itself failed:\n{run.stdout[-800:]}"
+    return [ln.split(conftest.COMPANION, 1)[1].strip()
+            for ln in run.stdout.splitlines() if ln.startswith(conftest.COMPANION)]
+
+
+def test_a_receiver_re_run_with_its_companions_is_actually_asked(base_url):
+    """The end of the #412 story: a *skip* is not an answer either (#416).
+
+    Alone, the fourth test of a chapter skips — correct, and it means the ship's
+    "flake or regression" comes back unanswered for exactly the tests most likely
+    to fail under load. So the re-run selects the tests that build the state first,
+    and this asserts the receiver really ran: `-rs` and a passed count, because
+    "green" on its own is satisfied by a run in which it skipped again.
+    """
+    receiver = "test_pause_and_resume"
+    mates = ask_for_companions(base_url, receiver)
+    assert len(mates) >= 2, f"the chain is longer than {mates} — transitive senders"
+
+    run = subprocess.run(
+        [sys.executable, "-m", "pytest", *mates,
+         f"tests/{Path(__file__).name}::{receiver}", "-q", "-rs",
+         "--base-url", base_url],
+        cwd=APP, capture_output=True, text=True, timeout=300)
+    out = run.stdout + run.stderr
+
+    assert run.returncode == 0, f"the chain did not pass in one run:\n{out[-1500:]}"
+    assert f"{len(mates) + 1} passed" in out, (
+        f"{receiver} did not run: {len(mates)} companion(s) were selected in front of "
+        f"it and the run reports\n{out[-800:]}")
+    assert "skipped" not in out, f"something still could not be asked:\n{out[-800:]}"
+    assert "renamed or deleted" not in out, f"a sender was accused:\n{out[-800:]}"
+
+
 # --- who you play as, and the move that comes with them (#303) ---------------
 # Babak asked for a character to pick at the start and a special move each, "with
 # smooth animations". Three separable claims: the roster is the characters that

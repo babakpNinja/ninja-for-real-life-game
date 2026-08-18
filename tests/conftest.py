@@ -38,9 +38,19 @@ BOOT_TIMEOUT = 20
 DESKTOP = {"width": 1280, "height": 800}
 
 
+#: what `--companions-of` prints, one per line, for `ship.py` to read back.
+#: Prefixed rather than bare: the answer arrives on the stdout of a
+#: `--collect-only` run, which is already full of node ids.
+COMPANION = "companion: "
+
+
 def pytest_addoption(parser):
     parser.addoption("--base-url", action="store", default=None,
                      help="where the game is served; omit to boot a local server")
+    parser.addoption(
+        "--companions-of", action="append", default=[], metavar="NODEID",
+        help="print the tests that must run before NODEID can be asked, and stop; "
+             "how ship.py's lone re-run of a failed chain test gets a real answer")
 
 
 # What `-m smoke` means here, since a marker with a vague meaning grows until it
@@ -297,11 +307,15 @@ def pytest_itemcollected(item):
 
 
 @pytest.hookimpl(trylast=True)
-def pytest_collection_modifyitems(items):
+def pytest_collection_modifyitems(config, items):
     # trylast: -m/-k deselect in this same hook, so this must run after them to
     # see what is actually going to run.
     selected.clear()
     selected.update(item.function.__name__ for item in items)
+    # and the same knowledge, asked from outside: a `--collect-only` run is how
+    # ship.py finds out what to select alongside a failed chain test (#416)
+    if config.getoption("--companions-of"):
+        print_companions(items, config.getoption("--companions-of"))
 
 
 def declares_the_receiver(module, to: str) -> bool:
@@ -374,6 +388,52 @@ def senders_of(module, name: str) -> list[str]:
             if mark.name == HANDOFF and mark.kwargs.get("to") == name:
                 found.append(getattr(attr, "__name__", str(attr)))
     return found
+
+
+def companions_of(module, names) -> list[str]:
+    """Every test that must run before ``names`` can be asked, in file order.
+
+    Transitive, because the chain is longer than one link: ``test_pause_and_resume``
+    inherits a playing chapter from ``test_the_score_climbs_while_the_level_runs``,
+    which inherited one from the test above it, back to the test that presses Play.
+    Adding only the direct sender moves the problem up a level rather than solving
+    it — that sender's own sender is still out of the run, so ``handed_the_game``
+    skips *it*, and the test the ship actually asked about never runs (#416).
+
+    ``names`` themselves are excluded: the caller is re-running those already, and
+    a handoff can be mutual in the middle of a chain.
+    """
+    order = {name: i for i, name in enumerate(vars(module))}
+    found: set[str] = set()
+    queue = list(names)
+    while queue:
+        for sender in senders_of(module, queue.pop()):
+            if sender not in found:
+                found.add(sender)
+                queue.append(sender)
+    return sorted(found - set(names), key=lambda n: order.get(n, 0))
+
+
+def print_companions(items, asked: list[str]) -> list[str]:
+    """Answer ``--companions-of``: the node ids to run in front of ``asked``.
+
+    Off the *collected* items, so every id printed is one this suite can select —
+    the handoff marks name a function, and the phone tests are parametrised, so one
+    name is several ids and all of them go (the guard reads names, not ids, and any
+    one of the parameter cases satisfies it).
+
+    Nothing found is a legitimate answer, printed as no lines: most tests here
+    inherit nothing, and ``ship.py`` then re-runs the id on its own as before.
+    """
+    wanted = {nid.split("::")[-1].split("[")[0] for nid in asked}
+    module = next((i.module for i in items if i.function.__name__ in wanted), None)
+    if module is None:
+        return []
+    names = companions_of(module, wanted)
+    ids = [i.nodeid for i in items if i.function.__name__ in names]
+    for nid in ids:
+        print(f"{COMPANION}{nid}")
+    return ids
 
 
 @pytest.fixture(autouse=True)
