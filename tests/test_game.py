@@ -7294,12 +7294,39 @@ HINT_SELS = {"hint": HINT, "foot": f"{PANEL} > .panel-foot",
 # and a check that waited would measure whichever screens it happened to reach
 # first. It says so if there is no pill to raise — `null.classList` is a stack
 # trace about the test, and the thing it would be saying is a real failure.
+#
+# On its own this is only half a raise, and the half that lost: see
+# RAISE_AND_MEASURE below. What still uses it is the drill that shows why.
 SHOW_HINT = """
 (sel) => {
   const n = document.querySelector(sel);
   if (!n) throw new Error('nothing matched ' + sel + ', so there is no pill to raise');
   n.classList.remove('hidden');
 }
+"""
+
+# Raised and measured in one task, because the page has two ways of putting the
+# pill back down and neither asks the test first: `rotateHint`'s six-second timer
+# (`HINT_MS`), and `rotateHint(false)` when a chapter starts. Raise it in one
+# `evaluate` and read it in another and those live in the gap between them —
+# which is what #387 was: `test_the_rotate_pill_never_lands_on_the_way_out`
+# [phone upright] went red inside three full suites and passed alone every time,
+# on 'the story card', with the flat `wait_for_timeout(80)` in between. Measured
+# with a MutationObserver on the pill: at 4x CPU throttling the page hid it at
+# 7353ms and 11542ms — 814ms and 493ms after a raise — and the screen the walk
+# reaches around then is the story card. Nothing interleaves inside one
+# synchronous task, so there is no gap left to lose.
+#
+# The measurement is the same one, called rather than copied: two spellings of
+# "is the pill on the screen" would drift apart, and the whole point is that
+# these two answer at the same instant.
+RAISE_AND_MEASURE = f"""
+(sels) => {{
+  const n = document.querySelector(sels.hint);
+  if (!n) throw new Error('nothing matched ' + sels.hint + ', so there is no pill to raise');
+  n.classList.remove('hidden');
+  return ({HINT_BOX})(sels);
+}}
 """
 
 
@@ -7360,13 +7387,13 @@ def test_the_rotate_pill_never_lands_on_the_way_out(make_page, viewport, touch, 
                 f"{where}: no {HINT} on the page at all — a pill left behind by a "
                 f"screen rebuild has no rect, and no rect reads here as covering "
                 f"nothing")
-            page.evaluate(SHOW_HINT, HINT)
-            page.wait_for_timeout(80)
-
-            found = page.evaluate(HINT_BOX, HINT_SELS)
+            found = page.evaluate(RAISE_AND_MEASURE, HINT_SELS)
             assert found["shown"], (
-                f"{where}: the pill will not come up even with `hidden` taken off "
-                f"it, so nothing below is measuring a pill a player would see")
+                f"{where}: the pill will not come up even with `hidden` taken off it "
+                f"in the same breath as the reading, so nothing below is measuring a "
+                f"pill a player would see — `hidden` is the only thing between it and "
+                f"the screen, so this is about its own box, not about the page taking "
+                f"it away again (#387)")
             assert found["inTheFoot"], (
                 f"{where}: the pill is outside the block of pinned buttons, so it is "
                 f"placed against something other than what it can cover — that is "
@@ -7417,6 +7444,21 @@ def test_the_rotate_pill_never_lands_on_the_way_out(make_page, viewport, touch, 
         f"sees")
 
 
+# The two lines of CSS #277 was measured on, given back — and, like everything
+# else about this pill, put on and read in one task (#387).
+PILL_WHERE_IT_WAS = f"""
+(sels) => {{
+  const n = document.querySelector(sels.hint);
+  n.classList.remove('hidden');
+  n.style.position = 'fixed';
+  n.style.bottom = '8px';
+  n.style.left = '50%';
+  n.style.transform = 'translateX(-50%)';
+  return ({HINT_BOX})(sels);
+}}
+"""
+
+
 def test_the_pill_rule_notices_the_pill_back_over_the_way_out(make_page):
     """Prove the rule above catches #277's own geometry, not just a stray pill.
 
@@ -7431,25 +7473,13 @@ def test_the_pill_rule_notices_the_pill_back_over_the_way_out(make_page):
     try:
         page.click("#btn-gallery")
         page.wait_for_selector(".char-card")
-        page.evaluate(SHOW_HINT, HINT)
-        page.wait_for_timeout(80)
-
-        before = page.evaluate(HINT_BOX, HINT_SELS)
+        before = page.evaluate(RAISE_AND_MEASURE, HINT_SELS)
         assert before["buttons"], "no pinned buttons on the characters screen to be covered"
         assert not any(overlap(before["hint"], b) for b in before["buttons"]), (
             f"the drill starts from a screen where the pill is already on a button: "
             f"{before['hint']}, {before['buttons']}")
 
-        page.evaluate("""(sel) => {
-          const n = document.querySelector(sel);
-          n.style.position = 'fixed';
-          n.style.bottom = '8px';
-          n.style.left = '50%';
-          n.style.transform = 'translateX(-50%)';
-        }""", HINT)
-        page.wait_for_timeout(80)
-
-        after = page.evaluate(HINT_BOX, HINT_SELS)
+        after = page.evaluate(PILL_WHERE_IT_WAS, HINT_SELS)
         # by key, not by tupling the area with the button: two buttons equally
         # covered would put a pair of dicts up against each other
         worst = max(after["buttons"], key=lambda b: overlap(after["hint"], b))
@@ -7461,6 +7491,56 @@ def test_the_pill_rule_notices_the_pill_back_over_the_way_out(make_page):
             f"it landed on {worst['text']!r} rather than the way out, so this is "
             f"not the arrangement #277 was measured on")
     finally:
+        page.context.close()
+
+
+# Something that puts the pill back down at the first opportunity, standing in
+# for the two things in the page that do it on their own clock. 1ms so that any
+# gap at all is a gap it gets into.
+NAG_IT_DOWN = """
+(sel) => {
+  window.__nag = setInterval(() => document.querySelector(sel).classList.add('hidden'), 1);
+}
+"""
+
+
+def test_the_pill_is_measured_in_the_same_breath_as_it_is_raised(make_page):
+    """#387: raising the pill and reading it were two `evaluate` calls.
+
+    The page hides that pill on clocks of its own — `HINT_MS` six seconds after
+    it goes up, and again the moment a chapter starts — so anything the test does
+    in two steps can have one of those land in the middle. It did, three times,
+    always inside a full suite and never alone: the run was slow enough that the
+    six seconds came due while the walk was on the story card, inside the 80ms the
+    test spent waiting between putting the pill up and looking at it.
+
+    So this drill is in two halves, and both have to hold: with something hiding
+    the pill at every opportunity, the shipped one-task read still sees it, and
+    the two-step shape it replaced still loses. Without the second half the first
+    is just a pill nobody was nagging.
+    """
+    page = make_page(IPHONE, touch=True)
+    try:
+        page.evaluate(NAG_IT_DOWN, HINT)
+        found = page.evaluate(RAISE_AND_MEASURE, HINT_SELS)
+        assert found["shown"] and found["hint"]["width"] > 1, (
+            f"something got in between taking `hidden` off the pill and measuring "
+            f"it, in what has to be one task: {found['hint']}")
+
+        page.evaluate(SHOW_HINT, HINT)
+        try:
+            page.wait_for_function(
+                f"() => document.querySelector('{HINT}').classList.contains('hidden')",
+                timeout=5000)
+        except PlaywrightTimeout:
+            pytest.fail("nothing put the pill back down in 5s, so the half of this "
+                        "drill that shows the gap is real never happened — and the "
+                        "read above was never asked anything", pytrace=False)
+        assert not page.evaluate(HINT_BOX, HINT_SELS)["shown"], (
+            "the pill is still up after something added `hidden` to it, so `hidden` "
+            "is not what takes it away and this drill proves nothing about a gap")
+    finally:
+        page.evaluate("() => clearInterval(window.__nag)")
         page.context.close()
 
 
@@ -10494,22 +10574,53 @@ def test_sniffing_out_treats_pulls_the_tokens_in_and_leaves_the_secret_hidden(ow
     assert not got["secretTaken"], "the magnet collected the secret dollarbucks"
 
 
+ABILITY_BUTTON = """
+() => {
+  const b = document.getElementById('btn-ability');
+  const box = b.getBoundingClientRect();
+  return {
+    shown: !b.classList.contains('hidden') && box.width > 0,
+    ready: b.classList.contains('ready'),
+    active: b.classList.contains('active'),
+    name: document.getElementById('ability-name').textContent,
+    emoji: document.getElementById('ability-emoji').textContent,
+    charge: parseFloat(getComputedStyle(b).getPropertyValue('--charge')),
+    colour: getComputedStyle(b).getPropertyValue('--ability').trim(),
+    label: b.getAttribute('aria-label'),
+  };
+}
+"""
+
+
 def ability_button(page):
     """What the move button is saying right now, as a player would read it."""
-    return page.evaluate("""() => {
-      const b = document.getElementById('btn-ability');
-      const box = b.getBoundingClientRect();
-      return {
-        shown: !b.classList.contains('hidden') && box.width > 0,
-        ready: b.classList.contains('ready'),
-        active: b.classList.contains('active'),
-        name: document.getElementById('ability-name').textContent,
-        emoji: document.getElementById('ability-emoji').textContent,
-        charge: parseFloat(getComputedStyle(b).getPropertyValue('--charge')),
-        colour: getComputedStyle(b).getPropertyValue('--ability').trim(),
-        label: b.getAttribute('aria-label'),
-      };
-    }""")
+    return page.evaluate(ABILITY_BUTTON)
+
+
+def ability_button_when(page, said, why, timeout=5000):
+    """The reading once `said` is true of it, or a failure that says what it stayed at.
+
+    `ready`, `active` and `--charge` are written by `updateHud`, which runs on
+    `requestAnimationFrame` — so the button says what the *engine's* clock has
+    got round to saying, and a reading taken the instant after a click asks a
+    button that has not been repainted yet. That is #387's second member: on a
+    loaded box the next frame is far enough away that
+    `test_the_move_button_says_whose_move_it_is_and_fills_back_up` went red
+    inside the full suite and passed alone two minutes later, and the flat
+    `wait_for_timeout(700)` it used instead is wall-clock time about a state
+    nothing wall-clock owns — the engine caps `dt` at 0.1s a frame, so a starved
+    page's cooldown runs slower than the test's watch.
+
+    The wait *is* the assertion, so `said` should read as the claim; anything
+    the clock does not own stays an ordinary `assert` next to it.
+    """
+    try:
+        page.wait_for_function(
+            f"() => {{ const it = ({ABILITY_BUTTON})(); return {said}; }}", timeout=timeout)
+    except PlaywrightTimeout:
+        pytest.fail(f"{why}: `{said}` was never true of the button in {timeout}ms — "
+                    f"it is saying {ability_button(page)}", pytrace=False)
+    return ability_button(page)
 
 
 def test_the_move_button_says_whose_move_it_is_and_fills_back_up(own_page):
@@ -10524,31 +10635,37 @@ def test_the_move_button_says_whose_move_it_is_and_fills_back_up(own_page):
     page = own_page
     tap_play(page, hero="bluey")
     page.wait_for_function("() => window.game && window.game.mode === 'playing'")
-    before = ability_button(page)
-    assert before["shown"], "the move button is not on screen during a chapter"
-    assert before["name"] == "Zoomies" and before["emoji"] == "💨", (
-        f"the button does not say whose move it is: {before}")
-    assert "Zoomies" in (before["label"] or ""), (
-        f"the button reads out as {before['label']!r}, which names no move")
-    assert before["ready"] and before["charge"] == 1, (
-        f"the move is not offered as ready at the start of a chapter: {before}")
+    # in a `finally` since #387: every reading below is now a *wait* for the HUD
+    # to say something, and a wait that gives up leaves the chapter running — the
+    # leak guard then errors on top of the failure, which buries the sentence
+    # that says what the button was stuck saying
+    try:
+        before = ability_button_when(page, "it.ready && it.charge === 1",
+                                     "the move is not offered as ready at the start of a chapter")
+        assert before["shown"], "the move button is not on screen during a chapter"
+        assert before["name"] == "Zoomies" and before["emoji"] == "💨", (
+            f"the button does not say whose move it is: {before}")
+        assert "Zoomies" in (before["label"] or ""), (
+            f"the button reads out as {before['label']!r}, which names no move")
 
-    page.click("#btn-ability")
-    used = ability_button(page)
-    assert page.evaluate("() => window.game.abilityUses") == 1, "the button did not fire"
-    assert used["active"] and not used["ready"], (
-        f"the button does not show the move is running: {used}")
+        page.click("#btn-ability")
+        ability_button_when(page, "it.active && !it.ready",
+                            "the button does not show the move is running")
+        assert page.evaluate("() => window.game.abilityUses") == 1, "the button did not fire"
 
-    page.wait_for_timeout(700)
-    cooling = ability_button(page)
-    page.wait_for_timeout(700)
-    later = ability_button(page)
-    page.evaluate("() => window.game.stop()")
-    assert cooling["charge"] < 1, f"the ring never emptied: {cooling}"
-    assert later["charge"] > cooling["charge"], (
-        f"the ring is not filling back up: {cooling['charge']:.3f} then "
-        f"{later['charge']:.3f}. It is drawn from the engine's cooldown every frame, "
-        f"so a ring standing still is the HUD not being redrawn.")
+        # the ring, on the engine's clock rather than on any number of
+        # milliseconds: empty once the move has fired, and filling back
+        # afterwards. A ring standing still would look exactly like a button that
+        # had stopped working.
+        cooling = ability_button_when(page, "it.charge < 1",
+                                      "the ring never emptied when the move fired")
+        ability_button_when(
+            page, f"it.charge > {cooling['charge']}",
+            f"the ring is not filling back up from {cooling['charge']:.3f} — it is drawn "
+            f"from the engine's cooldown every frame, so a ring standing still is the HUD "
+            f"not being redrawn")
+    finally:
+        page.evaluate("() => window.game && window.game.stop()")
 
 
 @pytest.mark.parametrize("viewport", [IPHONE, PIXEL, LANDSCAPE],
