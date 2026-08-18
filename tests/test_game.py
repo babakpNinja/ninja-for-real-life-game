@@ -28,9 +28,11 @@ import math
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 import warnings
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -9901,12 +9903,22 @@ def test_a_receiver_re_run_with_its_companions_is_actually_asked(base_url):
     mates = ask_for_companions(base_url, receiver)
     assert len(mates) >= 2, f"the chain is longer than {mates} — transitive senders"
 
-    run = subprocess.run(
-        [sys.executable, "-m", "pytest", *mates,
-         f"tests/{Path(__file__).name}::{receiver}", "-q", "-rs",
-         "--base-url", base_url],
-        cwd=APP, capture_output=True, text=True, timeout=300)
-    out = run.stdout + run.stderr
+    nodeid = f"tests/{Path(__file__).name}::{receiver}"
+    with tempfile.TemporaryDirectory() as tmp:
+        report = Path(tmp) / "rerun.xml"
+        run = subprocess.run(
+            [sys.executable, "-m", "pytest", *mates, nodeid, "-q", "-rs",
+             f"--junit-xml={report}", "--base-url", base_url],
+            cwd=APP, capture_output=True, text=True, timeout=300)
+        out = run.stdout + run.stderr
+        # the per-test half (#419): the summary line says "N passed, 1 skipped" and
+        # never which, so the report is where "did *this* id run" is answerable.
+        # Keyed by name and classname, which is all junit prints — there is no
+        # `file` attribute and no node id in it, which is the fact ship's own
+        # reader had to be built around.
+        outcomes = {(c.get("classname"), c.get("name")): [g.tag for g in c]
+                    for c in ET.parse(report).getroot().iter("testcase")} \
+            if report.exists() else {}
 
     assert run.returncode == 0, f"the chain did not pass in one run:\n{out[-1500:]}"
     assert f"{len(mates) + 1} passed" in out, (
@@ -9914,6 +9926,10 @@ def test_a_receiver_re_run_with_its_companions_is_actually_asked(base_url):
         f"it and the run reports\n{out[-800:]}")
     assert "skipped" not in out, f"something still could not be asked:\n{out[-800:]}"
     assert "renamed or deleted" not in out, f"a sender was accused:\n{out[-800:]}"
+    mine = ("tests." + Path(__file__).stem, receiver)
+    assert outcomes.get(mine) == [], (
+        f"the report does not say {receiver} ran and passed — it says "
+        f"{outcomes.get(mine)!r}; cases in it: {sorted(outcomes)[:4]}")
 
 
 # --- who you play as, and the move that comes with them (#303) ---------------
