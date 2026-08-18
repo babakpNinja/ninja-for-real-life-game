@@ -138,11 +138,58 @@ function showOverlay(html, { transparent = false, keepReading = false, kind = ""
     foot.className = "panel-foot";
     while (actions.nextSibling) foot.appendChild(actions.nextSibling);
     foot.insertBefore(actions, foot.firstChild);
+    // the word for the cut, above the buttons and under the fade, put away until
+    // there is really something below it (#397)
+    const more = document.createElement("div");
+    more.className = "panel-more hidden";
+    more.textContent = MORE_WORD;
+    foot.insertBefore(more, foot.firstChild);
     body.after(foot);
   }
   placeHint();
   overlay.classList.remove("hidden");
   overlay.scrollTop = 0;
+  // the body has to be laid out before it can be asked how much of it is hidden,
+  // and it was written into the document one line ago
+  body.addEventListener("scroll", askMore, { passive: true });
+  requestAnimationFrame(askMore);
+}
+
+/* ------------------------------------------------ more below the cut (#397) -- */
+
+/**
+ * Say whether the panel's body is hiding anything under the cut — and only then.
+ *
+ * The fade at the cut used to be painted always. On all four screens the outro
+ * ends with nothing below it, so a player read the last sentence of the story
+ * greyed out: "there is more down here" about nothing, in the one place a
+ * rendering fault looks the same (#397, #310). And a fade alone never said
+ * *scroll* anyway — mobile Safari and Chrome hide the scrollbar until a drag
+ * starts — so when something is hidden the cut now also says it in words.
+ *
+ * Asked of the body rather than of the window, because the body is the only
+ * thing here that scrolls (#269): the panel is capped at the window and hides
+ * its overflow, so the document never overflows and `window` would answer "all
+ * of it fits" on a screen with 535px below the fold.
+ */
+const MORE_WORD = "more below ↓";
+
+// Sub-pixel slack. A body laid out 0.4px taller than its box hides nothing a
+// player could read, and rounding is not evidence of a hidden line — measured
+// live, the shortest laptop window sat at exactly 1px (#397).
+const MORE_SLACK = 2;
+
+function askMore() {
+  const panel = overlay.querySelector(".panel");
+  const body = panel && panel.querySelector(":scope > .panel-body");
+  if (!body) return;
+  // Nothing oscillates here even though the word takes up room: it only ever
+  // makes the body *shorter*, so a body with nothing hidden still has nothing
+  // hidden once the word goes away, and one with something hidden still has.
+  const yes = body.scrollHeight - body.clientHeight - body.scrollTop > MORE_SLACK;
+  panel.classList.toggle("more-below", yes);
+  const more = panel.querySelector(":scope > .panel-foot > .panel-more");
+  if (more) more.classList.toggle("hidden", !yes);
 }
 
 /**
@@ -161,7 +208,10 @@ function showOverlay(html, { transparent = false, keepReading = false, kind = ""
  */
 function placeHint() {
   const foot = overlay.querySelector(".panel > .panel-foot");
-  if (foot) foot.insertBefore(hint, foot.firstChild);
+  // above the buttons, which is what #277 was about, but under "more below ↓" —
+  // that one is a label for the cut a few pixels over it, and a pill that comes
+  // and goes on a timer must not push it away from the thing it labels (#397)
+  if (foot) foot.insertBefore(hint, foot.querySelector(":scope > .actions"));
   else stage.appendChild(hint);
 }
 
@@ -1229,6 +1279,11 @@ function wireInput() {
   window.addEventListener("resize", checkOrientation);
   window.addEventListener("orientationchange", () => setTimeout(checkOrientation, 250));
   checkOrientation();
+
+  // a shorter window hides more of a screen and a taller one hides less, so the
+  // cut is asked again — the fade and the word are about *this* window (#397)
+  window.addEventListener("resize", askMore);
+  window.addEventListener("orientationchange", () => setTimeout(askMore, 250));
 
   // a toast already on screen when the window changes shape: the engine has moved
   // the picture, so the words about it move too. The 250ms is the engine's own

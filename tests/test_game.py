@@ -6232,11 +6232,16 @@ def test_nothing_on_a_menu_sits_on_top_of_anything_else(make_page, viewport, tou
                 last = max(bottom["seen"], key=lambda i: i["bottom"])
                 # against the bottom of the scrolling part, not the bottom of the
                 # window: the buttons are pinned below it, so measuring the window
-                # would pass for anything the body could possibly show (#269)
-                assert last["bottom"] <= fit["bottom"] + 0.5, (
+                # would pass for anything the body could possibly show (#269).
+                # Re-measured after the scroll rather than reused from above,
+                # because the cut moves: at the bottom of a screen there is
+                # nothing below it, so the word that said there was is gone and
+                # the body is that much taller (#397).
+                here = page.evaluate(PANEL_FITS, SCROLLER)
+                assert last["bottom"] <= here["bottom"] + 0.5, (
                     f"{where}: scrolled all the way down, {last['what']} "
                     f"({last['text']!r}) still ends at y {last['bottom']:.0f} and the "
-                    f"scrolling part of the panel ends at y {fit['bottom']:.0f} on a "
+                    f"scrolling part of the panel ends at y {here['bottom']:.0f} on a "
                     f"{view['h']}px screen — the bottom of this panel cannot be "
                     f"reached (it was {lowest['what']} before scrolling)")
             else:
@@ -6432,6 +6437,270 @@ def test_the_peephole_rule_notices_a_screen_squeezed_to_a_slot(make_page):
             f"the complaint does not say what the floor was or what is hidden: {said}")
     finally:
         page.context.close()
+
+
+# --- and what the cut at the bottom of the body says (#397) -------------------
+
+# The cut is where the scrolling body ends and the pinned buttons begin. Two
+# things are painted at it when the body is hiding something under it — the fade
+# (`.panel-foot::before`) and the word for it (`.panel-more`) — and neither when
+# it is not. Read from the page rather than named here: the fade is a pseudo
+# element with no node to walk to, and "is it painted" is a computed style.
+CUT = """
+() => {
+  const panel = document.querySelector('#overlay .panel');
+  const body = panel && panel.querySelector(':scope > .panel-body');
+  const foot = panel && panel.querySelector(':scope > .panel-foot');
+  if (!body || !foot) return { has: false };
+  const more = foot.querySelector(':scope > .panel-more');
+  const shown = more && getComputedStyle(more).display !== 'none';
+  const box = shown ? more.getBoundingClientRect() : null;
+  const inside = body.getBoundingClientRect();
+  const fade = getComputedStyle(foot, '::before');
+  return {
+    has: true,
+    hidden: body.scrollHeight - body.clientHeight - body.scrollTop,
+    fade: fade.display !== 'none',
+    body: { left: inside.left, right: inside.right },
+    // the band the fade covers, taken from the fade's own height rather than
+    // from the 16px in the stylesheet — a shorter one would still be measured
+    band: { top: inside.bottom - parseFloat(fade.height), bottom: inside.bottom },
+    said: shown ? more.textContent.trim() : '',
+    where: box ? { top: box.top, bottom: box.bottom, left: box.left, right: box.right } : null,
+    view: { w: window.innerWidth, h: window.innerHeight },
+  };
+}
+"""
+
+# The bottom line of text inside the body, as a line box rather than as an
+# element: a paragraph that wraps has one rect per line, and the thing #397 is
+# about is what the cut does to the *last* of them. Buttons in the foot are not
+# in here — the walk starts at the body.
+LAST_LINE = """
+() => {
+  const body = document.querySelector('#overlay .panel > .panel-body');
+  if (!body) return null;
+  const walk = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+  let last = null;
+  for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+    if (!node.textContent.trim()) continue;
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    for (const box of range.getClientRects()) {
+      if (box.width < 1 || box.height < 1) continue;
+      if (!last || box.bottom > last.bottom) {
+        last = { top: box.top, bottom: box.bottom, left: box.left, right: box.right,
+                 text: node.textContent.trim().slice(0, 40) };
+      }
+    }
+  }
+  return last;
+}
+"""
+
+# Sub-pixel slack, the same reading `askMore` uses: a body laid out a fraction
+# taller than its box is hiding nothing a player could read. Live on 80c8949 the
+# results screen sat at 0px on three windows and 1px on the fourth.
+NOTHING_UNDER = 1
+
+# Three numbers, all measured off this page rather than reasoned about, on the
+# strip of the band the width of the body:
+#
+#   INK      the darkest pixel there. A glyph of --ink (#22303F, luma 45) reads
+#            46 on all four windows once anti-aliased on cream (luma 250), so
+#            anything at or under 100 is a real glyph and not a shadow — this is
+#            what says the band is over a line of prose at all.
+#   PAINTED  the share of the strip the fade lightens: 2.1%, 8.2%, 10.2% and
+#            14.8%. The floor is half the smallest.
+#   DARKER   the share it is allowed to *darken*, which is none of it: a cream
+#            gradient over a picture can only lighten it, so anything here means
+#            the two pictures differ for some other reason and the comparison is
+#            measuring that instead.
+#
+# The magnitudes are deliberately not among them. A first draft held the darkest
+# pixel to rising by at least 4 with the fade on, which was 5, 8, 6 and 21 when
+# measured — and read 2 on a loaded machine, where the same strip caught a
+# different line. Direction and share are what the question is about; how dark
+# one pixel is depends on which glyph is under it (#387's class).
+INK = 100
+PAINTED = 0.01
+DARKER = 0.001
+
+
+def greys(page, box):
+    """A greyscale picture of a box of the live screen, `clip` being in CSS px.
+
+    A screenshot rather than a computed style, because the fade is a gradient
+    painted *over* the text by a pseudo element: every rule about the text is
+    green while it is washed out, which is how it shipped that way for two
+    issues (#269, #397).
+    """
+    import io
+
+    from PIL import Image
+
+    clip = {"x": box["left"], "y": box["top"],
+            "width": box["right"] - box["left"], "height": box["bottom"] - box["top"]}
+    return Image.open(io.BytesIO(page.screenshot(clip=clip))).convert("L")
+
+
+def which_way(before, after, tol=8):
+    """(share of the box `after` lightens, share it darkens), each 0..1.
+
+    Two shares rather than one difference, because the direction is half the
+    claim: a cream gradient painted over a picture can only lighten it, so a box
+    that got darker as well is a box where something else moved between the two
+    pictures — a layout shift, a frame of animation — and a plain difference
+    would read that as the fade.
+    """
+    from PIL import ImageChops
+
+    def share(img):
+        return sum(img.histogram()[tol + 1:]) / max(1, img.width * img.height)
+
+    return share(ImageChops.subtract(after, before)), share(ImageChops.subtract(before, after))
+
+
+@pytest.mark.parametrize("viewport,touch,screen", SCREENS, ids=SCREEN_IDS)
+def test_the_last_line_of_the_story_is_not_washed_out_with_nothing_under_it(
+        make_page, viewport, touch, screen):
+    """#397: the fade at the cut was painted whether or not it had anything to say.
+
+    Measured live on 80c8949, the results screen hid 0px below the cut on three
+    of these four windows and 1px on the fourth — and on all four, "Floppy must
+    be that way!", the last line of the outro, was greyed out under
+    `.panel-foot::before`. A wash over the final sentence of the story says
+    "there is more down here" about nothing, and it cannot be told from a
+    half-drawn line of text (the #310 family).
+
+    It is read in pixels, off the strip the fade covers, twice: as shipped and
+    then with the fade forced back on. Both halves are the test. The two
+    pictures differing is what says no fade is painted there now — a comparison
+    against two live states rather than against a stored reference, so it cannot
+    be satisfied by the wrong screen. And the strip having ink in it at all is
+    what says the thing under the fade is a line of prose rather than the empty
+    space at the end of a short screen, which is the only place a fade is
+    harmless.
+    """
+    page = make_page(viewport, touch=touch)
+    try:
+        tap_play(page)
+        play_chapter(page, 0)
+        page.wait_for_selector(".stars-big")
+        page.wait_for_timeout(200)
+
+        cut = page.evaluate(CUT)
+        assert cut["has"], f"{screen}: the results screen has no cut to measure"
+        assert cut["hidden"] <= NOTHING_UNDER, (
+            f"{screen}: the results screen is hiding {cut['hidden']:.0f}px under the "
+            f"cut, so it is not the case this is about — the fade is allowed there")
+        line = page.evaluate(LAST_LINE)
+        assert line, f"{screen}: no line of text found in the body of the results screen"
+        assert line["bottom"] > cut["band"]["top"] + 1, (
+            f"{screen}: the last line ({line['text']!r}) ends at y {line['bottom']:.0f} "
+            f"and the fade covers y {cut['band']['top']:.0f}..{cut['band']['bottom']:.0f} "
+            f"— nothing of this screen's words is in the strip below, so it would read "
+            f"the same with the fade painted always")
+
+        band = {"left": cut["body"]["left"], "right": cut["body"]["right"],
+                "top": cut["band"]["top"], "bottom": cut["band"]["bottom"]}
+        shipped = greys(page, band)
+        assert shipped.getextrema()[0] <= INK, (
+            f"{screen}: the darkest pixel where the fade would go is "
+            f"{shipped.getextrema()[0]}, over the {INK} an inked glyph reads — there is "
+            f"no text under this strip, so a fade over it would wash out nothing and "
+            f"this proves nothing")
+
+        page.evaluate("() => document.querySelector('#overlay .panel')"
+                      ".classList.add('more-below')")
+        page.wait_for_timeout(150)
+        forced = greys(page, band)
+        washed, other = which_way(shipped, forced)
+        assert washed >= PAINTED, (
+            f"{screen}: painting the fade over {line['text']!r} washed out {washed:.2%} "
+            f"of the strip under it, against the {PAINTED:.0%} it lightens when it goes "
+            f"on — so the fade is already painted there as shipped, and the last line of "
+            f"the story is under it")
+        assert other <= DARKER, (
+            f"{screen}: {other:.2%} of the strip over {line['text']!r} got *darker* with "
+            f"a cream fade painted over it, which it cannot do — the two pictures differ "
+            f"because something moved between them, so this is measuring that and not "
+            f"the fade")
+    finally:
+        page.evaluate("() => window.game && window.game.stop()")
+        page.context.close()
+
+
+@pytest.mark.parametrize("viewport,touch,screen", SCREENS, ids=SCREEN_IDS)
+def test_a_body_with_more_under_the_cut_says_so_in_words(make_page, viewport, touch, screen):
+    """The other half of #397: when something *is* hidden, saying so in words.
+
+    A fade on its own does not say scroll — mobile Safari and Chrome hide the
+    scrollbar until a drag starts, and a line of prose fading out is what a
+    clipped canvas looks like. So every screen on every window is asked the same
+    two questions, and both answers have to match what the body is actually
+    doing: something under the cut means the word is up, nothing under it means
+    it is gone. The second half is what keeps this from passing for a decoration
+    that is always on.
+    """
+    page = make_page(viewport, touch=touch)
+    said, quiet = [], []
+    try:
+        for name in overlay_screens(page):
+            page.wait_for_timeout(150)
+            where = f"{screen}, {name}"
+            cut = page.evaluate(CUT)
+            assert cut["has"], f"{where}: no panel with a cut in it"
+            if cut["hidden"] > NOTHING_UNDER:
+                assert cut["said"], (
+                    f"{where}: {cut['hidden']:.0f}px of this screen is under the cut and "
+                    f"the only sign of it is the fade" if cut["fade"] else
+                    f"{where}: {cut['hidden']:.0f}px of this screen is under the cut and "
+                    f"nothing says so at all")
+                assert "more" in cut["said"].lower() and "↓" in cut["said"], (
+                    f"{where}: the cut says {cut['said']!r}, which does not say that "
+                    f"there is more of this screen below it")
+                assert cut["fade"], (
+                    f"{where}: {cut['hidden']:.0f}px is hidden and the cut is not faded, "
+                    f"so the text there stops mid-line with nothing to soften it")
+                box = cut["where"]
+                assert (box["top"] >= -0.5 and box["bottom"] <= cut["view"]["h"] + 0.5
+                        and box["left"] >= -0.5 and box["right"] <= cut["view"]["w"] + 0.5), (
+                    f"{where}: the words {cut['said']!r} are at y {box['top']:.0f}.."
+                    f"{box['bottom']:.0f} x {box['left']:.0f}..{box['right']:.0f} on a "
+                    f"{cut['view']['w']}x{cut['view']['h']} screen — off it")
+                said.append(name)
+
+                # and it is about *now*, not about the screen: scrolled to the
+                # bottom there is nothing under the cut any more, so a word still
+                # up there is the same lie as the unconditional fade was
+                page.evaluate("(sel) => { const b = document.querySelector(sel); "
+                              "b.scrollTop = b.scrollHeight; }", SCROLLER)
+                page.wait_for_timeout(200)
+                end = page.evaluate(CUT)
+                assert end["hidden"] <= NOTHING_UNDER, (
+                    f"{where}: scrolled to the bottom and {end['hidden']:.0f}px is still "
+                    f"under the cut, so this half is being asked about the wrong state")
+                assert not end["said"] and not end["fade"], (
+                    f"{where}: at the bottom of the screen it still says "
+                    f"{end['said']!r} (faded: {end['fade']}) with nothing under the cut")
+            else:
+                assert not cut["said"], (
+                    f"{where}: nothing is under the cut ({cut['hidden']:.0f}px) and it "
+                    f"says {cut['said']!r} — a player is told to scroll for nothing")
+                assert not cut["fade"], (
+                    f"{where}: nothing is under the cut ({cut['hidden']:.0f}px) and the "
+                    f"last line of it is under a fade that means there is")
+                quiet.append(name)
+    finally:
+        page.evaluate("() => window.game && window.game.stop()")
+        page.context.close()
+    # both branches are the test: all-quiet would pass with the feature deleted,
+    # all-said would pass with it painted always
+    assert said, (f"no screen on {screen} had anything under its cut, so nothing here "
+                  f"checked what says so ({len(quiet)} measured)")
+    assert quiet, (f"every screen on {screen} had something under its cut, so nothing "
+                   f"here checked that a screen with nothing hidden stays quiet")
 
 
 # --- and the thing the screen is for (#309) -----------------------------------

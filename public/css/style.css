@@ -324,16 +324,40 @@ canvas#game {
   overscroll-behavior: contain;
 }
 
-/* The body is cut off wherever the buttons begin, so the last line of it fades
- * into them instead of stopping mid-word — on a screen with more above, that
- * fade is the only sign a player gets that there is. */
+/* The body is cut off wherever the buttons begin, and when there is more of it
+ * under that cut the cut says so — twice. The fade is what a scrolling box looks
+ * like; the word under it is what says so, because a line of prose washing out
+ * cannot be told from a half-drawn line of text (#397, and the #310 family).
+ *
+ * Neither is painted unless something really is hidden (`.more-below`, asked of
+ * the body itself in main.js). Unconditional, the fade greyed out the last
+ * sentence of the outro on all four screens with nothing whatever below it —
+ * "there is more" said about nothing, on the screen a story ends on (#397). Off
+ * by default, so the pre-boot menu — which has no script watching it yet — says
+ * nothing rather than lying. */
 .panel-foot { position: relative; flex: none; padding-top: 8px; }
 .panel-foot::before {
   content: "";
+  display: none;
   position: absolute;
   left: 0; right: 0; bottom: 100%;
   height: 16px;
   background: linear-gradient(to bottom, rgba(255, 247, 230, 0), var(--cream));
+  pointer-events: none;
+}
+.panel.more-below > .panel-foot::before { display: block; }
+
+/* Not a button: 44px of tap target for a hint would cost more of the body than
+ * the hint is worth, and the drag that scrolls the body works from anywhere on
+ * it. So it is a label, out of the way of fingers. */
+.panel-more {
+  width: fit-content;
+  margin: 0 auto 6px;
+  font-size: 13px;
+  color: #7A8894;
+  padding: 2px 12px;
+  border-radius: 999px;
+  background: rgba(44, 111, 187, 0.08);
   pointer-events: none;
 }
 
