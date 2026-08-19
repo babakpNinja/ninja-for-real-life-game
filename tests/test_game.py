@@ -30,6 +30,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 import warnings
 import xml.etree.ElementTree as ET
@@ -500,6 +501,36 @@ def test_the_page_asks_not_to_be_indexed(base_url):
     """It is a personal fan project; it should not turn up in search."""
     with urllib.request.urlopen(f"{base_url}/robots.txt", timeout=15) as resp:
         assert "Disallow: /" in resp.read().decode()
+
+
+@pytest.mark.smoke
+@pytest.mark.parametrize("rel", ["", "robots.txt", "index.html", "api/health",
+                                 "no-such-file-here"])
+def test_every_response_asks_not_to_be_indexed_in_a_header_too(base_url, rel):
+    """The same ask, in the form that does not depend on a file being read.
+
+    The `Disallow: /` above only counts if a crawler fetches robots.txt *and* is
+    handed it as text/plain — and it was not, for as long as this deploy has
+    existed (#369). A file that has to arrive, parse and be correctly typed
+    before any of it applies is a thin thing to rest a fan project on, so the
+    server states it on every response instead (#461).
+
+    Every response, hence the parametrise: the 404 and the game's own pages are
+    exactly what a crawler that never asked for robots.txt would be holding, and
+    a header set at one exit and forgotten at the next is the failure to catch.
+    `smoke`, because the container and the edge in front of it are both free to
+    be serving a version of this that predates the line.
+    """
+    req = urllib.request.Request(f"{base_url}/{rel}", method="HEAD")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            got = resp.headers.get("X-Robots-Tag")
+    except urllib.error.HTTPError as err:      # the 404 is one of the cases
+        got = err.headers.get("X-Robots-Tag")
+    assert got and "noindex" in got, (
+        f"/{rel} came back with X-Robots-Tag {got!r} at {base_url}, so a crawler that "
+        f"never fetched robots.txt — or fetched it and was handed the wrong type, "
+        f"which is what happened here for months — is told nothing")
 
 
 # --- desktop: the menus a grown-up drives -----------------------------------

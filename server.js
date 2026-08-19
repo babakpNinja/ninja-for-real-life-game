@@ -53,6 +53,14 @@ async function countContent() {
 }
 
 const server = http.createServer((req, res) => {
+  // The belt to robots.txt's braces (#461). That file is only obeyed if a
+  // crawler fetches it *and* it comes back as text/plain, which it did not for
+  // as long as this deploy existed (#369) — a header depends on neither, and
+  // rides on the responses (a 404, a directory-traversal 403) that no
+  // `Disallow:` line covers. Set once, before the four exits below, so a route
+  // added later cannot forget it: Node merges headers set here with the object
+  // passed to writeHead, and none of those repeat this name.
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   if (url.pathname === "/api/health" || url.pathname === "/healthz") {
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
