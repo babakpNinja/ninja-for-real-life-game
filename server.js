@@ -15,6 +15,10 @@ const TYPES = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  // robots.txt, whose only reader is a crawler, and which asks not to be
+  // indexed: Google's spec wants text/plain and treats another type as no
+  // file at all, so this one was silently doing nothing (#369).
+  ".txt": "text/plain; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
   // ...and the smaller copy of every character beside it. Served as

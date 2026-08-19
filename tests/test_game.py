@@ -47,7 +47,7 @@ APP = Path(__file__).resolve().parent.parent
 # How this file reads facts out of the game's JavaScript: comments blanked
 # first, regions bounded, one implementation shared with scripts/ (#233).
 sys.path.insert(0, str(APP / "scripts"))
-from js_source import code_only, function_body, object_literal  # noqa: E402
+from js_source import code_only, function_body, object_block, object_literal  # noqa: E402
 
 # The two tables that say what is *meant* to be missing: which (character,
 # state) the rig is allowed to draw, and which states are strides. Imported
@@ -1295,6 +1295,96 @@ def test_every_recorded_line_is_actually_served(base_url):
         # quiet when it is skipped is the one that rots (#40).
         warnings.warn(f"no hop sent a content-length for any of the {len(MANIFEST)} "
                       f"recordings, so their sizes went unchecked at {base_url}")
+
+
+# --- and the same question asked of every other kind of file (#369) ----------
+# The test above is the recordings' own version of a check the server needs in
+# general: `TYPES` in server.js ends in `|| "application/octet-stream"`, so a
+# file type nobody added to the map is served anyway, and *works*, because
+# Chrome sniffs the bytes and does the right thing. It has cost this deploy
+# twice — the small copies of every character, which no `<img>` decodes, and the
+# 209 recordings, which Safari would not play — and both times it was found
+# months later by something else. The two below ask the question directly, of
+# the files that ship rather than of the map, so the third time is a red run.
+
+def declared_types() -> dict[str, str]:
+    """`TYPES` from server.js, read out of the file that authors it.
+
+    Parsed rather than restated: a copy here would be free to agree with itself
+    while the server hands out something else, which is the entire failure mode
+    being tested. `object_block` bounds the literal and blanks the comments, so
+    the extensions merely *discussed* in them are not read as entries.
+    """
+    block = object_block((APP / "server.js").read_text(), "TYPES")
+    types = dict(re.findall(r'"([^"]+)":\s*"([^"]+)"', block))
+    assert types, "TYPES parsed to no entries, so both checks below are about an empty map"
+    return types
+
+
+def shipped_extensions() -> dict[str, Path]:
+    """Every file extension under public/, with one example to name it by.
+
+    Files with no extension at all are left out: they are served as
+    octet-stream too, but `TYPES` is keyed by extension and so has no way to
+    fix one — flagging them would be a gate with no gate-opening move. There
+    are none today; if one appears it is a decision, not a test failure.
+    """
+    found: dict[str, Path] = {}
+    for f in sorted((APP / "public").rglob("*")):
+        if f.is_file() and f.suffix:
+            found.setdefault(f.suffix.lower(), f)
+    return found
+
+
+def test_every_extension_that_ships_has_a_content_type():
+    """Asked of `public/`, because the map cannot say what is missing from it.
+
+    Reading `TYPES` and finding ten plausible entries says nothing: the entry
+    that is not there is invisible from that side, and the fallback means
+    nothing goes wrong when it is added. Walking the files inverts it — the
+    question becomes "is there anything here the server has no answer for", and
+    the answer is a filename someone can go and look at.
+
+    This one reads the repo, so it earns no `smoke`: pointed at a URL it would
+    still be walking this box's `public/`.
+    """
+    types, shipped = declared_types(), shipped_extensions()
+    unmapped = {ext: f for ext, f in shipped.items() if ext not in types}
+    assert not unmapped, (
+        "server.js has no Content-Type for " + ", ".join(
+            f"{ext} (e.g. {f.relative_to(APP).as_posix()})"
+            for ext, f in sorted(unmapped.items())) +
+        " — these ship, so the browser is handed application/octet-stream and left "
+        "to guess, which Chrome does and Safari does not")
+
+
+@pytest.mark.smoke
+def test_the_deploy_hands_out_the_types_the_server_declares(base_url):
+    """And the other half: what actually comes back over the wire.
+
+    The map being right is not the same fact as the bytes arriving labelled —
+    between the two sit a container that may be serving an older `server.js`
+    and an edge that is free to rewrite a header. One HEAD per extension, ten
+    requests, so it is cheap enough to run live on every ship.
+
+    Equality rather than a family match (`image/*`) on purpose: the charset on
+    the four text types is the part an edge is most likely to drop, and a
+    stylesheet arriving as `text/css` with no charset is worth being told about
+    before a player with a non-UTF-8 default finds it.
+    """
+    types = declared_types()
+    examples = {ext: f for ext, f in shipped_extensions().items() if ext in types}
+    assert examples, "no file under public/ has a mapped extension — nothing was asked"
+    bad = []
+    for ext, f in sorted(examples.items()):
+        rel = f.relative_to(APP / "public").as_posix()
+        got = head(base_url, rel)
+        if got["status"] != 200:
+            bad.append(f"{rel}: {got['status']}")
+        elif got["type"] != types[ext]:
+            bad.append(f"{rel}: served as {got['type']!r}, server.js says {types[ext]!r}")
+    assert not bad, (f"{len(bad)} of {len(examples)} extensions are not served as server.js "
+                     f"declares them at {base_url}: {bad}")
 
 
 @pytest.mark.parametrize("screen", ["story", "bio", "picker"])
