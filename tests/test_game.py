@@ -287,10 +287,14 @@ def play_chapter(page, index):
 # The content floors monitoring reads. Cheap, and a failure here explains most
 # of the failures below, so it runs first.
 
-@pytest.fixture(scope="module")
-def health(base_url):
+def fetch_health(base_url):
     with urllib.request.urlopen(f"{base_url}/api/health", timeout=15) as resp:
         return json.loads(resp.read())
+
+
+@pytest.fixture(scope="module")
+def health(base_url):
+    return fetch_health(base_url)
 
 
 def test_health_says_ok(health):
@@ -303,6 +307,26 @@ def test_all_25_characters_shipped(health):
 
 def test_every_chapter_in_the_source_is_shipped(health):
     assert health.get("chapters") == CHAPTER_COUNT, f"got {health.get('chapters')}"
+
+
+def test_health_says_how_long_this_process_has_been_running(base_url):
+    """The one number here that describes the process rather than the build.
+
+    #486 was a request any scanner could send that killed this container.
+    Railway started another one in seconds, serving the same revision and the
+    same 25 characters, so every check above stayed green for the life of the
+    deploy and the crash was only ever visible to whoever was mid-click. The
+    age of the process is the evidence that survives that (#487), and it is
+    asserted by reading it twice, because a constant would pass any single read.
+
+    Not on the module-scoped `health` fixture on purpose: that one is fetched
+    once and shared, so a second look at it would be the same dictionary.
+    """
+    first = fetch_health(base_url)["uptime_s"]
+    assert isinstance(first, (int, float)) and first >= 0, f"got {first!r}"
+    time.sleep(0.3)
+    second = fetch_health(base_url)["uptime_s"]
+    assert second > first, f"uptime_s did not move across a 0.3s sleep: {first} -> {second}"
 
 
 # --- the character artwork --------------------------------------------------

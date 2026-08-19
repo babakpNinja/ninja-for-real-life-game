@@ -88,6 +88,14 @@ const server = http.createServer((req, res) => {
       // is the only thing that proves a push swapped the container rather than the
       // old one still answering
       revision: process.env.RAILWAY_GIT_COMMIT_SHA || process.env.DEPLOY_REVISION || null,
+      // how long *this process* has been running, to a tenth of a second. Every
+      // other number here describes the build and none of them moves when the
+      // process dies and Railway starts another one — which is how a crash any
+      // scanner could trigger (#486) stayed invisible for the life of a deploy.
+      // A check that remembers this between runs can see a restart it slept
+      // through (#487); tenths, so a test can watch it grow without sleeping a
+      // whole second.
+      uptime_s: Math.round(process.uptime() * 10) / 10,
       ...CONTENT,
     }));
   }
