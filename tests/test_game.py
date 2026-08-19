@@ -520,6 +520,13 @@ def test_every_response_asks_not_to_be_indexed_in_a_header_too(base_url, rel):
     a header set at one exit and forgotten at the next is the failure to catch.
     `smoke`, because the container and the edge in front of it are both free to
     be serving a version of this that predates the line.
+
+    The whole value, not `"noindex" in got`: X-Robots-Tag may be scoped to a
+    single crawler, and `googlebot: noindex` contains the word while telling
+    every other crawler nothing. The gate stopped reading it as a substring in
+    #472; this suite kept doing it until #474. The expected string is written
+    out here rather than read from server.js — a test that takes the value from
+    the code it checks agrees with whatever that code says next.
     """
     req = urllib.request.Request(f"{base_url}/{rel}", method="HEAD")
     try:
@@ -527,10 +534,11 @@ def test_every_response_asks_not_to_be_indexed_in_a_header_too(base_url, rel):
             got = resp.headers.get("X-Robots-Tag")
     except urllib.error.HTTPError as err:      # the 404 is one of the cases
         got = err.headers.get("X-Robots-Tag")
-    assert got and "noindex" in got, (
-        f"/{rel} came back with X-Robots-Tag {got!r} at {base_url}, so a crawler that "
-        f"never fetched robots.txt — or fetched it and was handed the wrong type, "
-        f"which is what happened here for months — is told nothing")
+    assert got == "noindex, nofollow", (
+        f"/{rel} came back with X-Robots-Tag {got!r} at {base_url}, not "
+        f"'noindex, nofollow', so a crawler that never fetched robots.txt — or "
+        f"fetched it and was handed the wrong type, which is what happened here for "
+        f"months — may be told nothing that applies to it")
 
 
 # --- desktop: the menus a grown-up drives -----------------------------------
