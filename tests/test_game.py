@@ -517,8 +517,10 @@ NOINDEX_TRAVERSAL = "%2e%2e%2f%2e%2e%2fetc/passwd"
 #: A percent-escape that does not decode, which is the 400 — the exit that used
 #: to be the process dying (#486). Worth a subject of its own: it is answered
 #: before the request is understood at all, which is exactly where a header set
-#: further down would have been skipped.
-NOINDEX_UNREADABLE = "%zz"
+#: further down would have been skipped. `%e0%a4` and not the shorter `%zz`
+#: because this subject is also asked of the *deploy*, and `%zz` never gets
+#: there: see MALFORMED_PATHS.
+NOINDEX_UNREADABLE = "%e0%a4"
 
 
 def declared_api_paths() -> list[str]:
@@ -649,11 +651,23 @@ def test_every_response_asks_not_to_be_indexed_in_a_header_too(base_url, rel):
 
 #: Paths that do not decode. Each is answered rather than fatal; what they
 #: decode *to* is not the point, so there is nothing to assert about a body.
+#:
+#: Two of the four are `smoke` and two are not, because only two of them reach
+#: this server through a deploy. Railway's edge parses the request line itself
+#: and answers `%zz` and `%` with its own `502 upstream error` — `server:
+#: railway-hikari`, no `x-railway-request-id`, no `X-Robots-Tag`, 0.16s, and
+#: /api/health 200 either side of it, so nothing was restarted (measured against
+#: the deploy, #486). Asked live those two would be a test of Railway's proxy.
+#: The other two are valid escape *syntax*, which the edge forwards; what they
+#: decode to is what this server used to die on. So they are the pair that can
+#: say a deployed container survives a malformed path, and they cover both
+#: shapes of death: `%e0%a4` throws URIError out of `decodeURIComponent`, `%00`
+#: decodes cleanly and is refused by `fs.readFile` synchronously.
 MALFORMED_PATHS = [
-    "%zz",           # not hex at all
-    "%",             # an escape with nothing after it
-    "%00",           # decodes to a NUL, which fs.readFile refuses synchronously
-    "%e0%a4",        # a truncated UTF-8 sequence: valid hex, not a character
+    pytest.param("%zz"),                              # not hex at all
+    pytest.param("%"),                                # an escape with nothing after it
+    pytest.param("%00", marks=pytest.mark.smoke),     # a NUL, which fs.readFile refuses synchronously
+    pytest.param("%e0%a4", marks=pytest.mark.smoke),  # a truncated UTF-8 sequence: valid hex, not a character
 ]
 
 #: Paths that decode to somewhere outside `public/`. The slashes are encoded so
@@ -684,7 +698,6 @@ def status_of(url: str, method: str = "HEAD") -> int | str:
         return f"{type(exc).__name__}: {exc}"
 
 
-@pytest.mark.smoke
 @pytest.mark.parametrize("rel", MALFORMED_PATHS)
 def test_a_path_the_server_cannot_read_is_answered_and_it_keeps_serving(base_url, rel):
     """Twice on purpose: the status is the small half, the second ask is the test.
@@ -692,6 +705,11 @@ def test_a_path_the_server_cannot_read_is_answered_and_it_keeps_serving(base_url
     A handler that returns 400 and then dies passes any single-request version
     of this, and dying is the whole bug — the request that killed the process
     got a connection reset, and so did every player holding the page.
+
+    `smoke` is on the parameters rather than here: two of the four never reach a
+    deployed container at all (MALFORMED_PATHS says which, and how that was
+    measured), so live they would be asking Railway's proxy a question about
+    this server.
     """
     got = status_of(f"{base_url}/{rel}")
     assert got == 400, (
