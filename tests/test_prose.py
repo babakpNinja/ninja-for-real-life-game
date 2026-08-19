@@ -1257,7 +1257,16 @@ def naive_still_swung(src):
 
 
 def naive_particle_sites(src):
-    return sorted(re.findall(r"this\.(puff|scuff|sparkle)\(", src))
+    """The site's own regex, on source whose comments are still in it.
+
+    The factory list is taken from `test_game.FACTORIES` rather than written out
+    here: this one drifted, and hard-coding three of the five was enough to make
+    the drill below pass on a difference that had nothing to do with prose (#447).
+    A twin that names its own subjects stops being a twin the moment the site
+    learns a new one.
+    """
+    factories = game_and_scripts()[0].FACTORIES
+    return sorted(re.findall(r"this\.(" + "|".join(factories) + r")\(", src))
 
 
 SPRITES = APP / "public" / "js" / "sprites.js"
@@ -1294,6 +1303,56 @@ PARSED_SITES = [
 ]
 
 
+def twin_drift(naive, got, src: str) -> str:
+    """Why `naive` has stopped being the site's own question, or "" if it has not.
+
+    The drill below compares what a site derives against what a comment-reading
+    parse of the same source would derive, and takes the difference as evidence
+    the site ignores prose. That only follows if the two differ in *exactly* one
+    way — the blanking. So: feed the naive parse source whose comments are already
+    blanked, and it must land on the site's answer. #447 is what it looks like when
+    it does not. The particle twin named three of the engine's five factories, the
+    two it never named made the answers differ on their own, and `got != fooled`
+    therefore held whatever the site did with comments — the site's mutation
+    SURVIVED for months against a drill that could not fail.
+
+    One function, called with the real sites here and with deliberately wrong ones
+    in the drill next to it, so the check and its own proof ask the same question.
+    """
+    blanked = naive(code_only(src))
+    if blanked == got:
+        return ""
+    return (f"with the comments blanked first, the naive parse says {blanked} where the "
+            f"site says {got}. The two are no longer asking the same question, so the "
+            "difference checked before this is coming from somewhere other than prose "
+            "and the drill passes for free. Bring the twin back into line with the site "
+            "— it should differ from it in exactly one way, the blanking.")
+
+
+def test_a_twin_that_stopped_asking_the_sites_question_is_caught():
+    """The #447 shape in miniature: a twin that names fewer subjects than the site.
+
+    Both parses are given the same source, and the site's answer is what its own
+    regex says with the comments gone. The twin below is narrowed the way the real
+    one was — it looks for one of the two names — so it differs from the site for a
+    reason that has nothing to do with the comment, which is exactly the difference
+    the drill would otherwise read as proof.
+    """
+    src = 'this.puff();\n// a cloud bounce makes no this.puff()\nthis.gustMotes();\n'
+    site = collections.Counter(re.findall(r"this\.(puff|gustMotes)\(", code_only(src)))
+    faithful = lambda s: collections.Counter(re.findall(r"this\.(puff|gustMotes)\(", s))
+    narrowed = lambda s: collections.Counter(re.findall(r"this\.(puff)\(", s))
+
+    assert twin_drift(faithful, site, src) == "", (
+        "a twin that asks the site's question of comment-free source and gets the "
+        "site's answer was called drifted, so every site here would fail for nothing")
+    complaint = twin_drift(narrowed, site, src)
+    assert "gustMotes" in complaint, (
+        f"a twin that stopped naming one of the site's subjects went unremarked "
+        f"({complaint!r}) — this is #447, and it is the case where the drill above "
+        "still passes while the site it guards is free to read prose again")
+
+
 @pytest.mark.parametrize("what,path,naive,live", PARSED_SITES,
                          ids=[s[0].split(" (")[0] for s in PARSED_SITES])
 def test_a_site_that_reads_the_javascript_reads_its_code_and_not_its_prose(
@@ -1316,6 +1375,10 @@ def test_a_site_that_reads_the_javascript_reads_its_code_and_not_its_prose(
         "fail — or the comment that told the two apart is gone. Put back a comment that "
         "names what the code is not (see #233), or delete the site's mutation with the "
         "drill.")
+    # Second, and second on purpose: a site that reads prose again fails the line
+    # above with the #231 wording, and only a twin that has drifted reaches this one.
+    drift = twin_drift(naive, got, path.read_text())
+    assert not drift, f"{what}: {drift}"
 
 
 # ------------------------- a screen shows itself before it reads itself (#301)
