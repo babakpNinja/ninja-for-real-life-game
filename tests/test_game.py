@@ -503,9 +503,104 @@ def test_the_page_asks_not_to_be_indexed(base_url):
         assert "Disallow: /" in resp.read().decode()
 
 
+#: A path no file and no route will ever claim, so it reaches the exit that only
+#: answers what the server has nothing for.
+NOINDEX_PROBE = "ninja-noindex-probe-no-such-file"
+
+#: A path that leaves ROOT, which server.js refuses with a 403 — one exit no
+#: `Disallow:` line can be about, because what is asking is not asking for a
+#: page. `%2f` rather than a plain slash so the `..` segments survive: written
+#: out, the URL parser folds them away and the server is never asked the
+#: question. Until #486 nothing reached this exit at all.
+NOINDEX_TRAVERSAL = "%2e%2e%2f%2e%2e%2fetc/passwd"
+
+#: A percent-escape that does not decode, which is the 400 — the exit that used
+#: to be the process dying (#486). Worth a subject of its own: it is answered
+#: before the request is understood at all, which is exactly where a header set
+#: further down would have been skipped.
+NOINDEX_UNREADABLE = "%zz"
+
+
+def declared_api_paths() -> list[str]:
+    """The pathnames server.js answers itself, read out of the file that says so.
+
+    Parsed rather than listed for the same reason `declared_types` is: a copy
+    here is free to agree with itself while the server has grown a route it
+    knows nothing about, and an unasked route is exactly what #479 is about.
+    """
+    paths = re.findall(r'url\.pathname === "([^"]+)"', code_only((APP / "server.js").read_text()))
+    assert paths, ("no `url.pathname === \"…\"` comparison parsed out of server.js, so the "
+                   "subjects below quietly stopped covering the routes it answers itself — "
+                   "teach the pattern, or the list has gone back to being hand-written")
+    return paths
+
+
+def noindex_subjects() -> list[str]:
+    """Every kind of response this server makes, derived rather than listed.
+
+    The hand-written five this replaced (#479) named `index.html` and a 404 and
+    nothing under `js/` or `audio/` — so a header dropped for one prefix, which
+    is what a caching or rewriting rule in front of the deploy would do, was
+    invisible to it. What is asked instead:
+
+      * the root, which the server rewrites to index.html;
+      * one representative file per top-level entry of `public/`, so a folder
+        added to the game is asked without an edit here;
+      * one unrouted path under each of those folders, and one at the root:
+        a 404 is written by a different branch than a 200, and a rule scoped to
+        a prefix would still leave the root's 404 correct;
+      * the routes server.js answers itself, parsed out of it;
+      * the traversal 403 and the undecodable 400, which are the two exits a
+        crawler reaches by accident rather than by asking for a page (#486).
+
+    Read off this box's `public/` while the request goes to the deploy, which is
+    the right way round: the repo is the declaration of what should be there,
+    and a file the deploy is missing answers a 404 that still has to carry the
+    header. `head`'s HEAD is kept: Node runs the same handler and drops the
+    body, so the header is written by the same line, and the audio folder alone
+    is 40MB that no assertion here would read.
+    """
+    root = APP / "public"
+    rels = ["", NOINDEX_PROBE, NOINDEX_TRAVERSAL, NOINDEX_UNREADABLE]
+    rels += [p.lstrip("/") for p in declared_api_paths()]
+    for entry in sorted(root.iterdir()):
+        if entry.is_file():
+            rels.append(entry.name)
+            continue
+        files = sorted(f for f in entry.rglob("*") if f.is_file())
+        assert files, (f"public/{entry.name}/ ships no files, so this asks it nothing but its "
+                       f"404 — an empty folder in the deploy is its own bug, not a subject")
+        rels.append(files[0].relative_to(root).as_posix())
+        rels.append(f"{entry.name}/{NOINDEX_PROBE}")
+    return list(dict.fromkeys(rels))
+
+
+NOINDEX_SUBJECTS = noindex_subjects()
+
+
+def test_every_top_level_entry_of_public_is_a_noindex_subject():
+    """The derivation's own oracle: a list that got shorter is what to catch.
+
+    `noindex_subjects` reads the filesystem, and something that reads the world
+    can come back with less of it — a glob that stops matching, a folder moved
+    one level down — and a parametrised test that lost half its ids reports the
+    same green as one that kept them (#479). This says the ids still reach every
+    top-level thing the deploy serves, so shrinking is a red run and not a
+    quieter one. It reads the repo, so no `smoke`.
+    """
+    unasked = [e.name for e in sorted((APP / "public").iterdir())
+               if not any(s == e.name or s.startswith(f"{e.name}/") for s in NOINDEX_SUBJECTS)]
+    assert not unasked, (
+        f"nothing under {unasked} is asked for its X-Robots-Tag, so a header dropped for "
+        f"just that prefix would pass this suite; the subjects are derived from public/ and "
+        f"one of them stopped coming out of the walk")
+    assert len(NOINDEX_SUBJECTS) > 5, (
+        f"the derivation produced {len(NOINDEX_SUBJECTS)} subjects, no more than the "
+        f"hand-written five it replaced, so #479 bought nothing")
+
+
 @pytest.mark.smoke
-@pytest.mark.parametrize("rel", ["", "robots.txt", "index.html", "api/health",
-                                 "no-such-file-here"])
+@pytest.mark.parametrize("rel", NOINDEX_SUBJECTS)
 def test_every_response_asks_not_to_be_indexed_in_a_header_too(base_url, rel):
     """The same ask, in the form that does not depend on a file being read.
 
@@ -534,11 +629,113 @@ def test_every_response_asks_not_to_be_indexed_in_a_header_too(base_url, rel):
             got = resp.headers.get("X-Robots-Tag")
     except urllib.error.HTTPError as err:      # the 404 is one of the cases
         got = err.headers.get("X-Robots-Tag")
+    # One sentence, and the same one whatever moves around it: this is what a
+    # mutation drill records, and a message that re-words itself reads as drift
+    # rather than as the catch it is. The history is in the docstring above.
     assert got == "noindex, nofollow", (
-        f"/{rel} came back with X-Robots-Tag {got!r} at {base_url}, not "
-        f"'noindex, nofollow', so a crawler that never fetched robots.txt — or "
-        f"fetched it and was handed the wrong type, which is what happened here for "
-        f"months — may be told nothing that applies to it")
+        f"/{rel} came back with X-Robots-Tag {got!r}, not 'noindex, nofollow', so a crawler "
+        f"that never fetched robots.txt is told nothing that applies to it")
+
+
+# --- a request this server cannot read (#486) --------------------------------
+# Three shapes of path used to end the process rather than the request: an
+# escape that does not decode (`decodeURIComponent("%zz")` throws URIError), a
+# Host header that is not a hostname (`new URL` throws), and a NUL byte, which
+# `fs.readFile` refuses by throwing *synchronously* out of the call. Node has
+# nothing above the request handler to catch any of them, so one request from
+# any scanner killed the container. Railway restarts it in seconds, which is why
+# this was invisible from here — the daily uptime check saw a demo that was up,
+# and only whoever was mid-click saw the page stop loading.
+
+#: Paths that do not decode. Each is answered rather than fatal; what they
+#: decode *to* is not the point, so there is nothing to assert about a body.
+MALFORMED_PATHS = [
+    "%zz",           # not hex at all
+    "%",             # an escape with nothing after it
+    "%00",           # decodes to a NUL, which fs.readFile refuses synchronously
+    "%e0%a4",        # a truncated UTF-8 sequence: valid hex, not a character
+]
+
+#: Paths that decode to somewhere outside `public/`. The slashes are encoded so
+#: the `..` survives: written plainly, the URL parser folds the segments away
+#: before the server is asked anything, which is how this exit went untested
+#: long enough to become unreachable.
+TRAVERSAL_PATHS = [
+    "%2e%2e%2f%2e%2e%2fetc/passwd",   # dots and slashes encoded: one segment, to the parser
+    "..%2f..%2fetc/passwd",           # dots plain — a segment of `..` alone would be folded
+    "%2e%2e%2fpublic-not%2fsecret",   # a sibling whose name merely starts with public
+    "%2f%2e%2e%2f%2e%2e%2fetc",       # a leading encoded slash, so the decoded path starts `//`
+]
+
+
+def status_of(url: str, method: str = "HEAD") -> int | str:
+    """The status, or a string naming why there was not one.
+
+    A server that has died answers `URLError: Connection refused`, and that is
+    the answer these tests exist to tell apart from a 400 — so it is returned
+    rather than raised, and lands in the assertion message.
+    """
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, method=method), timeout=15) as r:
+            return r.status
+    except urllib.error.HTTPError as err:
+        return err.code
+    except Exception as exc:                                        # noqa: BLE001
+        return f"{type(exc).__name__}: {exc}"
+
+
+@pytest.mark.smoke
+@pytest.mark.parametrize("rel", MALFORMED_PATHS)
+def test_a_path_the_server_cannot_read_is_answered_and_it_keeps_serving(base_url, rel):
+    """Twice on purpose: the status is the small half, the second ask is the test.
+
+    A handler that returns 400 and then dies passes any single-request version
+    of this, and dying is the whole bug — the request that killed the process
+    got a connection reset, and so did every player holding the page.
+    """
+    got = status_of(f"{base_url}/{rel}")
+    assert got == 400, (
+        f"/{rel} was answered {got}, not the 400 a path this server cannot parse should "
+        f"get — a URIError thrown out of the request handler has nowhere to be caught")
+    after = status_of(f"{base_url}/api/health", method="GET")
+    assert after == 200, (
+        f"/api/health answered {after} straight after /{rel}, so that one request took the "
+        f"server down with it rather than being refused")
+
+
+@pytest.mark.smoke
+@pytest.mark.parametrize("rel", TRAVERSAL_PATHS)
+def test_a_path_that_leaves_the_public_folder_is_refused(base_url, rel):
+    """403, and specifically not 404: the difference is which code answered.
+
+    Both are safe — a 404 here means the path was clamped back inside `public/`
+    and simply missed — but a clamp is a side-effect of `path.normalize`, not a
+    decision, and the branch that looks like the defence was unreachable behind
+    it (#486). Asserting the refusal is what keeps the guard the thing doing the
+    guarding; `public-not` is in the list because a sibling whose name starts
+    with the served folder is what a `startsWith(ROOT)` check without the
+    separator would hand over.
+    """
+    got = status_of(f"{base_url}/{rel}")
+    assert got == 403, (
+        f"/{rel} was answered {got}, not the 403 a path resolving outside public/ should get, "
+        f"so what stops a traversal here is not the check that appears to")
+
+
+@pytest.mark.smoke
+def test_the_files_the_game_needs_are_still_served(base_url):
+    """The other half of a refusal: that it refuses only what it should.
+
+    A guard tightened until everything is a 403 also passes both tests above,
+    and this is a static file server — the way a path fix goes wrong is the game
+    going blank, not a leak.
+    """
+    served = {rel: status_of(f"{base_url}/{rel}")
+              for rel in ("", "index.html", "js/game.js", "css/style.css", "robots.txt")}
+    wrong = {rel: got for rel, got in served.items() if got != 200}
+    assert not wrong, (
+        f"{wrong} — a path check that refuses the game's own files is a broken deploy, "
+        f"whatever it does for a traversal")
 
 
 # --- desktop: the menus a grown-up drives -----------------------------------

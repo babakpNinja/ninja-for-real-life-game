@@ -57,11 +57,29 @@ const server = http.createServer((req, res) => {
   // crawler fetches it *and* it comes back as text/plain, which it did not for
   // as long as this deploy existed (#369) — a header depends on neither, and
   // rides on the responses (a 404, a directory-traversal 403) that no
-  // `Disallow:` line covers. Set once, before the four exits below, so a route
-  // added later cannot forget it: Node merges headers set here with the object
+  // `Disallow:` line covers. Set first, above every exit below — including the
+  // 400s a request this cannot parse gets — so a route or a refusal added later
+  // cannot forget it: Node merges headers set here with the object
   // passed to writeHead, and none of those repeat this name.
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
-  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+
+  // A request line this cannot read is a 400, not the end of the process (#486).
+  // `decodeURIComponent("%zz")` throws URIError and `new URL` throws on a Host
+  // header that is not a hostname; there is nowhere above this to catch either,
+  // so one malformed path from any scanner used to kill the container. Railway
+  // restarts it in seconds, which is exactly why nothing here noticed: the
+  // uptime check saw a demo that was up, and whoever was mid-click saw a page
+  // that stopped loading. Both are parsed together because both are the same
+  // answer — this server could not understand the request at all.
+  let url, rel;
+  try {
+    url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    rel = decodeURIComponent(url.pathname);
+  } catch {
+    res.writeHead(400, { "Content-Type": "text/plain" });
+    return res.end("Bad request");
+  }
+
   if (url.pathname === "/api/health" || url.pathname === "/healthz") {
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     return res.end(JSON.stringify({
@@ -74,11 +92,29 @@ const server = http.createServer((req, res) => {
     }));
   }
 
-  let rel = decodeURIComponent(url.pathname);
+  // The third malformed shape, and the one that does not look like the other
+  // two: a NUL byte survives decoding, and `fs.readFile` rejects it by throwing
+  // *synchronously* out of the call below — same dead process, a different line.
+  if (rel.includes("\0")) {
+    res.writeHead(400, { "Content-Type": "text/plain" });
+    return res.end("Bad request");
+  }
+
   if (rel === "/") rel = "/index.html";
-  const file = path.join(ROOT, path.normalize(rel));
-  if (!file.startsWith(ROOT)) {
-    res.writeHead(403);
+  // Resolved *underneath* ROOT rather than normalised as an absolute path, so
+  // that the refusal below is the thing stopping a traversal rather than a
+  // side-effect nobody tested (#486). `path.normalize("/../../etc/passwd")` is
+  // "/etc/passwd" — an absolute path has nowhere above its root to go — so the
+  // old `path.join(ROOT, …)` landed back inside ROOT whatever was asked, the
+  // 403 was unreachable, and `/%2e%2e%2fpublic-not/secret` quietly became a 404
+  // for a file under public/. Against `.${rel}` the `..` segments survive
+  // resolution and the check answers them.
+  const file = path.resolve(ROOT, `.${rel}`);
+  // `startsWith(ROOT)` alone would also accept a sibling whose name merely
+  // begins with it — /app/public-not is not /app/public — so the separator is
+  // part of the question.
+  if (file !== ROOT && !file.startsWith(ROOT + path.sep)) {
+    res.writeHead(403, { "Content-Type": "text/plain" });
     return res.end("nope");
   }
 
