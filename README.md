@@ -221,11 +221,17 @@ then resume when the connection returns), and dropped exactly once (that
 character still ends up drawn from its own artwork).
 
 ```bash
-python -m pytest tests -q                                # boots its own server
-python -m pytest tests -q --base-url=https://<live-url>  # against the deployed site
+python -m pytest tests -q -rsfE                                # boots its own server
+python -m pytest tests -q -rsfE --base-url=https://<live-url>  # against the deployed site
 ```
 
-98 tests, ~30s either way. With no `--base-url` the session starts `node server.js`
+546 tests, ~17min offline — this is the long pole of a ship, not a quick check.
+`-rsfE` is not decoration: without the `s`, a skip is a count that quietly shrank
+and pytest never says which check stopped running, and three of the guards here
+skip themselves when the box is too busy to judge a frame rate. `tools/ship.py`
+runs exactly this argv, and a test fails if this line stops matching it.
+
+With no `--base-url` the session starts `node server.js`
 on a free port and stops it afterwards, so the suite needs nothing running and does
 not disturb a dev server on 3000. They share one browser page per viewport and run
 in file order, because the game is a sequence: a chapter has to be played before
