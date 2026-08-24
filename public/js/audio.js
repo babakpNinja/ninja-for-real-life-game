@@ -229,11 +229,21 @@ export class Sound {
     let answered = false;
     let heard = 0;
     let at = 0;
+    // no run check here, deliberately: `answer` is a local closure and its only
+    // two callers are the two lines below, both inside `next()` and both past
+    // `next()`'s own check, in the same synchronous frame with nothing awaited
+    // in between. A check here can never be the one that stops a superseded
+    // read — #771 measured it as a mutation nothing in the suite could catch.
     const answer = (fn, e) => {
-      if (answered || run !== this.speechRun || !fn) return;
+      if (answered || !fn) return;
       answered = true;
       fn(e);
     };
+    // The one place that decides a read has been superseded (#771). Everything
+    // downstream — `answer` above, `speakLine`'s finish, `buffer` — reaches its
+    // own next step through this line, so it is the single author of the fact
+    // and the only one a test can hold to account. Do not re-ask it elsewhere:
+    // a second copy makes both copies uncatchable.
     const next = () => {
       if (run !== this.speechRun) return;   // a newer read owns the queue now
       if (at >= plan.length) {
@@ -341,8 +351,11 @@ export class Sound {
     say.rate = 0.92;              // slower than default: it is being read to a child
     say.pitch = 1.1;
     let done = false;
+    // no run check here either (#771): `after` is always `next`, which asks it,
+    // and `onspoken` only bumps a superseded read's own local counter. Held
+    // here as well it made both copies uncatchable — see the note by `next()`.
     const finish = (spoke) => {
-      if (done || run !== this.speechRun) return;
+      if (done) return;
       done = true;
       if (spoke) onspoken();
       after();

@@ -1180,6 +1180,42 @@ def test_muting_while_the_story_is_being_read_stops_it(own_page):
     page.evaluate("() => document.getElementById('btn-mute').click()")
 
 
+def test_a_cancelled_read_stops_when_its_line_reports_back(own_page):
+    """Hushing is not the end of it: the line already in flight still answers.
+
+    `hush()` bumps `speechRun` and cancels — but the browser's speech engine
+    hands the cancelled utterance its `onend` afterwards, and that callback is
+    holding a closure over the whole rest of the story. Without `next()`'s run
+    check the read picks up where it was interrupted and reads the remaining
+    lines over the screen you have just moved to (#771).
+
+    On the browser-voice fallback deliberately, and it is the only path that can
+    show this. A deploy whose `voices.json` did not load runs on exactly this
+    (`boot()` in main.js says so); the recorded path cannot be asked the same
+    question, because `stopClip()` nulls the `<audio>` handlers and removes the
+    element, so a clip that ends after a hush has nothing left to call.
+    """
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.evaluate("() => { window.__sound.voices = null; }")
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-go")
+    spoken = page.evaluate("() => window.__spoke")
+    assert len(spoken) == 1, (
+        f"expected one line in flight and the rest of the card queued behind it, "
+        f"got {spoken} — nothing here is a cancelled read any more")
+    page.evaluate("() => window.__sound.hush()")
+    # one drain, and it is the interrupted line's own onend. If the read carries
+    # on it speaks the next line, which queues another callback, and the drain
+    # keeps going until the card is finished — so the count is the assertion
+    fired = page.evaluate("() => window.__finish()")
+    extra = page.evaluate("() => window.__spoke.slice(1)")
+    assert not extra, (
+        f"the read was cancelled and then said {len(extra)} more line(s) of the card "
+        f"out loud over the screen that replaced it")
+    assert fired == 1, f"{fired} callbacks fired for one interrupted line"
+
+
 # --- hearing it again, and being told what is happening (#290) ---------------
 # The read above happens once, when the card opens, and there is nothing on the
 # card about it: a three-year-old who misses the start cannot ask for it back,
