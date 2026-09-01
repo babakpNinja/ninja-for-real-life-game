@@ -4807,6 +4807,27 @@ def test_what_the_artwork_is_worth_to_the_visibility_measurement(own_page):
 SLOW_LINK = {"offline": False, "latency": 800,
              "downloadThroughput": 200_000, "uploadThroughput": 200_000}
 
+# Which burst the test below asks about, chosen by measurement rather than by
+# the story (#789). Most chapter/source pairs answer a mid-load page and a
+# settled page with the same two numbers, so a test pointed at one of those
+# passes whether or not `particles_seen` waits for anything — which is exactly
+# what happened here: this test used to ask for the footfall dust on chapter 4,
+# and deleting the warm-up and the settle out of `particles_seen` left the whole
+# 443-test suite green.
+#
+# Sweeping all 60 chapter/source pairs at two seeds, with every request under
+# `assets/` refused, 36 of them do move. This is the largest of them: the gust's
+# leaves on chapter 7 are worth 17/255 of `top` (149 settled, 132 bare), which is
+# four times the 4/255 the probe is allowed to owe to page state above and far
+# more than the 2/255 that failed the ship in #222. It is `top` and not `seen`
+# that moves, so both are compared.
+#
+# Worth knowing if this ever has to be re-chosen: the 17 is carried by the *pose*
+# frames, not the character sprites. `..._what_the_artwork_is_worth_...` above
+# blocks only `assets/characters/*` and leaves the poses loading, and under that
+# narrower blocking this same case measures 149 both ways.
+MID_LOAD_CHAPTER, MID_LOAD_SOURCE = 7, "the gust's flying leaves"
+
 
 def test_the_visibility_probe_answers_the_same_on_a_page_still_loading(own_page):
     """The failure this reproduces only ever happened over a network.
@@ -4821,6 +4842,23 @@ def test_the_visibility_probe_answers_the_same_on_a_page_still_loading(own_page)
     measurement on a page that is still fetching its artwork, it answers what
     the settled page answers. Take its warm-up pass away and the two differ,
     which is the mutation recorded against this test.
+
+    That last sentence was untrue for four months and is the reason for the
+    third measurement below. Comparing a mid-load answer with a settled one only
+    means something if this burst is one the artwork *changes*; on the case this
+    used to ask about it is not, so both sides were equal in either world and the
+    assertion could not fail. So the same burst is measured a third time on a
+    page whose artwork is refused outright, and that answer has to *differ* from
+    the settled one. It is the control: it says this burst can tell a drawn page
+    from an undrawn one, which is what makes the equality above a claim.
+
+    The control is measured last, on its own reload, rather than by asking the
+    still-loading page before the warm-up — which is the cheaper thing and was
+    tried first. Drawing the burst is what *asks* for the artwork, so a control
+    taken that way starts the fetch it is trying to observe, and the measurement
+    after it races the sprites down the wire: with the warm-up deleted that
+    ordering caught the mutation two runs in three. A page whose requests are
+    aborted has nothing in flight to race.
     """
     cdp = own_page.context.new_cdp_session(own_page)
     cdp.send("Network.enable")
@@ -4837,16 +4875,44 @@ def test_the_visibility_probe_answers_the_same_on_a_page_still_loading(own_page)
         f"was ready ({len(art['loaded'])} sprites, {len(art['poseFrames'])} pose "
         "frames), so this test measured a settled page twice and proves nothing — "
         "the link above is not slow enough to reach the state it is here for")
-    mid = particles_seen(own_page, 4, "the footfall dust")
+
+    js = probe_js(MID_LOAD_SOURCE)
+    ask = {"chapter": MID_LOAD_CHAPTER, "frames": 40, "seed": SEED}
+    mid = particles_seen(own_page, MID_LOAD_CHAPTER, MID_LOAD_SOURCE)
 
     own_page.wait_for_function(ART_SETTLED, timeout=60000)
-    js = probe_js("the footfall dust")
-    settled = own_page.evaluate(js, {"chapter": 4, "frames": 40, "seed": SEED})
+    settled = own_page.evaluate(js, ask)
+
+    # ...and the control, on a page that will never have any artwork. The link
+    # goes back to normal for it: with every sprite refused there is nothing
+    # slow left to wait for, and the page's own scripts have to arrive.
+    cdp.send("Network.emulateNetworkConditions",
+             {"offline": False, "latency": 0,
+              "downloadThroughput": -1, "uploadThroughput": -1})
+    own_page.route("**/assets/**", lambda route: route.abort())
+    own_page.reload(wait_until="domcontentloaded")
+    own_page.wait_for_function("window.__ready === true", timeout=20000)
+    own_page.wait_for_function("() => window.__art().failed.length >= 5", timeout=30000)
+    bare = particles_seen(own_page, MID_LOAD_CHAPTER, MID_LOAD_SOURCE)
+
+    for name, r in (("mid-load", mid), ("settled", settled), ("artwork-free", bare)):
+        assert not r.get("skipped"), (
+            f"the {name} measurement never fired {MID_LOAD_SOURCE} on chapter "
+            f"{MID_LOAD_CHAPTER}: {r['skipped']} — this test compared nothing with "
+            "nothing, and the case above has to be re-chosen")
+    # Both messages are kept to a sentence on purpose: a recorded catcher is
+    # what a later run diffs against, and a paragraph of dumped state is a thing
+    # to eyeball rather than a claim to act on (mutate.py's DUMP_NOTE).
+    assert (bare["seen"], bare["top"]) != (settled["seen"], settled["top"]), (
+        f"the same seeded burst read (seen, top) {(bare['seen'], bare['top'])} with "
+        "every sprite refused and the same settled — this burst cannot tell a drawn "
+        "page from an undrawn one, so the equality below holds whether or not "
+        "anything waits for the artwork")
     assert (mid["seen"], mid["top"]) == (settled["seen"], settled["top"]), (
-        f"asked on a page still fetching its sprites the probe said {mid}, and the "
-        f"same page once everything had arrived said {settled} — what it reports is "
-        "partly how much of the page was there when it was asked, which is a ship "
-        "failing on a burst nothing is wrong with (#222)")
+        f"the probe read (seen, top) {(mid['seen'], mid['top'])} on a page still "
+        f"fetching its sprites and {(settled['seen'], settled['top'])} once they had "
+        "arrived — what it reports is partly how much of the page had loaded, which "
+        "is how #222 failed a ship on a good burst")
 
 
 # The particle call sites in the engine. Code only: a call named in a comment,
