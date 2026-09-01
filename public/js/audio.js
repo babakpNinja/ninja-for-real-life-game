@@ -256,7 +256,7 @@ export class Sound {
       // (#358). One ahead and no further: the whole screen up front is a story
       // card that downloads a megabyte before it says anything.
       const soon = plan[at];
-      if (soon && soon.clip) this.ahead = this.buffer(soon, run);
+      if (soon && soon.clip) this.ahead = this.buffer(soon);
       const fallback = recorded ? next
                                 : () => this.speakLine(step, run, next, () => { heard++; });
       if (step.clip) this.playClip(step, run, () => { heard++; next(); }, fallback);
@@ -283,9 +283,19 @@ export class Sound {
    * which also makes the element for the line playing *now* — because `hush()`
    * has to be able to throw away a download nobody is going to listen to: a
    * screen left behind must not go on using a phone's data.
+   *
+   * Takes no run, and asks nothing about the one it is in (#790). It had a
+   * `run !== this.speechRun` clause and it could never be true: the only two
+   * calls are `next()`'s prefetch of the following line and `playClip`'s
+   * fallback for the line it was handed, both of them in `next()`'s own
+   * synchronous frame with nothing awaited between them and its check. So the
+   * clause was a second copy of a fact `next()` had already established — which
+   * by #771 makes *both* copies uncatchable, since neither one is ever the line
+   * that stops a superseded read. What actually keeps a hushed read from
+   * downloading is `stopClip()` throwing `this.ahead` away, not a guard here.
    */
-  buffer(step, run) {
-    if (step.el || run !== this.speechRun) return step.el || null;
+  buffer(step) {
+    if (step.el) return step.el;
     // already here, because somebody warmed it when the run began (#366). It
     // leaves the warm set as it is taken: from here on it is this read's
     // element, and `playClip` removes it from the document when it is done.
@@ -316,12 +326,16 @@ export class Sound {
    * A clip that will not load is not an error — it is `onmiss`, which reads that
    * one line in the browser voice. A deploy that dropped `public/audio/` should
    * sound like the game did before the recordings existed, not like a broken one.
+   *
+   * `run` is not a re-ask of `next()`'s check on the way in — it is what `finish`
+   * asks on the way *out*, which is a different moment: `el.play()` hands back a
+   * promise no `hush()` can cancel, so a refusal can land after the element has
+   * been thrown away (#790).
    */
   playClip(step, run, onplayed, onmiss) {
     // usually already here and already loaded: the previous line asked for it
     // while it was still talking (#358)
-    const el = step.el || this.buffer(step, run);
-    if (!el) return;                 // a newer read owns the queue; buffer() refused
+    const el = step.el || this.buffer(step);
     if (this.ahead === el) this.ahead = null;   // it is the current one now
     this.clip = el;
     let done = false;

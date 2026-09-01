@@ -1216,6 +1216,93 @@ def test_a_cancelled_read_stops_when_its_line_reports_back(own_page):
     assert fired == 1, f"{fired} callbacks fired for one interrupted line"
 
 
+# --- the one ending a hush cannot take back (#790) ---------------------------
+# `stopClip()` nulls a clip's `onended` and `onerror` and removes the element, so
+# the recorded path has nothing left to call after a hush — that is why the test
+# above is on the browser voice. It has one hole: `el.play()` returns a promise,
+# and `started.catch(() => finish(false))` is a callback in the microtask queue
+# that `stopClip()` cannot reach. A rejection that lands after the hush is the
+# only way `playClip`'s own run check can be the line that stops a read, and
+# `finish(false)` is `onmiss`, which on the story card is `speakLine` — a
+# *browser* voice starting on a screen that has been left behind.
+#
+# The spy resolves `play()` immediately, which is the case that never asks the
+# question, so these two patch it to hand back a promise the test rejects when it
+# chooses. Both go through the story card, whose lines are recorded.
+
+REJECTABLE_PLAY = """
+() => {
+  window.__rejects = [];
+  const spied = HTMLMediaElement.prototype.play;   // keeps __said/__clips honest
+  HTMLMediaElement.prototype.play = function () {
+    spied.call(this);
+    return new Promise((_, reject) => { window.__rejects.push(reject); });
+  };
+}
+"""
+
+#: rejecting is not enough on its own: `catch` runs in a microtask, and so does
+#: everything `finish` reaches. One turn of the event loop after the last reject.
+REJECT_PENDING_PLAYS = """
+async () => {
+  const rejects = window.__rejects;
+  window.__rejects = [];
+  rejects.forEach((r) => r(new DOMException("blocked", "NotAllowedError")));
+  await new Promise((r) => setTimeout(r, 0));
+  return rejects.length;
+}
+"""
+
+
+def test_a_recording_the_browser_will_not_play_is_read_in_the_voice_instead(own_page):
+    """The control for the test below: prove a rejected `play()` reaches `onmiss`.
+
+    Without this, that test passes on a page where nothing ever rejected and the
+    guard it is about was never asked anything. This is also the autoplay policy
+    and a bad codec, both of which are "this line will not be heard" — the same
+    answer as a 404, and the reason `started.catch` exists at all.
+    """
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.evaluate(REJECTABLE_PLAY)
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-go")
+    line = page.evaluate("() => window.__said[0]")
+    assert line, "no recording was even attempted, so nothing could reject"
+    assert page.evaluate("() => window.__spoke") == [], (
+        "the browser voice spoke before the recording had been refused")
+    rejected = page.evaluate(REJECT_PENDING_PLAYS)
+    assert rejected, "there was no pending play() to reject"
+    assert page.evaluate("() => window.__spoke") == [line], (
+        f"the recording of {line!r} was refused and the line was not read in the "
+        f"browser voice instead — spoke {page.evaluate('() => window.__spoke')}")
+    page.evaluate("() => window.__sound.hush()")
+
+
+def test_a_refusal_that_lands_after_a_hush_starts_nothing(own_page):
+    """The same refusal, arriving one moment too late to matter.
+
+    A hush is a screen being left. `stopClip()` has already thrown the element
+    away, but the promise `el.play()` handed back is still out there, and when it
+    rejects `finish(false)` would fall through to `onmiss` and start the browser
+    voice on a line belonging to the card you have closed — which is #771's
+    complaint on the one path `stopClip()` cannot silence.
+    """
+    page = own_page
+    page.evaluate(SPY_ON_SPEECH)
+    page.evaluate(REJECTABLE_PLAY)
+    page.click("#btn-story")
+    page.wait_for_selector("#btn-go")
+    assert page.evaluate("() => window.__said[0]"), "nothing was playing to interrupt"
+    page.evaluate("() => window.__sound.hush()")
+    rejected = page.evaluate(REJECT_PENDING_PLAYS)
+    assert rejected, "there was no pending play() left to reject after the hush"
+    assert page.evaluate("() => window.__spoke") == [], (
+        f"the read was cancelled, its recording then came back refused, and the "
+        f"game started reading {page.evaluate('() => window.__spoke')} out loud "
+        f"over the screen that replaced it")
+
+
 # --- hearing it again, and being told what is happening (#290) ---------------
 # The read above happens once, when the card opens, and there is nothing on the
 # card about it: a three-year-old who misses the start cannot ask for it back,
