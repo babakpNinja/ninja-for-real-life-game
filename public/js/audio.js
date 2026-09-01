@@ -258,7 +258,7 @@ export class Sound {
       const soon = plan[at];
       if (soon && soon.clip) this.ahead = this.buffer(soon);
       const fallback = recorded ? next
-                                : () => this.speakLine(step, run, next, () => { heard++; });
+                                : () => this.speakLine(step, next, () => { heard++; });
       if (step.clip) this.playClip(step, run, () => { heard++; next(); }, fallback);
       else fallback();
     };
@@ -357,17 +357,27 @@ export class Sound {
     if (started && started.catch) started.catch(() => finish(false));
   }
 
-  /** One line in the browser's own voice, then `after()` whatever happened. */
-  speakLine(step, run, after, onspoken) {
+  /**
+   * One line in the browser's own voice, then `after()` whatever happened.
+   *
+   * Not handed a run, and does not ask about one (#830). It took one until #771
+   * deleted the `run !== this.speechRun` clause here as uncatchable, and the
+   * unread parameter stayed behind for two issues: `run` in scope with nothing
+   * reading it is an invitation to put the clause back. Nothing here needs it —
+   * `after` is always `next`, which asks it, and `onspoken` only bumps a
+   * superseded read's own local counter. Unlike `playClip`, which keeps its run
+   * because its ending can arrive after a hush, everything this method calls
+   * back runs through `next()`, past that check.
+   */
+  speakLine(step, after, onspoken) {
     const synth = window.speechSynthesis;
     if (!synth) { after(); return; }
     const say = new SpeechSynthesisUtterance(step.text);
     say.rate = 0.92;              // slower than default: it is being read to a child
     say.pitch = 1.1;
     let done = false;
-    // no run check here either (#771): `after` is always `next`, which asks it,
-    // and `onspoken` only bumps a superseded read's own local counter. Held
-    // here as well it made both copies uncatchable — see the note by `next()`.
+    // no run check here either (#771) — see the docstring, and the note by
+    // `next()` for why a second copy makes both of them uncatchable.
     const finish = (spoke) => {
       if (done) return;
       done = true;

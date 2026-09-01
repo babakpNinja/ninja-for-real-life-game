@@ -1303,6 +1303,56 @@ def test_a_refusal_that_lands_after_a_hush_starts_nothing(own_page):
         f"over the screen that replaced it")
 
 
+# --- a run is taken only by the method that answers it (#830) ----------------
+# The end of #771's story. Four methods held `run !== this.speechRun`; three of
+# them were re-asks of the check `next()` had already made in the same frame, so
+# no test could tell either version apart, and they went. Each deletion left the
+# parameter behind — `run` in scope, unread, which is an invitation to write the
+# clause back and re-create a guard nothing can catch. #790 dropped `buffer`'s,
+# #830 dropped `speakLine`'s. This is the rule instead of a third round of it.
+
+def audio_methods():
+    """Every method of the audio class: name -> (parameters, body), comments blanked.
+
+    Bounded by the closing brace at two spaces, which is where this file ends a
+    method — everything inside one is indented further. The blanking is what makes
+    the question below answerable at all: a method whose *comment* discusses `run`
+    is exactly the case this is about.
+    """
+    src = code_only((APP / "public" / "js" / "audio.js").read_text())
+    found = {}
+    for m in re.finditer(r"^  (?!if|for|while|switch|catch|else)(\w+)\(([^)]*)\) \{"
+                         r"(.*?)\n  \}", src, re.S | re.M):
+        found[m.group(1)] = ([p.strip() for p in m.group(2).split(",") if p.strip()],
+                             m.group(3))
+    return found
+
+
+def test_a_method_takes_a_run_only_if_it_reads_one():
+    methods = audio_methods()
+    assert "playClip" in methods and "speakLine" in methods, (
+        f"the method scan found {sorted(methods)} — it stopped seeing this class, so "
+        f"the rule below is being asked of nothing")
+    deaf = [name for name, (params, body) in methods.items()
+            if "run" in params and not re.search(r"\brun\b", body)]
+    assert deaf == [], (
+        f"{', '.join(deaf)} declare(s) a `run` parameter and never reads it. An unread "
+        f"`run` in scope is how the uncatchable check comes back (#771, #790, #830): "
+        f"either the method answers it, or it should not be handed one")
+
+
+def test_the_one_run_check_that_survived_is_still_asked():
+    """The other direction, and the reason this is not a tidiness rule: `playClip`
+    keeps its run because `el.play()`'s promise can reject after a hush, which is a
+    moment `next()`'s check never covered. Dropping the parameter here would satisfy
+    the test above and delete the guard the test two sections up is about."""
+    params, body = audio_methods()["playClip"]
+    assert "run" in params, "playClip stopped being handed the run it answers"
+    assert "run !== this.speechRun" in body, (
+        "playClip no longer asks whether its read was superseded — a refusal landing "
+        "after a hush now reaches onmiss and reads the line over the next screen")
+
+
 # --- hearing it again, and being told what is happening (#290) ---------------
 # The read above happens once, when the card opens, and there is nothing on the
 # card about it: a three-year-old who misses the start cannot ask for it back,
