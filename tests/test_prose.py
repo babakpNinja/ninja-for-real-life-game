@@ -85,7 +85,9 @@ def test_a_box_slid_onto_the_muzzle_is_not_eye_white(rigs):
     mod, rr = rigs
     from PIL import Image
     im = Image.open(mod.ASSETS / "bluey.png").convert("RGBA")
-    problem, = mod.eye_problems("bluey", moved(rr["bluey"], 0, 0, 1.2), im)
+    reported = mod.eye_problems("bluey", moved(rr["bluey"], 0, 0, 1.2), im)
+    assert reported, "a box slid a whole box-height onto the muzzle was accepted as an eye"
+    problem, = reported
     assert "eye0" in problem and "near-white" in problem, problem
 
 
@@ -94,7 +96,9 @@ def test_a_white_patch_with_no_pupil_in_it_is_not_an_eye(rigs):
     mod, rr = rigs
     from PIL import Image
     im = Image.open(mod.ASSETS / "bingo.png").convert("RGBA")
-    problem, = mod.eye_problems("bingo", moved(rr["bingo"], 0, 0, 2), im)
+    reported = mod.eye_problems("bingo", moved(rr["bingo"], 0, 0, 2), im)
+    assert reported, "a white patch with no pupil in it was accepted as an eye"
+    problem, = reported
     assert "no pupil" in problem, problem
 
 
@@ -125,7 +129,9 @@ def test_ink_scattered_along_an_outline_is_not_a_pupil(rigs):
     area = round((box[2] - box[0]) * w) * round((box[3] - box[1]) * h)
     assert dark / area > mod.EYE_PUPIL * 2, f"only {dark / area:.1%} ink; nothing to connect"
 
-    problem, = mod.eye_problems("bingo", rig, im)
+    reported = mod.eye_problems("bingo", rig, im)
+    assert reported, "ink scattered along an outline was accepted as a pupil"
+    problem, = reported
     assert "no pupil" in problem, problem
 
 
@@ -231,7 +237,9 @@ def test_the_spread_is_summed_over_channels_not_taken_per_channel(rigs):
     per = [max(v[c] for v in vals) - min(v[c] for v in vals) for c in range(3)]
     assert max(per) < mod.LID_SPREAD, f"worst channel is {max(per)}; the sum is not what catches it"
 
-    problem, = mod.lid_problems("bingo", {**rr["bingo"], "lid": lid}, im)
+    reported = mod.lid_problems("bingo", {**rr["bingo"], "lid": lid}, im)
+    assert reported, "the patch that motivated this check was accepted as flat"
+    problem, = reported
     assert "straddles" in problem, problem
 
 
@@ -252,7 +260,9 @@ def test_a_patch_too_small_to_average_says_so(rigs):
     spread, thin, area = mod.patch_stats(im, rig["lid"])
     assert not spread and not thin, "the other two rules must have nothing to say here"
 
-    problem, = mod.lid_problems("bluey", rig, im)
+    reported = mod.lid_problems("bluey", rig, im)
+    assert reported, "a lid patch too small to average was accepted"
+    problem, = reported
     assert "too small to average" in problem, problem
 
 
@@ -748,7 +758,9 @@ def test_a_playable_character_with_no_art_for_a_state_is_a_problem(fetch_assets,
     mod = fetch_assets
     monkeypatch.setattr(mod, "RIG_OK", {k: v for k, v in mod.RIG_OK.items()
                                         if k != ("muffin", "run")})
-    problem, = [p for p in mod.coverage_problems() if p.startswith("muffin is playable")]
+    reported = [p for p in mod.coverage_problems() if p.startswith("muffin is playable")]
+    assert reported, "a playable character with no art for a state was not reported"
+    problem, = reported
     assert "'run'" in problem and "RIG_OK" in problem, problem
 
 
@@ -772,7 +784,9 @@ def test_a_declaration_the_artwork_has_made_untrue_is_a_problem(fetch_assets, tm
     mod = fetch_assets
     posed(fetch_assets, tmp_path, monkeypatch,
           {"muffin": {"run": ["assets/poses/muffin-run-0.png"]}})
-    problem, = [p for p in mod.coverage_problems() if p.startswith("muffin:run")]
+    reported = [p for p in mod.coverage_problems() if p.startswith("muffin:run")]
+    assert reported, "a RIG_OK line the artwork has made untrue was left standing"
+    problem, = reported
     assert "drop the line" in problem, problem
 
 
@@ -780,7 +794,9 @@ def test_an_entry_that_gives_no_reason_is_a_problem(fetch_assets, monkeypatch):
     """An empty string is how a gap gets waved through in a hurry."""
     mod = fetch_assets
     monkeypatch.setattr(mod, "RIG_OK", {**mod.RIG_OK, ("muffin", "run"): "  "})
-    problem, = [p for p in mod.coverage_problems() if "no reason" in p]
+    reported = [p for p in mod.coverage_problems() if "no reason" in p]
+    assert reported, "a RIG_OK entry that gives no reason was accepted"
+    problem, = reported
     assert problem.startswith("muffin:run"), problem
 
 
@@ -985,7 +1001,9 @@ def test_a_small_copy_that_lost_the_silhouette_is_a_problem(one_character):
         small, "WEBP", quality=mod.WEBP_QUALITY, method=mod.WEBP_METHOD)
     entry = credits["assets"]["bluey"]
     entry["webp_bytes"] = small.stat().st_size            # so only the alpha is wrong
-    problem, = mod.webp_problems(credits)
+    reported = mod.webp_problems(credits)
+    assert reported, "a small copy that flattened the cut-out was accepted"
+    problem, = reported
     assert "alpha" in problem, problem
 
 
@@ -1035,7 +1053,9 @@ def test_a_pose_frame_with_a_stale_small_copy_is_a_problem(one_pose):
 
     mod, png, credits = one_pose
     Image.new("RGBA", (16, 16), (200, 30, 30, 255)).save(png, "PNG")
-    problem, = mod.webp_problems(credits)
+    reported = mod.webp_problems(credits)
+    assert reported, "a pose frame whose small copy is older than the PNG was accepted"
+    problem, = reported
     assert "stale" in problem, problem
     assert "bluey:run:0" in problem, problem
 
@@ -1136,7 +1156,9 @@ def test_a_readme_that_misstates_what_the_artwork_costs_is_a_problem(
         broken = re.sub(r"PNG \(~[\d.]+ MB\)", "PNG (~9.9 MB)", line)
         assert broken != line, f"nothing to break in {line!r}"
         fake.write_text(real.replace(line, broken))
-        problem, = [p for p in mod.prose_problems(credits, 25) if "MB" in p]
+        reported = [p for p in mod.prose_problems(credits, 25) if "MB" in p]
+        assert reported, f"a README that misstates what the {directory.name} cost was accepted"
+        problem, = reported
         assert "9.9" in problem and "pngs" in problem, problem
         assert str(directory.relative_to(mod.APP)) in problem, problem
         checked.append(directory.name)

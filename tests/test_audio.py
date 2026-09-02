@@ -216,6 +216,8 @@ def test_every_theme_has_its_own_written_tune():
     """
     found = motifs()
     assert set(found) == set(THEMES), (
+        "a chapter is playing a tune nobody wrote for it, or a tune is written "
+        "for a chapter that does not exist\n"
         f"themes without a written motif: {sorted(set(THEMES) - set(found))}; "
         f"motifs for something that is not a theme: {sorted(set(found) - set(THEMES))}")
     seen = {}
