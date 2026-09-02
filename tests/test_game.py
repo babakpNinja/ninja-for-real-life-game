@@ -3777,6 +3777,47 @@ async ({ id, states }) => {
 """
 
 
+# Somebody who has their own render for a state that *also* has a fallback, and
+# whose two frames are cut differently. That pairing is the only place the two
+# ways of getting poseFile wrong look different: consulting POSE_FALLBACK before
+# a state's own artwork, and walking the chain only one link. Bandit — the
+# character whose failure this drill records — owns run art and nothing else, so
+# both wirings leave him identical. `poseJoint` is the window on it: it is
+# `poseFile` with a lookup on the end, and the only export that says which file
+# was picked rather than what the picture came out looking like (#841).
+OWN_AND_FALLBACK = next(
+    ((cid, state, POSE_FALLBACK[state]) for cid, own in sorted(POSES.items())
+     for state in sorted(own)
+     if POSE_FALLBACK.get(state) in own
+     and POSE_JOINTS.get(own[state][0]) != POSE_JOINTS.get(own[POSE_FALLBACK[state]][0])),
+    (None, None, None))
+
+POSE_WIRING = """
+async ({ id, state, back }) => {
+  const s = await import('/js/sprites.js');
+  await s.loadArt();
+  return { own: s.poseJoint(id, state), back: s.poseJoint(id, back) };
+}
+"""
+
+
+def which_way_the_fallback_is_wired(page) -> str:
+    """Consulted too early, or walked too little, for a first line (#841).
+
+    Both leave the character under test drawn from the same families in the same
+    states, so the list this message ends with names neither. Asked of somebody who
+    owns artwork the fallback would otherwise cover, they answer differently.
+    """
+    cid, state, back = OWN_AND_FALLBACK
+    if not cid:
+        return ("nobody owns two differently-cut frames a fallback spans, so nothing "
+                "here can tell the two wirings apart")
+    got = page.evaluate(POSE_WIRING, {"id": cid, "state": state, "back": back})
+    if got["own"] == got["back"]:
+        return f"{cid} draws {state} off {back}'s frame, so the fallback is asked first"
+    return f"{cid} still draws its own {state}, so the fallback chain stops short"
+
+
 @pytest.mark.parametrize("cid", PLAYABLE)
 def test_a_hero_is_the_same_kind_of_drawing_all_the_way_through(desktop, cid):
     """#215: Bandit ran as the artist's Bandit and landed as a different dog.
@@ -3800,7 +3841,8 @@ def test_a_hero_is_the_same_kind_of_drawing_all_the_way_through(desktop, cid):
         assert r["opaque"] > 1000, f"{cid} in {state} drew almost nothing: {got}"
     families = {r["drawn"] for r in got.values()}
     assert len(families) == 1, (
-        f"{cid} changes what kind of drawing it is mid-play: "
+        f"{cid} changes what kind of drawing it is mid-play; "
+        f"{which_way_the_fallback_is_wired(desktop)}: "
         + ", ".join(f"{s}={r['drawn']}" for s, r in sorted(got.items())))
 
 
@@ -4338,6 +4380,20 @@ async ({ steps }) => {
 """
 
 
+def what_the_footfall_answer_looks_like(hits: int, frames: int) -> str:
+    """Whether the contact never fires or fires on every frame, for a first line (#841).
+
+    `footfall` hard-wired to false and to true both fail this one count, and the
+    sentence differed only in the number — which the drill ratchet flattens. The two
+    are opposite bugs and are fixed by opposite edits.
+    """
+    if hits == 0:
+        return "no footfall was reported anywhere in the span, so the contact never fires"
+    if hits >= frames:
+        return "every frame reported one, so a footfall is a property of the read, not the ground"
+    return "some frames reported one and the tally is still wrong, so the phase has moved"
+
+
 @pytest.mark.parametrize("dt,ids", [(1 / 240, "240fps"), (1 / 60, "60fps"), (1 / 12, "12fps")],
                          ids=["240fps", "60fps", "12fps"])
 def test_the_same_footfalls_are_reported_at_every_frame_rate(desktop, dt, ids):
@@ -4355,7 +4411,9 @@ def test_the_same_footfalls_are_reported_at_every_frame_rate(desktop, dt, ids):
     # land in the overlap, so it is a few percent off and always looks fine.
     want = math.floor(r["t"] * r["stride"] / math.pi)
     assert r["hits"] == want, (
-        f"{r['hits']} footfalls in {r['t']:.3f}s at {ids}, expected {want}")
+        f"the footfalls reported at {ids} are not the ones the ground covered asks for; "
+        f"{what_the_footfall_answer_looks_like(r['hits'], round(span / dt))}"
+        f"\n{r['hits']} in {r['t']:.3f}s, expected {want}")
 
 
 def test_a_footfall_is_reported_once(desktop):
@@ -4793,6 +4851,29 @@ def particles_seen(page, chapter, source, frames=40, seed=SEED):
     return page.evaluate(js, {"chapter": chapter, "frames": frames, "seed": seed})
 
 
+def why_the_burst_did_not_show(page, chapter: int, source: str) -> str:
+    """Which of the three ways an invisible burst happens actually happened (#841).
+
+    All three read identically in the count — the probe no longer seeding the burst,
+    this source's own colour dimmed, and the whole particle layer drawn faint — and a
+    sentence that differs only in numbers is one the ratchet cannot tell apart. Three
+    words apart instead: an unseeded probe does not give the same answer twice, a
+    dimmed layer takes a source of another factory down with it, and a dimmed colour
+    leaves that control alone.
+    """
+    twice = [particles_seen(page, chapter, source).get("seen") for _ in range(2)]
+    if twice[0] != twice[1]:
+        return "the same chapter measured twice gives two answers, so nothing is seeding it"
+    control = next((s for s, v in PARTICLE_SOURCES.items()
+                    if v["factory"] != PARTICLE_SOURCES[source]["factory"]), "")
+    r = particles_seen(page, chapter, control) if control else {"skipped": "no control"}
+    if r.get("skipped"):
+        return f"nothing of another kind fires on this chapter to compare {source} against"
+    if r["seen"] < 40 * r["had"]:
+        return f"{control} is invisible here too, so the whole layer is faint, not one colour"
+    return f"{control} is still visible here, so it is this source's own colour that faded"
+
+
 @pytest.mark.parametrize("source", list(PARTICLE_SOURCES))
 def test_every_particle_source_can_actually_be_seen(own_page, source):
     """Its own page: this drives the physics by hand and leaves the engine
@@ -4829,9 +4910,10 @@ def test_every_particle_source_can_actually_be_seen(own_page, source):
         # that failed a ship — this seed is the *worst* of the twelve on three
         # chapters of five.
         assert r["seen"] >= 40 * r["had"], (
-            f"{source}: {r['had']} particles changed only {r['seen']} pixels on chapter "
-            f"{chapter} over {r['alive']} frames — drawn, and not visible against that "
-            f"background. Skipped elsewhere: {skipped}")
+            f"{source} is drawn on chapter {chapter} and not visible against that "
+            f"background; {why_the_burst_did_not_show(own_page, chapter, source)}"
+            f"\n{r['had']} particles changed {r['seen']} pixels over {r['alive']} "
+            f"frames; skipped elsewhere: {skipped}")
         # and its strongest pixel by 65/255 at worst (dust on Chapter 5's sand)
         assert r["top"] >= 35, (
             f"{source}: the strongest pixel it changed on chapter {chapter} moved by "
@@ -5393,6 +5475,19 @@ async ({ step }) => {
 """
 
 
+def why_there_was_no_ground_ahead(r) -> str:
+    """A chapter running out of ground, or a splash asking for more of it (#841).
+
+    Both leave `recoverySpot` with nothing to answer at some x and both recorded the
+    same sentence. The invariant asserted two lines below separates them: a chapter
+    whose ground outruns its own finish line still has the ledge, so what moved is
+    how much standing room the splash demands of it.
+    """
+    if r["end"] <= r["length"]:
+        return f"its ground stops at {r['end']}, short of the {r['length']} finish line"
+    return "its ground outruns that line, so a splash is asking for more room"
+
+
 def test_every_fall_a_chapter_can_produce_has_ground_ahead_of_it(own_page):
     """`recoverySpot` always answers with a ledge, at every x of every chapter.
 
@@ -5412,7 +5507,8 @@ def test_every_fall_a_chapter_can_produce_has_ground_ahead_of_it(own_page):
     for r in rows:
         assert r["bad"] is None, (
             f"{r['id']}: a fall at x={r['bad'] and r['bad']['x']} of {r['length']} has "
-            f"no ground ahead of it — recoverySpot answered {r['bad'] and r['bad']['spot']}"
+            f"no ground ahead of it; {why_there_was_no_ground_ahead(r)} — "
+            f"recoverySpot answered {r['bad'] and r['bad']['spot']}"
             f"{' / ' + r['bad']['err'] if r['bad'] and r['bad']['err'] else ''}")
         want = (r["length"] - r["from"]) // step + 1
         assert r["checked"] == want, (
@@ -10506,6 +10602,29 @@ EARLY_TAPS = [
 ]
 
 
+EARLY_TAP_SIDES = (
+    ("public/index.html", r"window\.__earlyTap = id;",
+     "the page never writes the tap down, so it is gone the moment menu() rebuilds "
+     "the button"),
+    ("public/js/main.js", r"if \(id && el\(id\)\) el\(id\)\.click\(\);",
+     "the tap is written down and boot never presses the button it names"),
+)
+
+
+def why_the_early_tap_went_nowhere() -> str:
+    """Forgotten, or remembered and never replayed, for a first line (#841).
+
+    index.html failing to write the tap down and main.js failing to press it both end
+    this test in the same wait timing out, which names neither of them and is not even
+    an assertion. `window.__earlyTap` cannot separate them either: replayEarlyTap reads
+    it and clears it, so by the time a test can look it is null under both. The two
+    lines that make up #284 can — one of them is missing.
+    """
+    gone = [why for rel, pat, why in EARLY_TAP_SIDES
+            if not re.search(pat, (APP / rel).read_text())]
+    return "; ".join(gone) or "both halves of the early-tap path are still in place"
+
+
 @pytest.mark.parametrize("button,heading", EARLY_TAPS, ids=[b for b, _ in EARLY_TAPS])
 @pytest.mark.smoke
 def test_a_tap_before_boot_finishes_is_not_lost(browser, base_url, button, heading):
@@ -10557,7 +10676,12 @@ def test_a_tap_before_boot_finishes_is_not_lost(browser, base_url, button, headi
                 f"tapping {button} before boot finished left the menu up rather than a "
                 f"chapter — the tap was swallowed (#284)")
         else:
-            page.wait_for_selector("#overlay h2", timeout=5000)
+            try:
+                page.wait_for_selector("#overlay h2", timeout=5000)
+            except PlaywrightTimeout:
+                raise AssertionError(
+                    f"tapping {button} before boot finished put no screen up at all; "
+                    f"{why_the_early_tap_went_nowhere()}") from None
             got = page.text_content("#overlay h2")
             assert heading in got, (
                 f"tapping {button} before boot finished left {got!r} on the screen — "
@@ -10698,6 +10822,30 @@ def test_a_leaked_game_loop_fails_the_test_that_left_it(base_url):
     assert "g.stop()" in out, f"the message does not say what to do about it:\n{out}"
 
 
+# the two lines, in two files, that have to agree for a stopped loop to read as stopped
+# Matched as patterns, not as substrings: `this.running = false` appears twice in
+# game.js, and a plain `in` would find the *other* one and report both sides healthy.
+LEAK_GUARD_SIDES = (
+    (Path(__file__).resolve().parent / "conftest.py", r"g\.running",
+     "the guard in tests/conftest.py no longer asks whether the loop is running"),
+    (APP / "public" / "js" / "game.js", r"stop\(\)\s*\{[^}]*running\s*=\s*false",
+     "stop() in public/js/game.js no longer puts the loop down"))
+
+
+def which_side_of_the_leak_guard_gave_way() -> str:
+    """Which file stopped holding up its end, for a message's first line.
+
+    Two mutations make a correct probe read as a leak — the guard dropping `running`
+    from what it looks at, and `stop()` no longer clearing it — and against a message
+    carrying only the drill's output both banked the same sentence (#841). The two
+    lines live in different files, so the answer is which of them still says its half;
+    a browser probe would say the same thing and cost a page to say it.
+    """
+    gave = [why for path, pattern, why in LEAK_GUARD_SIDES
+            if not re.search(pattern, path.read_text())]
+    return "; ".join(gave) or "both the guard and stop() still say what they have to"
+
+
 def test_a_probe_that_puts_the_loop_down_is_left_alone(base_url):
     """The direction that decides whether the guard survives contact with people.
 
@@ -10706,8 +10854,30 @@ def test_a_probe_that_puts_the_loop_down_is_left_alone(base_url):
     above, has to come back green.
     """
     code, out = run_drill(base_url, "stops_the_game.py")
-    assert code == 0, f"stopping the loop was reported as a leak anyway:\n{out}"
+    assert code == 0, (
+        "stopping the loop was reported as a leak anyway, which is the noise that "
+        f"gets a guard switched off; {which_side_of_the_leak_guard_gave_way()}\n{out}")
     assert "1 passed" in out, f"the drill did not run:\n{out}"
+
+
+# the four probes in leaks_on_a_shared_page.py, shortest name that identifies each
+LEAK_DRILL_TESTS = ("walks_away_from_a_running_game", "next_test_inherits_a_page",
+                    "declared_handoff_is_left_alone", "declaration_with_no_reason")
+
+
+def who_it_blamed(blamed: list[str]) -> str:
+    """Which probes the leak guard named, for a message's first line.
+
+    Three mutations break this claim — the loop blamed but not put down, the guard
+    never firing, and a declared handoff blamed anyway — and against a message
+    carrying only the drill's whole output all three banked the same sentence (#841).
+    Who was named separates them: nobody, the leaker plus whoever inherited the loop
+    still running, or the leaker plus the test that declared its handoff.
+    """
+    if not blamed:
+        return "the guard blamed nobody at all"
+    named = [n for n in LEAK_DRILL_TESTS if any(n in ln for ln in blamed)]
+    return "the guard blamed " + (", ".join(named) or "no probe this drill contains")
 
 
 def test_a_leak_on_a_shared_page_is_blamed_once_and_put_down(base_url):
@@ -10729,7 +10899,8 @@ def test_a_leak_on_a_shared_page_is_blamed_once_and_put_down(base_url):
     assert code != 0, f"a game left running on a shared page passed:\n{out}"
     blamed = [ln for ln in out.splitlines() if "left the game loop running" in ln]
     assert len(blamed) == 1 and "walks_away_from_a_running_game" in blamed[0], (
-        f"the leak was not blamed on exactly the test that left it:\n{out}")
+        f"the leak was not blamed on exactly the test that left it; {who_it_blamed(blamed)}"
+        f"\n{out}")
     unexplained = [ln for ln in out.splitlines() if "without both `to` and `reason`" in ln]
     assert len(unexplained) == 1 and "no_reason_is_refused" in unexplained[0], (
         f"an exemption with no reason was accepted:\n{out}")
@@ -11542,6 +11713,21 @@ SCORE_SITES = """
 """
 
 
+def which_sites_stopped_doubling(plain: dict, withf: dict, sites: list[str]) -> str:
+    """One site bypassing award, or award itself paying face value (#841).
+
+    Both fail the first site in the loop with a sentence that differs only in the
+    numbers, which the drill ratchet flattens. How many of the four are flat says
+    which: a bypassed site is alone, a broken multiplier takes all of them.
+    """
+    flat = [s for s in sites if withf.get(s) != plain.get(s, 0) * 2]
+    if len(flat) == len(sites):
+        return ("every way of scoring pays the same, so it is the multiplier itself and "
+                "not one site that stopped doubling")
+    return ("only " + ", ".join(flat) + " pays the same, so that site adds to the score "
+            "without going through award")
+
+
 def test_every_way_of_scoring_doubles_while_a_friend_is_running_with_you(own_page):
     """"double the scores when I hit the targets" — all of them, not the tokens.
 
@@ -11566,8 +11752,9 @@ def test_every_way_of_scoring_doubles_while_a_friend_is_running_with_you(own_pag
         f"{len(sites)} of the four ways to score: {plain}")
     for site in sites:
         assert withf[site] == plain[site] * 2, (
-            f"{site} paid {plain[site]} alone and {withf[site]} with a friend — "
-            f"that is ×{withf[site] / plain[site]:.2f}, not double")
+            f"{site} pays a friendless run and a friendly one the same; "
+            f"{which_sites_stopped_doubling(plain, withf, sites)}"
+            f"\n{plain[site]} alone, {withf[site]} with a friend")
     assert withf["bonus"] == plain["bonus"] * 2, (
         f"the finish reported a bonus of {withf['bonus']} while adding "
         f"{withf['finish']} to the score: the results screen would print a number "

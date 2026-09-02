@@ -354,6 +354,24 @@ def rewritten(mod, monkeypatch, tmp_path, cid: str, **changes) -> None:
     monkeypatch.setattr(mod, "RIGS", bad)
 
 
+def whether_the_joints_were_read_back_at_all(mod, cid: str) -> str:
+    """The read-back never called, or called with the stamp comparison dead (#841).
+
+    `check()` answering 0 says only that nothing went red, which is the same silence
+    whether `joint_problems` was skipped over or ran and had nothing to object to.
+    Asked directly — same rig, same drawing, one call further in — it separates them:
+    a cut caller leaves the function itself still able to see the mismatch.
+    """
+    from PIL import Image
+
+    r = json.loads(mod.RIGS.read_text())["rigs"][cid]
+    f = mod.ASSETS / f"{cid}.png"
+    said = mod.joint_problems(cid, r, f, Image.open(f).convert("RGBA"))
+    if said:
+        return "joint_problems still says so asked directly, so its caller is what stopped"
+    return "joint_problems says nothing asked directly, so the comparison itself is gone"
+
+
 def test_the_pre_220_muffin_joints_are_rejected_by_the_current_render(
         rigs, tmp_path, monkeypatch, capsys):
     """The acceptance case, with the real pair of drawings.
@@ -369,8 +387,11 @@ def test_the_pre_220_muffin_joints_are_rejected_by_the_current_render(
         "the two renders would have to differ for this test to be about anything"
     rewritten(mod, monkeypatch, tmp_path, "muffin", neck=0.50, hip=0.78, measuredOff=OLD_MUFFIN)
 
-    assert mod.check() == 1
+    got = mod.check()
     out = capsys.readouterr().out
+    assert got == 1, (
+        "a rig measured off a different muffin.png was not reported; "
+        + whether_the_joints_were_read_back_at_all(mod, "muffin"))
     problems = [l for l in out.splitlines() if "PROBLEM" in l]
     assert len(problems) == 1, out                      # nobody else goes red
     assert "muffin" in problems[0] and "neck=0.5 hip=0.78" in problems[0], problems[0]

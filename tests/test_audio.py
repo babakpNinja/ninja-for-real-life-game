@@ -273,14 +273,31 @@ def test_every_cue_is_in_a_room(renders):
 # turns "somebody remembered" into a red suite.
 
 
+def which_side_of_the_recordings_moved() -> str:
+    """A clip that was never committed, or prose that was reworded (#841).
+
+    Both leave `--check` red against the same sentence and both banked one catcher.
+    The manifest is the seam: if it names a file that is not in the repo the drift is
+    in what was committed, and the two are repaired by different people.
+    """
+    manifest = json.loads((APP / "public/data/voices.json").read_text())
+    absent = sorted({v["file"] for v in manifest["lines"].values()
+                     if not (APP / "public" / "audio" / v["file"]).is_file()})
+    if absent:
+        return ("the manifest names a clip that is not in the repo, so what drifted is "
+                "the recording, not the words")
+    return ("every clip the manifest names is on disk, so what drifted is the words the "
+            "game speaks")
+
+
 def test_the_recordings_still_cover_the_prose_the_game_speaks():
     out = subprocess.run(
         [sys.executable, str(APP / "scripts" / "render_voices.py"), "--check"],
         capture_output=True, text=True)
     assert out.returncode == 0, (
         "the recordings and the game's words have drifted apart — run "
-        "`python scripts/render_voices.py` to record what is missing:\n"
-        + out.stdout + out.stderr)
+        f"`python scripts/render_voices.py` to record what is missing; "
+        f"{which_side_of_the_recordings_moved()}\n" + out.stdout + out.stderr)
 
 
 def test_a_line_recorded_by_the_wrong_character_is_drift_too(capsys):
