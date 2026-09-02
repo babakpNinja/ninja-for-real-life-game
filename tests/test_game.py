@@ -2080,9 +2080,11 @@ def test_opening_a_bio_stops_the_gallery_downloading_the_other_dogs(own_page):
     after = page.evaluate("window.__art()")
 
     still_going = set(after["pending"]) - {cid}
+    # the dog is whichever one was least far along on this run, so it is named
+    # below the claim and not in it: the first line is what the drill records
     assert not still_going, (
-        f"the bio for {cid} is still downloading {len(still_going)} other "
-        f"characters: {sorted(still_going)[:6]}")
+        "opening a bio left the gallery downloading the other characters\n"
+        f"{cid}: {sorted(still_going)}")
     # ...and it really did have something to stop, or the assertion above is
     # about an empty set and this test cannot fail
     dropped = set(before["pending"]) - set(after["loaded"]) - {cid}
@@ -2130,9 +2132,12 @@ def test_going_back_to_the_gallery_asks_again_for_the_dogs_it_dropped(own_page):
     # the error path with a doubling backoff behind it.
     page.wait_for_timeout(500)
     aside = page.evaluate("window.__art()")
+    # the try counts are a dict keyed in whatever order the run produced them,
+    # so they go below the claim — see the comment on the assertion above
     assert not aside["failed"], (
-        f"calling off {len(aside['failed'])} portraits recorded them as failures, "
-        f"which is a backoff and then a give-up: {aside['tries']}")
+        "calling off the other portraits recorded them as failures, which is a "
+        "backoff and then a give-up\n"
+        f"{aside['tries']}")
 
     page.click("#btn-back")
     page.wait_for_selector(".char-card")
