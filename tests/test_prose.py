@@ -41,7 +41,10 @@ def test_the_asset_scripts_self_check(script, what):
         text=True,
         timeout=180,
     )
-    assert proc.returncode == 0, f"{script} --check ({what}) failed:\n{proc.stdout}{proc.stderr}"
+    assert proc.returncode == 0, (
+        "an asset script's own --check is failing, so the thing it vouches for has "
+        "drifted from what is committed\n"
+        f"{script} --check ({what}) failed:\n{proc.stdout}{proc.stderr}")
 
 
 # ------------------------------------- and that check can still fail (#156)
